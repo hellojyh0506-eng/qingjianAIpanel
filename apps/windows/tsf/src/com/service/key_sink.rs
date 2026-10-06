@@ -589,4 +589,112 @@ mod tests {
         // 14. 翻译评审中一律吃
         assert!(eats_key(&with_modifiers(0x41, 'a', en_mod), false, true, false, true));
     }
+
+    #[test]
+    fn english_direct_on_string_sequences_never_eaten() {
+        let test_strings = [
+            "gpt6",
+            "deepseek-r1",
+            "C++",
+            "I'm don't",
+            "email@example.com",
+            "https://example.com/test?a=1&b=2",
+            "1234567890",
+            "!@#$%^&*()_+",
+            "hello world",
+        ];
+
+        for target in test_strings {
+            for ch in target.chars() {
+                let shifted = ch.is_ascii_uppercase() || "~!@#$%^&*()_+{}|:\"<>?".contains(ch);
+                let mods = KeyModifiers {
+                    shift: shifted,
+                    english_mode: true,
+                    ..KeyModifiers::default()
+                };
+                let vk = match ch {
+                    'a'..='z' => (ch as u32) - 0x20,
+                    'A'..='Z' => ch as u32,
+                    '0'..='9' => ch as u32,
+                    _ => 0,
+                };
+                let evt = KeyEvent::new(vk, Some(ch), mods);
+
+                // English Direct ON: 未组句状态下，整串字符的每一个 key 绝不被吃，直接由宿主接收
+                assert!(
+                    !eats_key(&evt, false, false, false, true),
+                    "字符 '{ch}' 在 '{target}' 中当 english_direct=true 时绝对不能被拦截"
+                );
+
+                // Caps Lock 亮着时也必须直通不拦截
+                let caps_mods = KeyModifiers {
+                    caps: true,
+                    ..KeyModifiers::default()
+                };
+                let caps_evt = KeyEvent::new(vk, Some(ch), caps_mods);
+                assert!(
+                    !eats_key(&caps_evt, false, false, false, true),
+                    "字符 '{ch}' 在 Caps 亮着且 english_direct=true 时绝对不能被拦截"
+                );
+
+                // English Direct OFF (v0.1.4 回归): 常规字母、数字与 ASCII 标点在英文模式下必须被吃掉
+                if ch.is_ascii_alphabetic() || ch.is_ascii_digit() || ch.is_ascii_punctuation() {
+                    assert!(
+                        eats_key(&evt, false, false, false, false),
+                        "字符 '{ch}' 在 '{target}' 中当 english_direct=false 时必须被吃以保持 v0.1.4 行为"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn server_disconnected_behavior() {
+        let en_mod = KeyModifiers {
+            english_mode: true,
+            ..KeyModifiers::default()
+        };
+        let zh_mod = KeyModifiers::default();
+
+        // 连不上 Server 时：英文模式或 Caps 亮着下的字母放行给应用
+        assert!(!eats_without_server(&with_modifiers(0x41, 'a', en_mod)));
+        let caps = KeyModifiers {
+            caps: true,
+            ..KeyModifiers::default()
+        };
+        assert!(!eats_without_server(&with_modifiers(0x41, 'A', caps)));
+
+        // 连不上 Server 时：中文模式下的字母吃掉（防止拼音漏进应用）
+        assert!(eats_without_server(&with_modifiers(0x41, 'a', zh_mod)));
+
+        // 标点与数字断连时放行
+        assert!(!eats_without_server(&with_modifiers(0xBC, ',', zh_mod)));
+        assert!(!eats_without_server(&with_modifiers(0x31, '1', zh_mod)));
+    }
+
+    #[test]
+    fn composition_transition_behavior() {
+        let en_mod = KeyModifiers {
+            english_mode: true,
+            ..KeyModifiers::default()
+        };
+        let zh_mod = KeyModifiers::default();
+
+        // 1. 中文组句进行中 (composing = true):
+        // 拼音字母必须吃
+        assert!(eats_key(&with_modifiers(0x41, 'a', zh_mod), true, false, false, true));
+        // 退格、回车、空格在组句中必须吃
+        assert!(eats_key(&KeyEvent::new(0x08, None, zh_mod), true, false, false, true));
+        assert!(eats_key(&KeyEvent::new(0x0D, None, zh_mod), true, false, false, true));
+        assert!(eats_key(&with_modifiers(0x20, ' ', zh_mod), true, false, false, true));
+
+        // 组句中即使修饰键变为了英文模式，未完成的组句状态依然保护拦截以确保 raw flush
+        assert!(eats_key(&with_modifiers(0x41, 'a', en_mod), true, false, false, true));
+        assert!(eats_key(&KeyEvent::new(0x08, None, en_mod), true, false, false, true));
+
+        // 2. 组句完成/退出后 (composing = false):
+        // 在 English Direct ON 状态下，英文按键立即直接原生放行
+        assert!(!eats_key(&with_modifiers(0x41, 'a', en_mod), false, false, false, true));
+        assert!(!eats_key(&KeyEvent::new(0x08, None, en_mod), false, false, false, true));
+    }
 }

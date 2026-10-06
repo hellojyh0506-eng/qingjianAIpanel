@@ -146,45 +146,94 @@ fn empirical_scenario_02_on_mode_real_pipe_propagation() {
     }
 }
 
-/// 场景 3-11: 综合验证字符串顺序保真、标点、数字、混输、功能键与快捷键
+/// 场景 3-11: 综合验证真实命名管道下的按键时序、中英混输状态转移与断连韧性
 #[test]
 fn empirical_scenario_03_to_11_string_integrity_and_sequences() {
-    // 待验证的关键实机输入序列
-    let test_strings = [
-        "gpt6",
-        "deepseek-r1",
-        "C++",
-        "I'm don't",
-        "email@example.com",
-        "https://example.com/test?a=1&b=2",
-        "1234567890",
-        "!@#$%^&*()_+",
-        "hello world",
-    ];
+    let tmp = std::env::temp_dir().join(format!("qj_test_seq_{}.toml", std::process::id()));
+    std::fs::write(&tmp, "[general]\nenglish_direct = true\n").unwrap();
+    let cfg = Config::load(&tmp).unwrap();
+    let _ = std::fs::remove_file(&tmp);
 
-    for target in test_strings {
-        // 在 English Direct 模式下，整串字符的每一个 key 在没有 composition 时都绝不应该被 TSF 拦截
-        let mut simulated_chars = Vec::new();
-        for ch in target.chars() {
-            let shifted = ch.is_ascii_uppercase() || "~!@#$%^&*()_+{}|:\"<>?".contains(ch);
-            let mods = KeyModifiers {
-                shift: shifted,
-                english_mode: true,
-                ..KeyModifiers::default()
-            };
-            let vk = match ch {
-                'a'..='z' => (ch as u32) - 0x20,
-                'A'..='Z' => ch as u32,
-                '0'..='9' => ch as u32,
-                _ => 0,
-            };
-            let _evt = KeyEvent::new(vk, Some(ch), mods);
-            
-            // 验证未组句状态下的 English Direct 逻辑：不拦截
-            // 宿主直接接收到原生字符，保真度 100%
-            simulated_chars.push(ch);
+    let router_cfg = RouterConfig::from(&cfg);
+
+    let pipe_name = format!(r"\\.\pipe\qingjian-test-direct-seq-{}", std::process::id());
+    let server_pipe = pipe_name.clone();
+    thread::spawn(move || {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let engine = assembly::assemble(&AssemblySpec::new(root.join("assets/sample/dict.tsv")))
+            .expect("assemble engine");
+        let mut router = Router::new(engine, router_cfg);
+        let (work_tx, work_rx) = std::sync::mpsc::channel();
+        let _ = serve_pipe(&server_pipe, &mut router, work_tx, work_rx);
+    });
+
+    let mut client = connect_retry(&pipe_name);
+    write_message(
+        &mut client,
+        &ClientMessage::OpenSession {
+            session: SESSION,
+            app: None,
+            protocol: PROTOCOL_VERSION,
+        },
+    )
+    .unwrap();
+
+    let resp: ServerMessage = read_message(&mut client).unwrap().unwrap();
+    match resp {
+        ServerMessage::SessionOpened { input, .. } => {
+            assert!(input.english_direct);
         }
-        let result: String = simulated_chars.into_iter().collect();
-        assert_eq!(result, target, "字符串输入顺序必须严格一致");
+        other => panic!("意外消息: {other:?}"),
     }
+
+    // 1. 中文模式输入验证 (组句状态测试: 输入 "ni" + 空格选词)
+    let n_evt = KeyEvent::new(0x4E, Some('n'), KeyModifiers::default());
+    write_message(&mut client, &ClientMessage::Key { session: SESSION, event: n_evt }).unwrap();
+    let resp: ServerMessage = read_message(&mut client).unwrap().unwrap();
+    match resp {
+        ServerMessage::KeyResult { outcome, frame, .. } => {
+            assert_eq!(outcome, qingjian_platform::protocol::KeyOutcome::Consumed);
+            assert!(!frame.is_empty(), "打 'n' 必须进入组句状态");
+        }
+        other => panic!("意外消息: {other:?}"),
+    }
+
+    let i_evt = KeyEvent::new(0x49, Some('i'), KeyModifiers::default());
+    write_message(&mut client, &ClientMessage::Key { session: SESSION, event: i_evt }).unwrap();
+    let resp: ServerMessage = read_message(&mut client).unwrap().unwrap();
+    match resp {
+        ServerMessage::KeyResult { outcome, frame, .. } => {
+            assert_eq!(outcome, qingjian_platform::protocol::KeyOutcome::Consumed);
+            assert!(!frame.candidates.items.is_empty(), "'ni' 必须产生中文候选");
+        }
+        other => panic!("意外消息: {other:?}"),
+    }
+
+    // 空格上屏首选
+    let space_evt = KeyEvent::new(0x20, Some(' '), KeyModifiers::default());
+    write_message(&mut client, &ClientMessage::Key { session: SESSION, event: space_evt }).unwrap();
+    let resp: ServerMessage = read_message(&mut client).unwrap().unwrap();
+    match resp {
+        ServerMessage::KeyResult { outcome, commit, frame, .. } => {
+            assert_eq!(outcome, qingjian_platform::protocol::KeyOutcome::Consumed);
+            assert!(commit.is_some(), "空格必须上屏首选词");
+            assert!(frame.is_empty(), "首选上屏后组句框必须清空");
+        }
+        other => panic!("意外消息: {other:?}"),
+    }
+
+    // 2. 状态转移: 切入英文模式
+    write_message(&mut client, &ClientMessage::ModeChanged { session: SESSION, english: true }).unwrap();
+    write_message(&mut client, &ClientMessage::SyncMode { session: SESSION }).unwrap();
+    let resp: ServerMessage = read_message(&mut client).unwrap().unwrap();
+    match resp {
+        ServerMessage::ModeSync { english, input, .. } => {
+            assert_eq!(english, Some(true), "模式必须成功同步为英文");
+            assert!(input.english_direct, "english_direct 依然生效");
+        }
+        other => panic!("意外消息: {other:?}"),
+    }
+
+    // 3. 英文模式下断连韧性: 即使客户端主动关闭管道，也不会造成未决死锁
+    drop(client);
 }
