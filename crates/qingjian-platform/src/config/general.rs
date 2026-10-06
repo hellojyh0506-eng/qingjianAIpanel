@@ -52,6 +52,9 @@ pub struct GeneralConfig {
     /// 英文模式（Caps Lock 亮着）是否给英文候选（补全与拼错纠正）。关掉就是纯直通。
     pub english_candidates: bool,
 
+    /// 英文原生直通模式：开着时在英文模式下原生放行英文输入给宿主窗口，不拦截、不走 Server、不注入。缺省关。
+    pub english_direct: bool,
+
     /// 繁体输出模式。
     pub traditional: bool,
     /// 中文模式下中英混输时中文候选总排在英文词前面。缺省关：拼音不像话的输入（`hello`）英文词排第一，
@@ -129,6 +132,7 @@ impl Default for GeneralConfig {
             font: String::new(),
             preedit: PreeditMode::default(),
             english_candidates: true,
+            english_direct: false,
             traditional: false,
             chinese_first: false,
             shift_letter: ShiftLetter::default(),
@@ -268,6 +272,15 @@ impl GeneralConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn english_direct_defaults_to_false_and_parses() {
+        assert!(!GeneralConfig::default().english_direct);
+        let general: GeneralConfig = toml::from_str("").unwrap();
+        assert!(!general.english_direct);
+        let general: GeneralConfig = toml::from_str("english_direct = true\n").unwrap();
+        assert!(general.english_direct);
+    }
 
     #[test]
     fn horizontal_grid_is_off_unless_switched_on() {

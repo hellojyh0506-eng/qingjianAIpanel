@@ -160,6 +160,7 @@ impl Router {
             switch_mode: self.config.switch_mode,
             english_mode: self.config.english_mode,
             shift_letter_compose: self.config.shift_letter_compose,
+            english_direct: self.config.english_direct,
         }
     }
 

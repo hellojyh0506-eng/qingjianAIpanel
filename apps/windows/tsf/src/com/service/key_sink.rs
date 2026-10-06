@@ -125,15 +125,17 @@ impl TextService_Impl {
     /// 组句中功能键 / 方向键 / 可打印字符都吃；没在组句时数字 / 标点也先「测吃」送去转全角（中英各有一份开关），
     /// Server 不转的回 Passthrough 再放行；`?` 是问字前缀。
     fn would_eat(&self, event: &KeyEvent) -> bool {
-        let shift_letter_compose = self
-            .input_settings
-            .get()
+        let input_settings = self.input_settings.get();
+        let shift_letter_compose = input_settings
             .is_some_and(|input| input.shift_letter_compose);
+        let english_direct = input_settings
+            .is_some_and(|input| input.english_direct);
         eats_key(
             event,
             self.shared.composing(),
             self.shared.translating(),
             shift_letter_compose,
+            english_direct,
         )
     }
 
@@ -280,6 +282,9 @@ fn eats_without_server(event: &KeyEvent) -> bool {
 ///
 /// - 翻译评审中一律吃，交给 Server 定接受 / 取消；
 /// - 带 Ctrl / Alt / Win：只有组句中的「修饰键 + 数字」吃（译词 / 删候选），其余归应用（翻译选中文字走保留键）；
+/// - 英文直通模式开着时（`[general] english_direct`，Server 经 [`InputSettings`](qingjian_platform::protocol::InputSettings) 下发）：
+///   在英文模式下（`english_mode` 或 `caps`）且未在组句时，常规英文输入（字母、标点、数字等）一律放行给宿主，
+///   不拦截、不走 Server、不注入；标点全角转换功能在直通模式下不再介入（已知设计行为）；
 /// - 字母只有「中文模式、没在组句、按住 Shift 的大写」归应用，其中 V / U / I 仍吃：双拼下是表达式 / 问字入口。
 ///   `[general] shift_letter = "compose"`（Server 经 [`InputSettings`](qingjian_platform::protocol::InputSettings) 下发）时这种大写也吃：送去 Core 起一段组句，
 ///   `⇧C` 接 `pan` 才能出「C盘」；组句一开始，后面的 Shift 字母本来就被 `composing` 兜住；
@@ -290,6 +295,7 @@ fn eats_key(
     composing: bool,
     translating: bool,
     shift_letter_compose: bool,
+    english_direct: bool,
 ) -> bool {
     if translating {
         return true;
@@ -298,10 +304,13 @@ fn eats_key(
     if modifiers.has_command_key() {
         return composing && digit_key(event.virtual_key);
     }
+    let in_english = modifiers.caps || modifiers.english_mode;
+    if english_direct && in_english && !composing {
+        return false;
+    }
     let vk = event.virtual_key;
     if is_letter(vk) {
-        return modifiers.caps
-            || modifiers.english_mode
+        return in_english
             || !modifiers.shift
             || composing
             || shift_letter_compose
@@ -349,35 +358,40 @@ mod tests {
             &with_modifiers(0x41, 'A', shifted),
             false,
             false,
-            false
+            false,
+            false,
         ));
         // `[general] shift_letter = "compose"`：没在组句也吃，送去起一段组句（⇧C 接 pan 出 C盘）
         assert!(eats_key(
             &with_modifiers(0x41, 'A', shifted),
             false,
             false,
-            true
+            true,
+            false,
         ));
         // 组句一开始，后面的 Shift 字母就被 `composing` 兜住，一律吃
         assert!(eats_key(
             &with_modifiers(0x41, 'A', shifted),
             true,
             false,
-            false
+            false,
+            false,
         ));
         // 双拼下 Shift + V / U / I 是表达式 / 问字入口：没在组句也吃
         assert!(eats_key(
             &with_modifiers(0x56, 'V', shifted),
             false,
             false,
-            false
+            false,
+            false,
         ));
         // 不带 Shift 的字母本来就吃
         assert!(eats_key(
             &with_modifiers(0x41, 'a', KeyModifiers::default()),
             false,
             false,
-            false
+            false,
+            false,
         ));
         // Caps 亮着（直通大写）也吃，由我们插入
         let caps = KeyModifiers {
@@ -388,7 +402,8 @@ mod tests {
             &with_modifiers(0x41, 'A', caps),
             false,
             false,
-            false
+            false,
+            false,
         ));
         // 带 Ctrl 的组合键归应用，翻译评审中一律吃
         let ctrl_c = KeyModifiers {
@@ -399,13 +414,15 @@ mod tests {
             &with_modifiers(0x43, 'c', ctrl_c),
             false,
             false,
-            false
+            false,
+            false,
         ));
         assert!(eats_key(
             &with_modifiers(0x43, 'c', ctrl_c),
             false,
             true,
-            false
+            false,
+            false,
         ));
     }
 
@@ -431,5 +448,145 @@ mod tests {
             ..combo.modifiers
         };
         assert!(!eats_without_server(&combo));
+    }
+
+    #[test]
+    fn english_direct_off_preserves_v014_behavior() {
+        // 当 english_direct 为 false 时，英文模式/Caps 亮着下的字母/数字/标点依然被 TSF 拦截送往 Server
+        let en_mod = KeyModifiers {
+            english_mode: true,
+            ..KeyModifiers::default()
+        };
+        // 常规字母在英文模式下被吃
+        assert!(eats_key(&with_modifiers(0x41, 'a', en_mod), false, false, false, false));
+        // 大写字母在英文模式下被吃
+        let shifted_en = KeyModifiers {
+            english_mode: true,
+            shift: true,
+            ..KeyModifiers::default()
+        };
+        assert!(eats_key(&with_modifiers(0x41, 'A', shifted_en), false, false, false, false));
+        // Caps Lock 亮着时被吃
+        let caps = KeyModifiers {
+            caps: true,
+            ..KeyModifiers::default()
+        };
+        assert!(eats_key(&with_modifiers(0x41, 'A', caps), false, false, false, false));
+        // 标点被吃 (送 Server 转全角或注入)
+        assert!(eats_key(&with_modifiers(0xDE, '\'', en_mod), false, false, false, false));
+        assert!(eats_key(&with_modifiers(0xBE, '.', en_mod), false, false, false, false));
+        // 数字被吃
+        assert!(eats_key(&with_modifiers(0x31, '1', en_mod), false, false, false, false));
+        // 快捷键放行
+        let ctrl_c = KeyModifiers {
+            english_mode: true,
+            ctrl: true,
+            ..KeyModifiers::default()
+        };
+        assert!(!eats_key(&with_modifiers(0x43, 'c', ctrl_c), false, false, false, false));
+    }
+
+    #[test]
+    fn english_direct_on_native_passthrough_all_scenarios() {
+        let en_mod = KeyModifiers {
+            english_mode: true,
+            ..KeyModifiers::default()
+        };
+
+        // 1. a/A & Shift+a
+        assert!(!eats_key(&with_modifiers(0x41, 'a', en_mod), false, false, false, true));
+        let shifted_en = KeyModifiers {
+            english_mode: true,
+            shift: true,
+            ..KeyModifiers::default()
+        };
+        assert!(!eats_key(&with_modifiers(0x41, 'A', shifted_en), false, false, false, true));
+
+        // 2. Caps Lock (直通大写)
+        let caps = KeyModifiers {
+            caps: true,
+            ..KeyModifiers::default()
+        };
+        assert!(!eats_key(&with_modifiers(0x41, 'A', caps), false, false, false, true));
+
+        // 3. I'm / don't (包含单引号 ')
+        assert!(!eats_key(&with_modifiers(0x49, 'I', shifted_en), false, false, false, true));
+        assert!(!eats_key(&with_modifiers(0xDE, '\'', en_mod), false, false, false, true));
+        assert!(!eats_key(&with_modifiers(0x4D, 'm', en_mod), false, false, false, true));
+
+        // 4. C++ (包含 +)
+        assert!(!eats_key(&with_modifiers(0x43, 'C', shifted_en), false, false, false, true));
+        assert!(!eats_key(&with_modifiers(0xBB, '+', shifted_en), false, false, false, true));
+
+        // 5. GPT-5.6 & deepseek-r1 (包含 - . 数字)
+        assert!(!eats_key(&with_modifiers(0xBD, '-', en_mod), false, false, false, true));
+        assert!(!eats_key(&with_modifiers(0x35, '5', en_mod), false, false, false, true));
+        assert!(!eats_key(&with_modifiers(0xBE, '.', en_mod), false, false, false, true));
+        assert!(!eats_key(&with_modifiers(0x36, '6', en_mod), false, false, false, true));
+        assert!(!eats_key(&with_modifiers(0x31, '1', en_mod), false, false, false, true));
+
+        // 6. email@example.com (包含 @ .)
+        assert!(!eats_key(&with_modifiers(0x32, '@', shifted_en), false, false, false, true));
+
+        // 7. URL (https://... 包含 : / ? = &)
+        assert!(!eats_key(&with_modifiers(0xBA, ':', shifted_en), false, false, false, true));
+        assert!(!eats_key(&with_modifiers(0xBF, '/', en_mod), false, false, false, true));
+        assert!(!eats_key(&with_modifiers(0xBF, '?', shifted_en), false, false, false, true));
+        assert!(!eats_key(&with_modifiers(0xBB, '=', en_mod), false, false, false, true));
+        assert!(!eats_key(&with_modifiers(0x37, '&', shifted_en), false, false, false, true));
+
+        // 8. 数字 0-9
+        for vk in 0x30..=0x39 {
+            let ch = char::from_digit(vk - 0x30, 10).unwrap();
+            assert!(!eats_key(&with_modifiers(vk, ch, en_mod), false, false, false, true));
+        }
+
+        // 9. 英文标点全集放行
+        for punct in [',', '.', '/', ';', '\'', '[', ']', '\\', '-', '=', '`', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', '{', '}', '|', ':', '"', '<', '>', '?'] {
+            assert!(!eats_key(&with_modifiers(0, punct, en_mod), false, false, false, true));
+        }
+
+        // 10. 功能键 Space / Backspace / Enter / Esc 放行
+        // 这些键在 to_key_event 中 character 为 None (或 Space ' ')
+        assert!(!eats_key(&with_modifiers(0x20, ' ', en_mod), false, false, false, true)); // Space
+        assert!(!eats_key(&KeyEvent::new(0x08, None, en_mod), false, false, false, true)); // Backspace
+        assert!(!eats_key(&KeyEvent::new(0x0D, None, en_mod), false, false, false, true)); // Enter
+        assert!(!eats_key(&KeyEvent::new(0x1B, None, en_mod), false, false, false, true)); // Esc
+
+        // 11. 快捷键 Ctrl/Alt/Win
+        let ctrl_c = KeyModifiers {
+            english_mode: true,
+            ctrl: true,
+            ..KeyModifiers::default()
+        };
+        assert!(!eats_key(&with_modifiers(0x43, 'c', ctrl_c), false, false, false, true));
+
+        // 12. 中文模式不受影响 (混输保护)
+        let zh_mod = KeyModifiers::default();
+        // 拼音字母必须吃
+        assert!(eats_key(&with_modifiers(0x41, 'a', zh_mod), false, false, false, true));
+        // 中文模式未组句时的 Shift 字母放行 (或进组句)
+        let shifted_zh = KeyModifiers {
+            shift: true,
+            ..KeyModifiers::default()
+        };
+        assert!(!eats_key(&with_modifiers(0x41, 'A', shifted_zh), false, false, false, true));
+        assert!(eats_key(&with_modifiers(0x41, 'A', shifted_zh), false, false, true, true));
+        // 中文模式特殊模式字母 V/U/I 必须吃
+        assert!(eats_key(&with_modifiers(0x56, 'V', shifted_zh), false, false, false, true));
+        assert!(eats_key(&with_modifiers(0x55, 'U', shifted_zh), false, false, false, true));
+        assert!(eats_key(&with_modifiers(0x49, 'I', shifted_zh), false, false, false, true));
+        // 中文模式标点/数字必须吃 (送 Server 转全角)
+        assert!(eats_key(&with_modifiers(0xBC, ',', zh_mod), false, false, false, true));
+        assert!(eats_key(&with_modifiers(0x31, '1', zh_mod), false, false, false, true));
+
+        // 13. 组句状态转移保护 (若存在未完成组句，即使进入英文模式也要吃，保护退格/上屏)
+        assert!(eats_key(&with_modifiers(0x41, 'a', en_mod), true, false, false, true));
+        assert!(eats_key(&KeyEvent::new(0x08, None, en_mod), true, false, false, true)); // Backspace in composition
+        assert!(eats_key(&KeyEvent::new(0x0D, None, en_mod), true, false, false, true)); // Enter in composition
+        assert!(eats_key(&with_modifiers(0x20, ' ', en_mod), true, false, false, true)); // Space in composition
+
+        // 14. 翻译评审中一律吃
+        assert!(eats_key(&with_modifiers(0x41, 'a', en_mod), false, true, false, true));
     }
 }

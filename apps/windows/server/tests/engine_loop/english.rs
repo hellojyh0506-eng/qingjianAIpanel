@@ -189,3 +189,51 @@ fn english_digit_without_a_slot_joins_the_word() {
     assert_eq!((outcome, commit), (KeyOutcome::Consumed, None));
     assert_eq!(preedit(&frame), "hello9");
 }
+
+#[test]
+fn english_direct_config_propagates_to_input_settings() {
+    use qingjian_platform::protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage, SessionId};
+
+    // 默认关闭 (english_direct = false)
+    let mut router = router();
+    let reply = router.handle(ClientMessage::OpenSession {
+        session: SessionId(1),
+        app: None,
+        protocol: PROTOCOL_VERSION,
+    });
+    match reply {
+        Some(ServerMessage::SessionOpened { input, .. }) => {
+            assert!(!input.english_direct);
+        }
+        other => panic!("expected SessionOpened, got {other:?}"),
+    }
+
+    // 开启 (english_direct = true)
+    let mut router = router_with(RouterConfig {
+        english_direct: true,
+        ..RouterConfig::default()
+    });
+    let reply = router.handle(ClientMessage::OpenSession {
+        session: SessionId(2),
+        app: None,
+        protocol: PROTOCOL_VERSION,
+    });
+    match reply {
+        Some(ServerMessage::SessionOpened { input, .. }) => {
+            assert!(input.english_direct);
+        }
+        other => panic!("expected SessionOpened, got {other:?}"),
+    }
+
+    // ModeSync 每一拍也带着该配置
+    let reply = router.handle(ClientMessage::SyncMode {
+        session: SessionId(2),
+    });
+    match reply {
+        Some(ServerMessage::ModeSync { input, .. }) => {
+            assert!(input.english_direct);
+        }
+        other => panic!("expected ModeSync, got {other:?}"),
+    }
+}
+
