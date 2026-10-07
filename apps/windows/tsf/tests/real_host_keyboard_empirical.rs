@@ -21,25 +21,24 @@ use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, CoInitializeEx, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW};
-use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetFocus, MapVirtualKeyW, SendInput, SetFocus,
     INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, MAP_VIRTUAL_KEY_TYPE,
-    VK_MENU, VK_OEM_MINUS, VK_OEM_PERIOD, VK_OEM_PLUS, VK_SHIFT, VK_SPACE,
+    VK_ESCAPE, VK_OEM_MINUS, VK_OEM_PERIOD, VK_OEM_PLUS, VK_SHIFT, VK_SPACE,
 };
 use windows::Win32::UI::TextServices::{
     CLSID_TF_InputProcessorProfiles, CLSID_TF_ThreadMgr, ITfInputProcessorProfiles, ITfThreadMgr,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, PeekMessageW, RegisterClassW,
+    GetForegroundWindow, GetWindowTextW, PeekMessageW, RegisterClassW,
     SetForegroundWindow, ShowWindow, TranslateMessage, MSG, PM_REMOVE, SW_SHOWNORMAL,
     WNDCLASSW, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
 };
 use windows::core::{GUID, PCWSTR, w};
+use std::sync::Mutex;
 
 unsafe extern "system" {
-    fn AttachThreadInput(id_attach: u32, id_attach_to: u32, f_attach: i32) -> i32;
     fn OpenInputDesktop(dw_flags: u32, f_inherit: windows::core::BOOL, dw_desired_access: u32) -> HANDLE;
     fn SetThreadDesktop(h_desktop: HANDLE) -> windows::core::BOOL;
     fn CloseDesktop(h_desktop: HANDLE) -> windows::core::BOOL;
@@ -155,9 +154,17 @@ unsafe extern "system" fn host_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct KeyMessageRecord {
+    hwnd: HWND,
+    message: u32,
+    wparam: usize,
+}
+
 struct RealHostWindow {
     hwnd: HWND,
     hwnd_edit: HWND,
+    recorded_keys: Mutex<Vec<KeyMessageRecord>>,
 }
 
 impl RealHostWindow {
@@ -212,7 +219,11 @@ impl RealHostWindow {
             let _ = SetFocus(Some(hwnd_edit));
         }
 
-        Self { hwnd, hwnd_edit }
+        Self {
+            hwnd,
+            hwnd_edit,
+            recorded_keys: Mutex::new(Vec::new()),
+        }
     }
 
     fn ensure_focus(&self) {
@@ -231,6 +242,11 @@ impl RealHostWindow {
                 while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                     if msg.message >= 0x0100 && msg.message <= 0x0109 {
                         println!("[MSG] hwnd={:?} msg=0x{:04X} wParam=0x{:X}", msg.hwnd, msg.message, msg.wParam.0);
+                        self.recorded_keys.lock().unwrap().push(KeyMessageRecord {
+                            hwnd: msg.hwnd,
+                            message: msg.message,
+                            wparam: msg.wParam.0,
+                        });
                     }
                     let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
@@ -238,6 +254,14 @@ impl RealHostWindow {
             }
             thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    fn clear_records(&self) {
+        self.recorded_keys.lock().unwrap().clear();
+    }
+
+    fn get_records(&self) -> Vec<KeyMessageRecord> {
+        self.recorded_keys.lock().unwrap().clone()
     }
 
     fn get_edit_text(&self) -> String {
@@ -379,34 +403,7 @@ fn test_real_windows_host_keyboard_validation_end_to_end() {
         };
         println!("[REAL-EMPIRICAL] TSF ThreadMgr 已成功激活，client_id = {}", client_id);
 
-        // 显式激活 Qingjian TSF Language Profile，触发 msctf 加载 E:\Qingjian\qingjian_tsf-0.1.4.dll
-        let profiles: ITfInputProcessorProfiles = unsafe {
-            CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)
-                .expect("CoCreateInstance(CLSID_TF_InputProcessorProfiles) 必须成功")
-        };
-        unsafe {
-            let _ = profiles.ActivateLanguageProfile(&CLSID_QINGJIAN, LANGID_ZH_CN, &GUID_PROFILE);
-        }
-        thread::sleep(Duration::from_millis(100));
-
-        // 3. 验证当前进程是否已经真实加载了 E:\Qingjian\qingjian_tsf-0.1.4.dll
-        let h_mod = unsafe {
-            GetModuleHandleW(w!("qingjian_tsf-0.1.4.dll"))
-                .or_else(|_| windows::Win32::System::LibraryLoader::LoadLibraryW(w!(r"E:\Qingjian\qingjian_tsf-0.1.4.dll")))
-        };
-        assert!(h_mod.is_ok(), "[REAL-EMPIRICAL] 当前进程必须已成功加载并映射 qingjian_tsf-0.1.4.dll");
-
-        let mut module_path_buf = [0u16; 512];
-        let path_len = unsafe { GetModuleFileNameW(Some(h_mod.unwrap()), &mut module_path_buf) };
-        let loaded_path = String::from_utf16_lossy(&module_path_buf[..path_len as usize]);
-        println!("[REAL-EMPIRICAL] Host 进程实际加载的 TSF DLL 模块路径: {}", loaded_path);
-        assert_eq!(
-            PathBuf::from(&loaded_path).canonicalize().unwrap_or(PathBuf::from(&loaded_path)),
-            installed_dll_path.canonicalize().unwrap_or(installed_dll_path.clone()),
-            "[REAL-EMPIRICAL] 宿主加载的模块路径必须完全对应 E:\\Qingjian\\qingjian_tsf-0.1.4.dll"
-        );
-
-        // 4. 创建真实 Host Application 窗口与 EDIT 控件
+        // 3. 创建真实 Host Application 窗口与 EDIT 控件，并确保窗口处于焦点状态
         let host = RealHostWindow::new();
         host.pump_messages(Duration::from_millis(100));
 
@@ -417,13 +414,85 @@ fn test_real_windows_host_keyboard_validation_end_to_end() {
             host.hwnd, host.hwnd_edit, fg_now, focus_now
         );
 
+        // 4. 显式激活 Qingjian TSF Language Profile，严格验证返回值
+        let profiles: ITfInputProcessorProfiles = unsafe {
+            CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)
+                .expect("CoCreateInstance(CLSID_TF_InputProcessorProfiles) 必须成功")
+        };
+        unsafe {
+            profiles
+                .ActivateLanguageProfile(&CLSID_QINGJIAN, LANGID_ZH_CN, &GUID_PROFILE)
+                .expect("ActivateLanguageProfile(&CLSID_QINGJIAN, LANGID_ZH_CN, &GUID_PROFILE) 必须返回成功 HRESULT");
+        }
+        println!("[REAL-EMPIRICAL] ActivateLanguageProfile(&CLSID_QINGJIAN) 成功返回 S_OK");
+
+        // 5. 严格调用 GetActiveLanguageProfile 逐项验证当前激活 Profile
+        let mut active_langid: u16 = 0;
+        let mut active_profile: GUID = GUID::zeroed();
+        unsafe {
+            profiles
+                .GetActiveLanguageProfile(&CLSID_QINGJIAN, &mut active_langid, &mut active_profile)
+                .expect("GetActiveLanguageProfile 必须返回成功 HRESULT");
+        }
+        println!(
+            "[REAL-EMPIRICAL] GetActiveLanguageProfile 实际查询结果: LANGID=0x{:04X}, GUID={:?}",
+            active_langid, active_profile
+        );
+        assert_eq!(
+            active_langid, LANGID_ZH_CN,
+            "[REAL-EMPIRICAL] 当前激活的语言 ID 必须严格匹配 0x0804 (LANGID_ZH_CN)"
+        );
+        assert_eq!(
+            active_profile, GUID_PROFILE,
+            "[REAL-EMPIRICAL] 当前激活的 Profile GUID 必须严格匹配 Qingjian Profile GUID"
+        );
+
+        // 驱动消息泵，促使 Windows TSF 真正将 InprocServer32 DLL 映射加载至当前宿主进程
+        host.pump_messages(Duration::from_millis(150));
+
+        // 6. 严格验证系统 TSF 真实加载模块 (绝对禁止任何 LoadLibraryW 伪装 fallback)
+        let h_mod = unsafe { GetModuleHandleW(w!("qingjian_tsf-0.1.4.dll")) }
+            .expect("[REAL-EMPIRICAL] Windows TSF 必须已真正映射加载 qingjian_tsf-0.1.4.dll，严禁任何 LoadLibrary fallback");
+
+        let mut module_path_buf = [0u16; 512];
+        let path_len = unsafe { GetModuleFileNameW(Some(h_mod), &mut module_path_buf) };
+        let loaded_path = String::from_utf16_lossy(&module_path_buf[..path_len as usize]);
+        println!("[REAL-EMPIRICAL] 宿主进程内由 Windows TSF 实际加载映射的模块路径: {}", loaded_path);
+        assert_eq!(
+            PathBuf::from(&loaded_path).canonicalize().unwrap_or(PathBuf::from(&loaded_path)),
+            installed_dll_path.canonicalize().unwrap_or(installed_dll_path.clone()),
+            "[REAL-EMPIRICAL] 宿主加载的模块路径必须完全对应已安装的 E:\\Qingjian\\qingjian_tsf-0.1.4.dll"
+        );
+
+        // 7. 中文拼音模式对照验证：未切英文前，英文字母输入必须被 TSF 拦截并转换为 VK_PROCESSKEY (0xE5)
+        host.clear_edit();
+        host.clear_records();
+        println!("[REAL-EMPIRICAL] 正在对照验证中文模式下的按键行为 (预期被 TSF 拦截为 VK_PROCESSKEY)...");
+        send_system_key(0x41, false); // 发送 'a'
+        host.pump_messages(Duration::from_millis(100));
+        let zh_records = host.get_records();
+        let has_processkey = zh_records.iter().any(|r| r.message == 0x0100 && r.wparam == 0xE5);
+        println!("[REAL-EMPIRICAL] 中文模式下击键是否产生 VK_PROCESSKEY (0xE5): {}", has_processkey);
+        assert!(
+            has_processkey,
+            "[REAL-EMPIRICAL] 中文模式下拼音字母必须被 TSF 拦截并转换为 VK_PROCESSKEY (0xE5)"
+        );
+        assert_eq!(
+            host.get_edit_text(), "",
+            "[REAL-EMPIRICAL] 中文模式未提交时 EDIT 控件内容必须为空"
+        );
+        // 按 Esc 退出未完成的拼音组句
+        send_system_key(VK_ESCAPE.0, false);
+        host.pump_messages(Duration::from_millis(50));
+
+        // 8. 物理模拟单击 Shift 切换至内置英文模式 (English Direct Mode)
         println!("[REAL-EMPIRICAL] 模拟物理单击 Shift 键切换至内置英文模式 (English Direct Mode)");
         send_raw_vk(VK_SHIFT.0, false);
         host.pump_messages(Duration::from_millis(30));
         send_raw_vk(VK_SHIFT.0, true);
         host.pump_messages(Duration::from_millis(200));
 
-        // 5. 真实系统键盘输入验证序列 (使用 Windows SendInput API -> 系统消息分派 -> Qingjian TSF -> EDIT 控件)
+        // 9. 真实系统键盘输入验证序列 (Windows SendInput -> msctf -> Qingjian TSF -> EDIT 控件)
         let test_cases = [
             ("gpt6", "gpt6"),
             ("deepseek-r1", "deepseek-r1"),
@@ -435,12 +504,33 @@ fn test_real_windows_host_keyboard_validation_end_to_end() {
 
         for (input_str, expected_str) in test_cases {
             host.clear_edit();
+            host.clear_records();
             host.pump_messages(Duration::from_millis(50));
 
             println!("[REAL-EMPIRICAL] 正在通过 Windows SendInput 向宿主 EDIT 控件物理发送键击: '{}'", input_str);
             type_system_string(&host, input_str);
             host.pump_messages(Duration::from_millis(200));
 
+            let records = host.get_records();
+
+            // 严格验证 A: 必须有真实 WM_KEYDOWN 到达宿主控件
+            let keydowns: Vec<_> = records.iter().filter(|r| r.message == 0x0100).collect();
+            assert!(!keydowns.is_empty(), "[REAL-EMPIRICAL] 宿主必须收到 WM_KEYDOWN 消息");
+
+            // 严格验证 B: 绝对严禁出现 VK_PROCESSKEY (0xE5)！
+            // 证实按键未被 TSF 当作 IME 拼音消费，而是原生键盘直通宿主
+            for kd in &keydowns {
+                assert_ne!(
+                    kd.wparam, 0xE5,
+                    "[REAL-EMPIRICAL] English Direct 模式下按键严禁被 TSF 截获为 VK_PROCESSKEY (0xE5)"
+                );
+            }
+
+            // 严格验证 C: 必须有真实 WM_KEYUP 到达宿主控件
+            let keyups: Vec<_> = records.iter().filter(|r| r.message == 0x0101).collect();
+            assert!(!keyups.is_empty(), "[REAL-EMPIRICAL] 宿主必须收到 WM_KEYUP 消息");
+
+            // 严格验证 D: 最终 EDIT 文本完全匹配预期字符串，顺序严格保真
             let received = host.get_edit_text();
             println!("[REAL-EMPIRICAL] 宿主 EDIT 控件实际接收到的文本: '{}' (预期: '{}')", received, expected_str);
             assert_eq!(
