@@ -70,8 +70,56 @@ impl Placement {
             Some(StatusAction::TogglePunctuation) => {
                 (self.events)(StatusEvent::TogglePunctuation);
             }
+            Some(StatusAction::ToggleLearningMode) => {
+                (self.events)(StatusEvent::ToggleLearningMode);
+            }
             Some(StatusAction::OpenSettings) => crate::ui::open_settings(),
             None => {}
+        }
+    }
+
+    /// 右键菜单：快捷选择英语学习模式或打开设置。
+    pub(super) fn show_context_menu(&self) {
+        use windows::Win32::Foundation::POINT;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, TrackPopupMenu,
+            MF_SEPARATOR, MF_STRING, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+        };
+        use windows::core::{PCWSTR, w};
+
+        let mut pt = POINT::default();
+        let _ = unsafe { GetCursorPos(&mut pt) };
+
+        let menu = match unsafe { CreatePopupMenu() } {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+
+        unsafe {
+            let _ = AppendMenuW(menu, MF_STRING, 1, w!("日常 (Daily) - 日常输入，不主动打扰"));
+            let _ = AppendMenuW(menu, MF_STRING, 2, w!("学习 (Learn) - 输入时提供学习辅助"));
+            let _ = AppendMenuW(menu, MF_STRING, 3, w!("训练 (Drill) - 主动回忆与对比训练"));
+            let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+            let _ = AppendMenuW(menu, MF_STRING, 4, w!("设置 (Settings)..."));
+
+            let cmd = TrackPopupMenu(
+                menu,
+                TPM_RIGHTBUTTON | TPM_RETURNCMD,
+                pt.x,
+                pt.y,
+                Some(0),
+                self.hwnd,
+                None,
+            );
+            let _ = DestroyMenu(menu);
+
+            match cmd.0 {
+                1 => (self.events)(StatusEvent::SetLearningMode(qingjian_platform::LearningMode::Daily)),
+                2 => (self.events)(StatusEvent::SetLearningMode(qingjian_platform::LearningMode::Learn)),
+                3 => (self.events)(StatusEvent::SetLearningMode(qingjian_platform::LearningMode::Drill)),
+                4 => crate::ui::open_settings(),
+                _ => {}
+            }
         }
     }
 }

@@ -18,6 +18,8 @@ impl Router {
         self.navigated = false;
         self.sentence = None;
         self.passive_translation = None;
+        self.passive_translation_target = None;
+        self.recall_session = None;
         if self.engine.composition().is_empty() {
             self.composed = None;
             self.cancel_prediction();
@@ -33,7 +35,8 @@ impl Router {
             Some((items, preedit, cursor, typed_keys)) => {
                 let layout =
                     CandidateLayout::new(items, self.config.page_size, self.config.cloud_slots);
-                let learning_on = !self.config.learning_language_off
+                let learning_on = self.learning_mode == qingjian_platform::LearningMode::Learn
+                    && !self.config.learning_language_off
                     && self.engine.learning_language() != Language::Chinese
                     && !self.is_private();
                 let first_local = layout.local().first();
@@ -43,6 +46,7 @@ impl Router {
                 if self.engine.prediction_enabled() {
                     if learning_on && !has_local_trans {
                         if let Some(first) = first_local {
+                            self.passive_translation_target = Some(first.text.clone());
                             self.engine.request_translation(&first.text);
                         }
                     } else {
@@ -91,9 +95,30 @@ impl Router {
         }
         if self.engine.last_prediction_kind() == PredictionKind::Translate {
             if let Some(text) = prediction.sentence {
-                self.passive_translation = Some(text);
-                let shown = self.self_drawn_frame();
-                self.reconcile_candidates(&shown);
+                let current_first_text = match &self.composed {
+                    Some(Composed::Candidates { layout, .. }) => {
+                        layout.candidate(0).map(|c| c.text.clone())
+                    }
+                    _ => None,
+                };
+                if let (Some(curr), Some(target)) = (current_first_text, &self.passive_translation_target) {
+                    if curr == *target {
+                        // 异常防发散保护：若目标短语 <= 10 汉字，译文超过 100 字符，判定为模型幻觉或串译发散，坚决丢弃
+                        if target.chars().count() <= 10 && text.chars().count() > 100 {
+                            tracing::warn!(target = %target, trans_len = text.len(), "丢弃长度严重失真的被动翻译异常");
+                            return;
+                        }
+                        self.passive_translation = Some(text);
+                        let shown = self.self_drawn_frame();
+                        self.reconcile_candidates(&shown);
+                    } else {
+                        tracing::debug!(
+                            "丢弃过期的被动翻译结果: 目标为 {:?}, 但当前首选为 {:?}",
+                            target,
+                            curr
+                        );
+                    }
+                }
             }
             return;
         }
@@ -220,8 +245,15 @@ impl Router {
         if let Some(translation) = &self.translation {
             return self.translation_frame(translation);
         }
+        if self.recall_session.is_some() {
+            return self.recall_frame();
+        }
         match &self.composed {
-            None => Frame::default(),
+            None => Frame {
+                notice: self.notice.clone(),
+                learning_mode: self.learning_mode,
+                ..Frame::default()
+            },
             Some(Composed::Raw { text, cursor }) => Frame {
                 preedit: vec![PreeditSegment {
                     text: text.clone(),
@@ -238,6 +270,7 @@ impl Router {
                 aux_code_show: self.config.aux_code_show,
                 sentence: None,
                 notice: self.notice.clone(),
+                learning_mode: self.learning_mode,
             },
             Some(Composed::Candidates {
                 preedit,
@@ -255,10 +288,10 @@ impl Router {
                     .collect();
                 let mut candidates = CandidateList { items };
                 self.engine.annotate(&mut candidates);
-                if let Some(passive) = &self.passive_translation {
+                if let (Some(passive), Some(target)) = (&self.passive_translation, &self.passive_translation_target) {
                     if page == 0 {
                         if let Some(first) = candidates.items.first_mut() {
-                            if first.translation.is_none() {
+                            if first.text == *target && first.translation.is_none() {
                                 first.translation = Some(Translation::new(
                                     self.engine.learning_language(),
                                     vec![Sense {
@@ -285,6 +318,7 @@ impl Router {
                     aux_code_show: self.config.aux_code_show,
                     sentence: self.sentence.clone(),
                     notice: self.notice.clone(),
+                    learning_mode: self.learning_mode,
                 }
             }
         }

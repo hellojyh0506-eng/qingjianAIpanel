@@ -15,8 +15,10 @@ use crate::config::PredictConfig;
 use crate::error::PredictError;
 use crate::prompt::{self, Reply};
 
-/// 联想回复的 token 上限：几条短句足够，防止模型长篇大论。
-const MAX_TOKENS: u32 = 200;
+/// 联想与翻译回复的 token 上限：整句翻译 1500（防止长句截断），组句 300，问字 200。
+const TRANSLATE_MAX_TOKENS: u32 = 1500;
+const COMPOSE_MAX_TOKENS: u32 = 300;
+const QUESTION_MAX_TOKENS: u32 = 200;
 
 /// 采样温度：联想要稳，不要花。
 const TEMPERATURE: f32 = 0.3;
@@ -63,8 +65,13 @@ impl ChatClient {
     pub async fn complete(&self, request: &PredictionRequest) -> Result<Reply, PredictError> {
         let user = prompt::user_prompt(request);
         tracing::debug!(sequence = request.sequence, %user, "联想请求");
+        let max_tokens = match request.kind {
+            qingjian_core::PredictionKind::Translate => TRANSLATE_MAX_TOKENS,
+            qingjian_core::PredictionKind::Compose => COMPOSE_MAX_TOKENS,
+            qingjian_core::PredictionKind::Question => QUESTION_MAX_TOKENS,
+        };
         let content = self
-            .chat(prompt::system_prompt(request), &user, MAX_TOKENS)
+            .chat(prompt::system_prompt(request), &user, max_tokens)
             .await?;
         Ok(prompt::parse_reply(&content, request))
     }

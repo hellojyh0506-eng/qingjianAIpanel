@@ -459,6 +459,62 @@ impl Engine {
         self
     }
 
+    pub fn with_recall_tracker(mut self, tracker: Box<dyn RecallTracker>) -> Self {
+        self.recall = tracker;
+        self
+    }
+
+    pub fn set_recall_tracker(&mut self, tracker: Box<dyn RecallTracker>) {
+        self.recall = tracker;
+    }
+
+    pub fn record_recall(
+        &mut self,
+        language: Language,
+        prompt: &str,
+        target: &str,
+        outcome: RecallOutcome,
+    ) {
+        if !self.private {
+            self.recall.record_recall(language, prompt, target, outcome);
+        }
+    }
+
+    pub fn record_recall_with_input(
+        &mut self,
+        language: Language,
+        prompt: &str,
+        target: &str,
+        outcome: RecallOutcome,
+        input: &str,
+    ) {
+        if !self.private {
+            self.recall
+                .record_recall_with_input(language, prompt, target, outcome, input);
+        }
+    }
+
+    pub fn preferred_recall_alternative(
+        &self,
+        language: Language,
+        prompt: &str,
+        target: &str,
+    ) -> Option<String> {
+        self.recall.preferred_alternative(language, prompt, target)
+    }
+
+    pub fn next_recall_item(&self, language: Language) -> Option<RecallItem> {
+        self.recall.next_item(language)
+    }
+
+    pub fn recall_pending_count(&self, language: Language) -> usize {
+        self.recall.pending_count(language)
+    }
+
+    pub fn flush_recall(&mut self) {
+        self.recall.flush();
+    }
+
     pub fn with_gloss_filler(mut self, filler: Box<dyn GlossFiller>) -> Self {
         self.gloss_filler = filler;
         self

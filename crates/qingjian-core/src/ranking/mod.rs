@@ -18,7 +18,7 @@ mod scored;
 
 use std::collections::HashSet;
 
-pub use scored::{PreselectKey, Scored, SortKey};
+pub use scored::{PreselectKey, Scored, SortKey, is_functional_word};
 
 /// 用户选择次数的加分系数：加分 = 系数 × ln(1 + min(次数, [`WEIGHT_CAP`]))。
 /// 这个加分只负责「同音词里偏向用户常选的那个」，所以既取对数又封顶（最多约 1.5 分，e^1.5 ≈ 4.5 倍），
@@ -61,7 +61,7 @@ pub fn rank(
         .drain(..)
         .map(|item| {
             let (choice, log_prob) = context(&item);
-            let score = log_prob + weight_bonus(item.weight) - item.penalty;
+            let score = log_prob + weight_bonus(item.weight) + weight_bonus(choice) - item.penalty;
             (item.key(choice, score), item)
         })
         .collect();

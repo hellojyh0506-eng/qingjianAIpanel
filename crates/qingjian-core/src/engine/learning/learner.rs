@@ -92,6 +92,17 @@ pub trait Learner: Send {
         false
     }
 
+    /// 记录一次错字/同音词更正：用户在 `context` 下输入并提交了 `mistyped`，随后撤销并更正为 `corrected`。
+    fn record_correction(&mut self, _context: &str, _mistyped: &str, _corrected: &str) {}
+
+    /// 用户在 `context` 下直接提交了 `choice` 且未撤销；若该词处于混淆更正跟踪中，则确认其正确使用。
+    fn confirm_choice(&mut self, _context: &str, _choice: &str) {}
+
+    /// 获取该候选词在当前前文下的个性化修正得分加权。
+    fn correction_adjustment(&self, _before: Option<&str>, _candidate: &str) -> f64 {
+        0.0
+    }
+
     /// 把学习数据落盘。壳在退出或停用输入法时调用；内存实现留空即可。
     ///
     /// 失败只记日志不返回错误：输入优先于学习，持久化失败不该影响壳的流程。

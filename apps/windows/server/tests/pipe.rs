@@ -8,8 +8,9 @@ use std::thread;
 use std::time::Duration;
 
 use qingjian_core::Language;
+use qingjian_learning::RecallBook;
 use qingjian_platform::protocol::{
-    ClientMessage, KeyEvent, PROTOCOL_VERSION, ServerMessage, SessionId,
+    ClientMessage, KeyEvent, KeyModifiers, PROTOCOL_VERSION, ServerMessage, SessionId,
 };
 use qingjian_windows_server::ipc::pipe::serve_pipe;
 use qingjian_windows_server::ipc::{read_message, write_message};
@@ -192,3 +193,239 @@ fn named_pipe_passive_translation_and_space_commits_chinese_only() {
     );
     assert!(after_frame.is_empty(), "上屏后候选框收起");
 }
+
+#[test]
+fn named_pipe_active_recall_round_trip() {
+    let name = format!(r"\\.\pipe\qingjian-test-recall-{}", std::process::id());
+    let temp_dir = std::env::temp_dir().join(format!("qingjian-pipe-recall-{}", std::process::id()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let recall_path = temp_dir.join("user-recall.tsv");
+
+    let server_name = name.clone();
+    let recall_path_clone = recall_path.clone();
+    thread::spawn(move || {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let mut engine = assembly::assemble(&AssemblySpec {
+            glossary: Some((
+                Language::English,
+                root.join("assets/sample/glossary-en.tsv"),
+            )),
+            ..AssemblySpec::new(root.join("assets/sample/dict.tsv"))
+        })
+        .expect("assemble engine from sample data");
+        let recall_book = RecallBook::open(recall_path_clone);
+        engine.set_recall_tracker(Box::new(recall_book));
+        let mut router = Router::new(engine, RouterConfig::default());
+        let (work_tx, work_rx) = std::sync::mpsc::channel();
+        let _ = serve_pipe(&server_name, &mut router, work_tx, work_rx);
+    });
+
+    let mut client = connect(&name);
+
+    write_message(
+        &mut client,
+        &ClientMessage::OpenSession {
+            session: SESSION,
+            app: None,
+            protocol: PROTOCOL_VERSION,
+        },
+    )
+    .unwrap();
+    let _: ServerMessage = read_message(&mut client).unwrap().unwrap();
+
+    // 1. 输入 kaifa 并空格上屏，产生曝光
+    for c in "kaifa".chars() {
+        write_message(
+            &mut client,
+            &ClientMessage::Key {
+                session: SESSION,
+                event: letter(c),
+            },
+        )
+        .unwrap();
+        let _: ServerMessage = read_message(&mut client).unwrap().unwrap();
+    }
+    let space = KeyEvent::new(0x20, Some(' '), Default::default());
+    write_message(
+        &mut client,
+        &ClientMessage::Key {
+            session: SESSION,
+            event: space,
+        },
+    )
+    .unwrap();
+    let _: ServerMessage = read_message(&mut client).unwrap().unwrap();
+
+    // 2. 发送 Ctrl + Alt + R 开启主动回忆
+    let ctrl_alt_r = KeyEvent::new(
+        'R' as u32,
+        Some('r'),
+        KeyModifiers {
+            ctrl: true,
+            alt: true,
+            shift: false,
+            win: false,
+            caps: false,
+            english_mode: false,
+        },
+    );
+    write_message(
+        &mut client,
+        &ClientMessage::Key {
+            session: SESSION,
+            event: ctrl_alt_r,
+        },
+    )
+    .unwrap();
+    let recall_open_msg: ServerMessage = read_message(&mut client).unwrap().unwrap();
+    if let ServerMessage::KeyResult { frame, .. } = recall_open_msg {
+        assert!(frame.notice.as_deref().unwrap().contains("开发"));
+    } else {
+        panic!("expected KeyResult for Ctrl+Alt+R");
+    }
+
+    // 3. 跨管道键入 "develop"
+    for c in "develop".chars() {
+        write_message(
+            &mut client,
+            &ClientMessage::Key {
+                session: SESSION,
+                event: letter(c),
+            },
+        )
+        .unwrap();
+        let _: ServerMessage = read_message(&mut client).unwrap().unwrap();
+    }
+
+    // 4. 按 Enter 提交
+    let enter = KeyEvent::new(0x0D, Some('\r'), Default::default());
+    write_message(
+        &mut client,
+        &ClientMessage::Key {
+            session: SESSION,
+            event: enter,
+        },
+    )
+    .unwrap();
+    let result_msg: ServerMessage = read_message(&mut client).unwrap().unwrap();
+    if let ServerMessage::KeyResult { frame, .. } = result_msg {
+        assert!(frame.notice.as_deref().unwrap().contains("正确"));
+    } else {
+        panic!("expected KeyResult for enter");
+    }
+
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+}
+
+#[test]
+fn test_real_running_server_shui_yue_and_zhengliushui() {
+    let mut client = match OpenOptions::new().read(true).write(true).open(r"\\.\pipe\qingjian") {
+        Ok(f) => f,
+        Err(_) => return, // Server not running, skip
+    };
+    let session = SessionId(999);
+    write_message(&mut client, &ClientMessage::OpenSession {
+        session,
+        app: None,
+        protocol: PROTOCOL_VERSION,
+    }).unwrap();
+    let _: ServerMessage = read_message(&mut client).unwrap().unwrap(); // SessionOpened
+
+    let type_keys = |client: &mut std::fs::File, input: &str| -> qingjian_platform::protocol::Frame {
+        let mut last_frame = None;
+        for c in input.chars() {
+            write_message(client, &ClientMessage::Key {
+                session,
+                event: letter(c),
+            }).unwrap();
+            let msg: ServerMessage = read_message(client).unwrap().unwrap();
+            if let ServerMessage::KeyResult { frame, .. } = msg {
+                last_frame = Some(frame);
+            }
+        }
+        last_frame.unwrap()
+    };
+
+    let commit_esc = |client: &mut std::fs::File| {
+        let esc = KeyEvent::new(0x1B, None, Default::default());
+        write_message(client, &ClientMessage::Key {
+            session,
+            event: esc,
+        }).unwrap();
+        let _: ServerMessage = read_message(client).unwrap().unwrap();
+    };
+
+    // 1. 打 shui
+    let frame_shui = type_keys(&mut client, "shui");
+    let candidates_shui: Vec<String> = frame_shui.candidates.items.into_iter().map(|c| c.text).collect();
+    println!("candidates_shui: {:?}", candidates_shui);
+    assert!(!candidates_shui.is_empty());
+    assert_ne!(candidates_shui[0], "说", "shui 首选绝不能是「说」");
+    if candidates_shui.len() > 1 {
+        assert_ne!(candidates_shui[1], "说");
+    }
+    if candidates_shui.len() > 2 {
+        assert_ne!(candidates_shui[2], "说");
+    }
+    commit_esc(&mut client);
+
+    // 2. 打 yue
+    let frame_yue = type_keys(&mut client, "yue");
+    let candidates_yue: Vec<String> = frame_yue.candidates.items.into_iter().map(|c| c.text).collect();
+    println!("candidates_yue: {:?}", candidates_yue);
+    assert_eq!(candidates_yue[0], "月", "yue 首选应为「月」");
+    assert!(!candidates_yue[..3.min(candidates_yue.len())].contains(&"说".to_string()), "yue 前三候选不能包含「说」");
+    commit_esc(&mut client);
+
+    // 3. 打 qing'chun'de'zheng'liu'shui
+    let frame_all = type_keys(&mut client, "qingchundezhengliushui");
+    let candidates_all: Vec<String> = frame_all.candidates.items.into_iter().map(|c| c.text).collect();
+    println!("candidates_all: {:?}", candidates_all);
+    assert!(!candidates_all.is_empty());
+    assert_eq!(candidates_all[0], "青春的蒸馏水", "首选必须是「青春的蒸馏水」，不能是「青春的蒸馏说」");
+    commit_esc(&mut client);
+}
+
+#[test]
+fn test_real_running_server_learning_mode_switch() {
+    let mut client = match OpenOptions::new().read(true).write(true).open(r"\\.\pipe\qingjian") {
+        Ok(f) => f,
+        Err(_) => return, // Server not running, skip
+    };
+    let session = SessionId(998);
+    write_message(&mut client, &ClientMessage::OpenSession {
+        session,
+        app: None,
+        protocol: PROTOCOL_VERSION,
+    }).unwrap();
+    let _: ServerMessage = read_message(&mut client).unwrap().unwrap(); // SessionOpened
+
+    // 1. 发送 Ctrl+Alt+L 切换模式
+    let toggle_key = KeyEvent::new(
+        'L' as u32,
+        Some('l'),
+        KeyModifiers {
+            ctrl: true,
+            alt: true,
+            ..Default::default()
+        },
+    );
+    write_message(&mut client, &ClientMessage::Key {
+        session,
+        event: toggle_key,
+    }).unwrap();
+    let msg: ServerMessage = read_message(&mut client).unwrap().unwrap();
+    if let ServerMessage::KeyResult { frame, .. } = msg {
+        println!("Switched learning mode via pipe: {:?}", frame.learning_mode);
+        assert!(
+            frame.learning_mode == qingjian_platform::LearningMode::Learn
+            || frame.learning_mode == qingjian_platform::LearningMode::Drill
+            || frame.learning_mode == qingjian_platform::LearningMode::Daily
+        );
+        assert!(frame.notice.is_some());
+    } else {
+        panic!("expected KeyResult");
+    }
+}
+
+

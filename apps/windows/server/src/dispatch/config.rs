@@ -91,6 +91,12 @@ pub struct RouterConfig {
 
     /// 学习语言关着（`[general] learning_language = "off"`）：候选旁不显示译文，被动翻译也停。
     pub learning_language_off: bool,
+
+    /// 英语学习模式（`[general] learning_mode`）。
+    pub learning_mode: qingjian_platform::LearningMode,
+
+    /// 切换学习模式快捷键（`[shortcut] toggle_learning_mode`）。
+    pub toggle_learning_mode: KeyCombo,
 }
 
 impl RouterConfig {
@@ -141,6 +147,8 @@ impl From<&Config> for RouterConfig {
             aux_code_key: config.general.aux_code_key(),
             aux_code_show: config.general.aux_code_show,
             learning_language_off: config.general.learning_language_off(),
+            learning_mode: config.general.learning_mode,
+            toggle_learning_mode: config.shortcut.toggle_learning_mode,
         }
     }
 }

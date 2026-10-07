@@ -133,6 +133,34 @@ pub fn convert_paths(
     cost: impl Fn(usize, &str) -> f64,
     cache: &mut SpanCache,
 ) -> Vec<Conversion> {
+    convert_paths_with_context(
+        dictionaries,
+        positions,
+        keep_partial,
+        k,
+        Context::START,
+        model,
+        personal,
+        weight,
+        cost,
+        cache,
+    )
+}
+
+/// 支持外部初始上下文（光标前文）的整句路径转换。
+#[allow(clippy::too_many_arguments)]
+pub fn convert_paths_with_context(
+    dictionaries: &[&Dictionary],
+    positions: &[Vec<SyllablePattern<'_>>],
+    keep_partial: bool,
+    k: usize,
+    initial_context: Context<'_>,
+    model: &dyn LanguageModel,
+    personal: Personal<'_>,
+    weight: impl Fn(&str) -> u32,
+    cost: impl Fn(usize, &str) -> f64,
+    cache: &mut SpanCache,
+) -> Vec<Conversion> {
     let Some((last, head)) = positions.split_last() else {
         return Vec::new();
     };
@@ -187,27 +215,43 @@ pub fn convert_paths(
                 continue;
             }
             any = true;
+            let max_preds = if k > 1 { 4 } else { 1 };
             for hit in hits.iter() {
                 let bonus = weight_bonus(weight(&hit.text));
                 let fallback = fallback_log_prob(hit.frequency, log_total);
-                let (score, back) =
-                    best_predecessor(&nodes, start, &hit.text, model, personal, fallback);
-                let previous = &nodes[start][back];
-                let penalty = previous.penalty + hit.penalty;
-                let static_step = model
-                    .log_prob((start > 0).then_some(previous.text.as_str()), &hit.text)
-                    .unwrap_or(fallback);
-                let static_score = previous.static_score + static_step;
-                nodes[end].push(Node {
+                let preds = top_predecessors(
+                    &nodes,
                     start,
-                    text: hit.text.clone(),
-                    syllables: hit.syllables.clone(),
-                    score: score + bonus - hit.penalty,
-                    static_score,
-                    back,
-                    placeholder: false,
-                    penalty,
-                });
+                    &hit.text,
+                    initial_context,
+                    model,
+                    personal,
+                    fallback,
+                    max_preds,
+                );
+                for (score, back) in preds {
+                    let previous = &nodes[start][back];
+                    let penalty = previous.penalty + hit.penalty;
+                    let prev_text = if start > 0 {
+                        Some(previous.text.as_str())
+                    } else {
+                        initial_context.previous
+                    };
+                    let static_step = model
+                        .log_prob(prev_text, &hit.text)
+                        .unwrap_or(fallback);
+                    let static_score = previous.static_score + static_step;
+                    nodes[end].push(Node {
+                        start,
+                        text: hit.text.clone(),
+                        syllables: hit.syllables.clone(),
+                        score: score + bonus - hit.penalty,
+                        static_score,
+                        back,
+                        placeholder: false,
+                        penalty,
+                    });
+                }
             }
         }
         // 这个音节连单字都查不到：用音节本身占位，别让整句断掉
@@ -217,6 +261,7 @@ pub fn convert_paths(
                 &nodes,
                 start,
                 text,
+                initial_context,
                 &NoModel,
                 Personal::NONE,
                 UNKNOWN_LOG_PROB,
@@ -343,33 +388,62 @@ fn span_candidates(
         .collect()
 }
 
-/// 在 `nodes[start]` 的前驱里挑让 `word` 得分最高的那条，返回 (累计得分, 前驱下标)。
-/// 转移概率先问静态模型（不认识就用词库兜底值），再与个人 n-gram 插值；前二词是前驱自己的前驱（回指）。
+/// 在 `nodes[start]` 的前驱里挑得分最高的若干条前驱，返回 Vec<(累计得分, 前驱下标)>。
+/// 当 k > 1 时保留前几条有竞争力的前驱，避免由于单一前驱合并导致多样性丢失（如全局远距离约束所需的不同分支）。
+fn top_predecessors(
+    nodes: &[Vec<Node>],
+    start: usize,
+    word: &str,
+    initial: Context<'_>,
+    model: &dyn LanguageModel,
+    personal: Personal<'_>,
+    fallback: f64,
+    max_preds: usize,
+) -> Vec<(f64, usize)> {
+    if nodes[start].is_empty() {
+        return vec![(f64::NEG_INFINITY, 0)];
+    }
+    let mut scored: Vec<(f64, usize)> = Vec::with_capacity(nodes[start].len());
+    for (index, previous) in nodes[start].iter().enumerate() {
+        let context = if start == 0 {
+            initial
+        } else {
+            Context {
+                previous: Some(previous.text.as_str()),
+                earlier: if previous.start > 0 {
+                    Some(nodes[previous.start][previous.back].text.as_str())
+                } else {
+                    initial.previous
+                },
+            }
+        };
+        let context_adj = crate::engine::disambiguation::contextual_score_adjustment(
+            context.previous,
+            word,
+        );
+        let score = previous.score
+            + transition_log_prob(model, personal, context, word, fallback)
+            + context_adj;
+        scored.push((score, index));
+    }
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    let best_score = scored[0].0;
+    // 保留与最优差距在 8.0 log-prob 以内的前驱，最多截取 max_preds 条
+    scored.retain(|(s, _)| *s >= best_score - 8.0);
+    scored.truncate(max_preds);
+    scored
+}
+
 fn best_predecessor(
     nodes: &[Vec<Node>],
     start: usize,
     word: &str,
+    initial: Context<'_>,
     model: &dyn LanguageModel,
     personal: Personal<'_>,
     fallback: f64,
 ) -> (f64, usize) {
-    let mut best = (f64::NEG_INFINITY, 0);
-    for (index, previous) in nodes[start].iter().enumerate() {
-        let context = if start == 0 {
-            Context::START
-        } else {
-            Context {
-                previous: Some(previous.text.as_str()),
-                earlier: (previous.start > 0)
-                    .then(|| nodes[previous.start][previous.back].text.as_str()),
-            }
-        };
-        let score = previous.score + transition_log_prob(model, personal, context, word, fallback);
-        if score > best.0 {
-            best = (score, index);
-        }
-    }
-    best
+    top_predecessors(nodes, start, word, initial, model, personal, fallback, 1)[0]
 }
 
 /// 按得分降序只留束宽条。

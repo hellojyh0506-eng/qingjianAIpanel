@@ -65,6 +65,21 @@ impl Router {
                 tracing::debug!(english, full_width, "状态条：切换全角标点");
                 self.persist("general", key, full_width);
             }
+            StatusEvent::ToggleLearningMode => {
+                let next = self.learning_mode.next();
+                self.learning_mode = next;
+                self.config.learning_mode = next;
+                tracing::info!(mode = ?next, "状态条：切换英语学习模式");
+                self.persist("general", "learning_mode", next.key());
+                self.notice = Some(format!("已切换至【{}】", next.label()));
+            }
+            StatusEvent::SetLearningMode(mode) => {
+                self.learning_mode = mode;
+                self.config.learning_mode = mode;
+                tracing::info!(mode = ?mode, "状态条：设置英语学习模式");
+                self.persist("general", "learning_mode", mode.key());
+                self.notice = Some(format!("已切换至【{}】", mode.label()));
+            }
             StatusEvent::Moved(x, y) => {
                 self.config.status_pos = Some((x, y));
                 self.persist("status_bar", "x", i64::from(x));
@@ -72,6 +87,13 @@ impl Router {
             }
         }
         self.reconcile_status();
+    }
+
+    /// 快捷键切换学习模式比对（默认 Ctrl+Alt+L）。
+    pub(super) fn matches_learning_mode_combo(&self, event: &qingjian_platform::protocol::KeyEvent) -> bool {
+        let combo = self.config.toggle_learning_mode;
+        event.character.map(|c| c.to_ascii_lowercase()) == Some(combo.key.to_ascii_lowercase())
+            && event.modifiers.chord() == qingjian_platform::protocol::KeyModifiers::from(combo.modifiers)
     }
 
     /// 任务栏图标右键菜单：标点与悬浮条的开关写回配置文件（热加载会再读回来），设置程序交给 UI 起。
@@ -91,7 +113,7 @@ impl Router {
     }
 
     /// 写回配置文件一个键；没有配置路径（测试）就只改内存。
-    fn persist(&self, section: &str, key: &str, value: impl Into<toml_edit::Value>) {
+    pub(super) fn persist(&self, section: &str, key: &str, value: impl Into<toml_edit::Value>) {
         let Some(path) = self.config_path() else {
             return;
         };
@@ -121,6 +143,7 @@ impl Router {
                         .filter(|label| !label.is_empty()),
                     full_width: self.full_width_for(english),
                     theme: self.config.theme,
+                    learning_mode: self.learning_mode,
                     anchor: self.config.status_pos,
                 });
             }

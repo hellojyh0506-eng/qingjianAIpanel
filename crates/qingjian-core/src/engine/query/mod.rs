@@ -174,7 +174,8 @@ impl Engine {
         };
         // 拼音「不像话」时试拼写纠错；纠正生效则按纠正后的切分查词，原串只用来记学习与显示
         let unlikely = correction::unlikely_pinyin(segmentations.first(), tail)
-            || correction::trailing_single_letter(segmentations.first());
+            || correction::trailing_single_letter(segmentations.first())
+            || (scope.contains('\'') && correction::recovery::recover_noisy_pinyin(scope).is_some());
         let correction = if unlikely {
             self.active_correction(scope)
         } else {
@@ -252,6 +253,12 @@ impl Engine {
         // `ba` 在「做了」后面出 吧、句首出 把
         let log_total = (self.total_frequency() as f64).max(1.0).ln();
         let letters = choice_key(scope, scope.len());
+        let (eff_prev, eff_earlier) = self.effective_context();
+        let eff_ctx = sentence::Context {
+            previous: eff_prev.as_deref(),
+            earlier: eff_earlier.as_deref(),
+        };
+        let before_text = self.effective_before();
         ranking::rank(&mut scored, MAX_CANDIDATES, |item| {
             let hit = &item.hit;
             // 纠错生效时覆盖的是纠正后的字母，换算回原串再查「这个输入串下选过什么」
@@ -264,10 +271,11 @@ impl Engine {
             let log_prob = sentence::transition_log_prob(
                 &*self.language_model,
                 self.personal(),
-                self.chain.context(),
+                eff_ctx,
                 hit.text,
                 sentence::fallback_log_prob(hit.frequency, log_total),
-            );
+            ) + disambiguation::contextual_score_adjustment(before_text, hit.text)
+              + self.learner.correction_adjustment(before_text, hit.text);
             (choice, log_prob)
         });
         // 辅码态：词库候选按码段**反向**过滤（逐个问「有没有以码段开头的码」），无码词直接隐藏；
@@ -629,27 +637,42 @@ impl Engine {
     ) -> Option<Conversion> {
         let dictionaries = self.all_dictionaries();
         let expanded = self.expand_positions(patterns, typos);
-        let k = if self.has_sentence_scorer() {
-            RESCORE_PATHS
-        } else {
-            1
+        let k = RESCORE_PATHS;
+        let (eff_prev, eff_earlier) = self.effective_context();
+        let eff_ctx = sentence::Context {
+            previous: eff_prev.as_deref(),
+            earlier: eff_earlier.as_deref(),
         };
-        let mut paths = sentence::convert_paths(
+        let mut paths = sentence::convert_paths_with_context(
             &dictionaries,
             &expanded.positions(),
             whole,
             k,
+            eff_ctx,
             &*self.language_model,
             self.personal(),
             |text| self.learner.weight(text),
             |index, syllable| expanded.cost(index, syllable),
             &mut self.span_cache.borrow_mut(),
         );
-        // 与最优路径差得太远的不参与：那种差距多半是个人 n-gram 拉开的
+        // Level 2 Global Sentence Reranking:
+        // 评估候选路径的整句全局语义一致性 (如远距离性别指代/搭配一致性)，并与神经打分器协同
         if paths.len() > 1 {
-            let floor = paths[0].score - self.neural_margin;
-            paths.retain(|p| p.score >= floor);
-            self.rescore_paths(&mut paths);
+            for path in paths.iter_mut() {
+                let adj = crate::engine::disambiguation::sentence_semantic_consistency(&path.text);
+                path.score += adj;
+            }
+            paths.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            if self.has_sentence_scorer() {
+                let floor = paths[0].score - self.neural_margin;
+                paths.retain(|p| p.score >= floor);
+                self.rescore_paths(&mut paths);
+            }
         }
         paths.into_iter().next()
     }

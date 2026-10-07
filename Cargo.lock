@@ -2862,7 +2862,7 @@ dependencies = [
 
 [[package]]
 name = "qingjian-windows-server"
-version = "0.1.4"
+version = "0.1.4-dev-fork"
 dependencies = [
  "dotenvy",
  "embed-manifest",
@@ -2909,7 +2909,7 @@ dependencies = [
 
 [[package]]
 name = "qingjian-windows-tsf"
-version = "0.1.4"
+version = "0.1.4-dev-fork"
 dependencies = [
  "qingjian-core",
  "qingjian-platform",

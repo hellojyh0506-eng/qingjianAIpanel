@@ -1996,7 +1996,7 @@
 不是你的	bu shi ni de	884
 不是去	bu shi qu	2387
 不是吗	bu shi ma	3507
-不是吧	bu shi ba	6104
+不是吧	bu shi ba	30000
 不是味儿	bu shi wei er	22
 不是啊	bu shi a	6821
 不是啦	bu shi la	2817
@@ -8020,7 +8020,7 @@
 你明天	ni ming tian	4638
 你昨天	ni zuo tian	2654
 你是	ni shi	183737
-你是不是	ni shi bu shi	24418
+你是不是	ni shi bu shi	48000
 你是个	ni shi ge	2496
 你是什么	ni shi shen me	3831
 你是在	ni shi zai	2963
@@ -9664,7 +9664,7 @@
 傻大黑粗	sha da hei cu	6
 傻头傻脑	sha tou sha nao	6
 傻妞	sha niu	523
-傻子	sha zi	60
+傻子	sha zi	9940
 傻帽	sha mao	259
 傻愣愣	sha leng leng	16
 傻样	sha yang	323
@@ -26953,7 +26953,7 @@
 妮丝	ni si	287
 妮亚	ni ya	307
 妮佛	ni fo	11
-妮儿	ni er	253
+妮儿	ni er	12000
 妮卡	ni ka	269
 妮可	ni ke	412
 妮娜	ni na	313
@@ -35289,7 +35289,7 @@
 得分	de fen	3223
 得到	de dao	36142
 得力	de li	279
-得劲	de jin	485
+得劲	de jin	15000
 得势	de shi	46
 得天独厚	de tian du hou	44
 得失	de shi	431
@@ -35370,7 +35370,8 @@
 微不足道	wei bu zu dao	301
 微东	wei dong	466
 微乎其微	wei hu qi wei	125
-微信	wei xin	716
+微信	wei xin	85000
+微信输入法	wei xin shu ru fa	25000
 微信公众号	wei xin gong zhong hao	272
 微信支付	wei xin zhi fu	89
 微信朋友圈	wei xin peng you quan	60
@@ -36076,7 +36077,7 @@
 怎么可能	zen me ke neng	9241
 怎么吃	zen me chi	2989
 怎么啦	zen me la	5245
-怎么回事	zen me hui shi	5793
+怎么回事	zen me hui shi	35000
 怎么就	zen me jiu	6279
 怎么弄	zen me nong	2216
 怎么得了	zen me de liao	99
@@ -36470,7 +36471,7 @@
 总额	zong e	3817
 怼	dui	6396
 怿	yi	104
-恁	nen	740
+恁	nen	12000
 恁	nin	37
 恂	xun	219
 恃	shi	202
@@ -46300,7 +46301,7 @@
 智英	zhi ying	54
 智谋	zhi mou	61
 智达	zhi da	54
-智障	zhi zhang	98
+智障	zhi zhang	18500
 智齿	zhi chi	4093
 晾	liang	1025
 晾台	liang tai	4
@@ -66502,7 +66503,7 @@
 箖	lin	3
 算	suan	61105
 算不算	suan bu suan	16
-算了	suan le	19519
+算了	suan le	35000
 算了吧	suan le ba	2612
 算什么	suan shen me	3220
 算卦	suan gua	123
@@ -70190,7 +70191,7 @@
 耤	ji	7
 耥	tang	10
 耦	ou	40
-耦合	ou he	514
+耦合	ou he	20000
 耦合器	ou he qi	152
 耧	lou	72
 耨	nou	68
@@ -74648,7 +74649,7 @@
 蒸饺	zheng jiao	405
 蒸饼	zheng bing	7
 蒸馏	zheng liu	286
-蒸馏水	zheng liu shui	45
+蒸馏水	zheng liu shui	500
 蒸馏酒	zheng liu jiu	76
 蒹	jian	69
 蒺	ji	10
@@ -78242,9 +78243,7 @@
 诲人不倦	hui ren bu juan	26
 诳	kuang	31
 诳语	kuang yu	62
-说	shui	39987
 说	shuo	799734
-说	yue	39987
 说一下	shuo yi xia	2168
 说一不二	shuo yi bu er	24
 说一句	shuo yi ju	5541
@@ -92826,3 +92825,55 @@ H股	h gu	300
 X光	x guang	800
 X射线	x she xian	2000
 T台	t tai	1500
+再住一天	zai zhu yi tian	5000
+住一天	zhu yi tian	15000
+傻子吧	sha zi ba	8000
+搞定了	gao ding le	38000
+你咋还不来	ni za hai bu lai	18000
+随便吧	sui bian ba	32000
+我服了	wo fu le	38000
+真的假的	zhen de jia de	45000
+你认真的吗	ni ren zhen de ma	19000
+我不知道咋说	wo bu zhi dao za shuo	16000
+我先走了	wo xian zou le	24000
+晚点再说	wan dian zai shuo	21000
+太离谱了	tai li pu le	40000
+我有点懵	wo you dian meng	18000
+我真的服了	wo zhen de fu le	45000
+我真服了	wo zhen fu le	35000
+啥情况	sha qing kuang	28000
+真的假的	zhen jia de le	32000
+你是不是	ni shi bu	40000
+河南话	he nan hua	25000
+河南话	hen an hua	20000
+河南	hen an	15000
+我嘞个豆	wo lei ge dou	15000
+我勒个豆	wo le ge dou	15000
+我日他哥	wo ri ta ge	12000
+弄啥哩	nong sha li	12000
+弄啥类	nong sha lei	12000
+弄啥嘞	nong sha lei	12000
+弄啥呢	nong sha ne	12000
+抓哩	zhua li	8000
+信球	xin qiu	8000
+乖乖嘞	guai guai lei	10000
+不中	bu zhong	15000
+可中	ke zhong	10000
+中不中	zhong bu zhong	12000
+恁俩	nen lia	8000
+恁几个	nen ji ge	8000
+去球吧	qu qiu ba	10000
+靠恁娘	kao nen niang	8000
+胡咧咧	hu lie lie	8000
+连阴天	lian yin tian	6000
+木牛	mu niu	6000
+喷空	pen kong	6000
+摸扎	mo zha	5000
+夜黑儿	ye hei er	6000
+老鳖一	lao bie yi	5000
+膈应	ge ying	10000
+圪蹴	ge jiu	5000
+喷空儿	pen kong er	5000
+解耦	jie ou	25000
+解耦性	jie ou xing	8000
+耦合度	ou he du	12000

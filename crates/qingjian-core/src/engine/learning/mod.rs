@@ -189,6 +189,7 @@ impl Engine {
         self.logger.flush();
         self.meter.flush();
         self.vocabulary.flush();
+        self.recall.flush();
         self.translator.flush();
     }
 

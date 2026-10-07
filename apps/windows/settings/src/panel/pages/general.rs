@@ -14,6 +14,13 @@ pub(crate) const LANGUAGES: [(&str, &str); 4] = [
     ("不显示译文", "off"),
 ];
 
+/// 英语学习模式：界面名 + 配置写法。
+pub(crate) const LEARNING_MODES: [(&str, &str); 3] = [
+    ("Daily", "daily"),
+    ("Learn", "learn"),
+    ("Drill", "drill"),
+];
+
 /// 输入方案：界面名 + 配置写法，直接照 [`Scheme::ALL`] 建，不另抄一份。
 /// 数组长度取自 `ALL`，以后加方案时这里数组对不上就编不过。
 pub(crate) const SCHEMES: [(&str, &str); Scheme::ALL.len()] = [
@@ -59,6 +66,15 @@ pub(crate) fn view(settings: &Settings, context: &mut ViewContext<Settings>) -> 
                 &LANGUAGES,
                 &g.learning_language,
                 context.callback(Message::LearningLanguage),
+            ),
+        ),
+        field(
+            "学习模式",
+            "Daily：日常输入，不主动打扰\nLearn：输入时提供学习辅助\nDrill：主动回忆与对比训练",
+            string_combo(
+                &LEARNING_MODES,
+                g.learning_mode.key(),
+                context.callback(Message::LearningMode),
             ),
         ),
         field(

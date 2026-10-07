@@ -48,6 +48,15 @@ impl Engine {
                     .translate(text)
                     .map(|mut translation| {
                         self.mark_fresh(&mut translation);
+                        if let Some(target) = translation.senses().first().map(|s| s.text.clone()) {
+                            if let Some(preferred) = self.recall.preferred_alternative(translation.language, text, &target) {
+                                if let Some(first_sense) = translation.senses_mut().first_mut() {
+                                    if !first_sense.text.eq_ignore_ascii_case(&preferred) {
+                                        first_sense.text = preferred;
+                                    }
+                                }
+                            }
+                        }
                         translation
                     })
                     .or_else(|| candidate.translation.clone()),
@@ -96,6 +105,9 @@ impl Engine {
         {
             candidate_owned.text = simp.clone();
         }
+        if candidate_owned.translation.is_none() && candidate_owned.kind != CandidateKind::English {
+            candidate_owned.translation = self.translator.translate(&candidate_owned.text);
+        }
         let candidate = &candidate_owned;
         // 整句不是一个词，不记词频；按路径上的词逐条记转移（喂个人 n-gram），路径要在拼音消耗前重算
         let sentence_words = (candidate.kind == CandidateKind::Sentence)
@@ -116,6 +128,11 @@ impl Engine {
                 self.learner.record(candidate);
                 let (consumed, input) = self.consumed_by(candidate);
                 self.learner.record_choice(&input, &candidate.text);
+                if !self.private {
+                    if let Some(prev) = self.chain.previous() {
+                        self.learner.confirm_choice(prev, &candidate.text);
+                    }
+                }
                 typos = self.accepted_typos(candidate);
                 (consumed, input)
             }
@@ -175,7 +192,7 @@ impl Engine {
         }
         let log_id = self.log_commit(&keys, &candidate.text, source);
         self.meter_commit(&candidate.text, source, false);
-        // 上屏带译词的中文候选：那一刻用户看着这条译词，记进词汇（英文候选的中文释义不是学习语言，不记）
+        // 上屏带译词的中文候选：那一刻用户看着这条译词，记进词汇与主动回忆条目（英文候选的中文释义不是学习语言，不记）
         if !self.private
             && candidate.kind != CandidateKind::English
             && let Some(translation) = &candidate.translation
@@ -185,6 +202,16 @@ impl Engine {
                     translation.language,
                     &sense.text,
                     used_sense == Some(index),
+                );
+            }
+            if let Some(target_sense) = used_sense
+                .and_then(|i| translation.senses().get(i))
+                .or_else(|| translation.senses().first())
+            {
+                self.recall.record_exposure(
+                    translation.language,
+                    &candidate.text,
+                    &target_sense.text,
                 );
             }
         }
@@ -373,6 +400,14 @@ impl Engine {
         }
         if let Some((key, phrase)) = &last.phrase {
             self.learner.unrecord_choice(key, phrase);
+        }
+        if !self.private {
+            let context = last
+                .transitions
+                .first()
+                .and_then(|t| t.previous.as_deref())
+                .unwrap_or("");
+            self.learner.record_correction(context, &last.text, text);
         }
     }
 

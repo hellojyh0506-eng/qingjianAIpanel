@@ -32,6 +32,9 @@ const USER_ENGLISH_FILE: &str = "user-english.tsv";
 /// 个人敲错表文件名，与词频文件同目录：`敲的\t要的\t次数`（音节级，接受过的纠正）。
 const USER_TYPOS_FILE: &str = "user-typos.tsv";
 
+/// 个人纠错与防混淆偏好文件名，与词频文件同目录。
+const USER_CORRECTIONS_FILE: &str = "user-corrections.tsv";
+
 /// 按输入串记的选择最多存多少条 (输入串, 词)，超过就整体减半（忘掉久远的偏好）。
 const MAX_CHOICE_ENTRIES: usize = 50_000;
 
@@ -85,6 +88,9 @@ pub struct FrequencyLearner {
 
     /// 个人敲错表自上次保存后是否有变化。
     typos_dirty: bool,
+
+    /// 个人纠错与防混淆追踪器。
+    pub(super) corrections: crate::corrections::PersonalCorrectionTracker,
 }
 
 impl FrequencyLearner {
@@ -151,6 +157,10 @@ impl FrequencyLearner {
             let skipped = learner.load_typos(&source);
             note_skipped(&typos_path, skipped);
         }
+        let corrections_path = Self::corrections_path(&path);
+        if let Some(source) = read_text_lossy(&corrections_path)? {
+            learner.corrections.load_tsv(&source);
+        }
         learner.path = Some(path);
         Ok(learner)
     }
@@ -165,6 +175,14 @@ impl FrequencyLearner {
 
     pub fn is_empty(&self) -> bool {
         self.counts.is_empty()
+    }
+
+    pub fn corrections(&self) -> &crate::corrections::PersonalCorrectionTracker {
+        &self.corrections
+    }
+
+    pub fn corrections_mut(&mut self) -> &mut crate::corrections::PersonalCorrectionTracker {
+        &mut self.corrections
     }
 
     pub fn save_to(&mut self, path: impl AsRef<Path>) -> Result<(), LearningError> {
@@ -189,6 +207,7 @@ impl FrequencyLearner {
             || self.ngram_dirty
             || self.choices_dirty
             || self.typos_dirty
+            || self.corrections.is_dirty()
     }
 }
 

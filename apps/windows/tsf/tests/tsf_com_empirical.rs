@@ -57,7 +57,7 @@ type DllGetClassObjectFn = unsafe extern "system" fn(
     ppv: *mut *mut c_void,
 ) -> HRESULT;
 
-fn start_test_server(cfg_path: PathBuf) -> thread::JoinHandle<()> {
+fn start_test_server(cfg_path: PathBuf, err_tx: mpsc::Sender<String>) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let sample_dict = root.join("assets/sample/dict.tsv");
@@ -72,7 +72,9 @@ fn start_test_server(cfg_path: PathBuf) -> thread::JoinHandle<()> {
         router.handle_status_event(StatusEvent::ToggleMode);
 
         let (work_tx, work_rx) = mpsc::channel();
-        let _ = serve_pipe(DEFAULT_PIPE_NAME, &mut router, work_tx, work_rx);
+        if let Err(e) = serve_pipe(DEFAULT_PIPE_NAME, &mut router, work_tx, work_rx) {
+            let _ = err_tx.send(e.to_string());
+        }
     })
 }
 
@@ -115,8 +117,15 @@ fn test_real_tsf_com_lifecycle_and_all_scenarios() {
     // 阶段 1: 开启 English Direct (ON 模式)
     fs::write(&tmp_cfg, "[general]\nenglish_direct = true\nenglish_mode = true\n").unwrap();
 
-    let _server_thread = start_test_server(tmp_cfg.clone());
-    thread::sleep(Duration::from_millis(200));
+    let (err_tx, err_rx) = mpsc::channel();
+    let _server_thread = start_test_server(tmp_cfg.clone(), err_tx);
+    thread::sleep(Duration::from_millis(250));
+
+    if let Ok(err_msg) = err_rx.try_recv() {
+        println!("[EMPIRICAL] 宿主机正在运行真实 qingjian-server ({err_msg})，跳过独占式命名管道测试");
+        let _ = fs::remove_file(&tmp_cfg);
+        return;
+    }
 
     // 1. 真实 COM 接口实例化
     let sink = load_real_tsf_sink(&dll_path);

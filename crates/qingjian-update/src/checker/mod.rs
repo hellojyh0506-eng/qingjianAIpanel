@@ -251,5 +251,6 @@ mod tests {
         let state = state("0.1.4", "stable");
         let on = config(true, UpdateChannel::Stable);
         assert!(Checker::available_in(&state, "0.1.3-dev-d893e1e", &on).is_none());
+        assert!(Checker::available_in(&state, "0.1.4-dev-fork", &on).is_none());
     }
 }

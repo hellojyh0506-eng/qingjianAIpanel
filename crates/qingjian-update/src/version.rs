@@ -106,6 +106,7 @@ mod tests {
     fn recognizes_dev_builds() {
         assert!(version("0.1.3-dev").is_dev());
         assert!(version("0.1.3-dev-d893e1e+").is_dev());
+        assert!(version("0.1.4-dev-fork").is_dev());
         assert!(!version("0.1.4-beta.1").is_dev());
         assert!(!version("0.1.3").is_dev());
     }

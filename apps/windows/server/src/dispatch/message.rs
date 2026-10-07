@@ -80,6 +80,7 @@ impl Router {
                 // 组句在 DLL 侧结束（应用终止组句 / 翻译评审失焦）：只收窗口；缓冲留给下一键的 Commit 清。
                 if self.focused == Some(session) {
                     self.end_translation();
+                    self.end_recall_session();
                     self.hide_candidate_window();
                 }
                 None
@@ -126,6 +127,33 @@ impl Router {
         self.notice = None;
         if self.translation.is_some() {
             return self.handle_translation_review(session, &event);
+        }
+        if self.recall_session.is_some() {
+            return self.handle_recall_session(session, &event);
+        }
+        if self.engine.composition().is_empty()
+            && self.matches_recall_combo(&event)
+        {
+            return self.start_recall_session(session);
+        }
+        if self.engine.composition().is_empty()
+            && self.matches_learning_mode_combo(&event)
+        {
+            let next = self.learning_mode.next();
+            self.learning_mode = next;
+            self.config.learning_mode = next;
+            tracing::info!(mode = ?next, "快捷键：切换英语学习模式");
+            self.persist("general", "learning_mode", next.key());
+            self.notice = Some(format!("已切换至【{}】", next.label()));
+            self.reconcile_status();
+            let shown = self.self_drawn_frame();
+            self.reconcile_candidates(&shown);
+            return ServerMessage::KeyResult {
+                session,
+                outcome: KeyOutcome::Consumed,
+                commit: None,
+                frame: self.current_frame(),
+            };
         }
         if self.engine.composition().is_empty()
             && self.engine.prediction_enabled()

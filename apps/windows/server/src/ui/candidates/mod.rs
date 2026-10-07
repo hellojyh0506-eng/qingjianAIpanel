@@ -154,10 +154,14 @@ impl CandidateWindow {
             }
             None => self.show_gdi(anchor),
         };
-        if updated.is_ok() {
-            let _ = unsafe { ShowWindow(self.hwnd, SW_SHOWNA) };
-        } else {
-            self.hide();
+        match &updated {
+            Ok(()) => {
+                let _ = unsafe { ShowWindow(self.hwnd, SW_SHOWNA) };
+            }
+            Err(error) => {
+                tracing::error!(%error, "候选窗口绘制/贴图失败");
+                self.hide();
+            }
         }
     }
 
@@ -259,11 +263,12 @@ fn place(anchor: RECT, content: (i32, i32)) -> (i32, i32) {
     let above = anchor.top - CARET_GAP - content.1;
     let y = if below + content.1 <= work.bottom {
         below
-    } else if above >= work.top {
+    } else if above >= work.top && above + content.1 <= work.bottom {
         above
     } else {
         (work.bottom - content.1).max(work.top)
     };
+    let y = y.clamp(work.top, (work.bottom - content.1).max(work.top));
     (x, y)
 }
 
@@ -271,3 +276,35 @@ fn place(anchor: RECT, content: (i32, i32)) -> (i32, i32) {
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_place_bottom_overflow() {
+        let content = (300, 60);
+        // 模拟光标超出版面底部 (如 1164 超过 1104/1152)
+        let anchor = RECT {
+            left: 580,
+            top: 1164,
+            right: 600,
+            bottom: 1184,
+        };
+        let (x, y) = place(anchor, content);
+        let work = monitor::work_area_near(POINT {
+            x: anchor.left,
+            y: anchor.top,
+        });
+        assert!(x >= work.left && x + content.0 <= work.right.max(work.left + content.0));
+        assert!(y >= work.top, "y ({y}) 必须 >= work.top ({})", work.top);
+        assert!(
+            y + content.1 <= work.bottom.max(work.top + content.1),
+            "y + content.1 ({} + {}) 必须 <= work.bottom ({})",
+            y,
+            content.1,
+            work.bottom
+        );
+    }
+}
+

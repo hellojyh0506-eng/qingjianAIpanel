@@ -132,7 +132,11 @@ impl Engine {
                 .take(PREDICTION_CANDIDATE_HINTS)
                 .map(|c| c.text.clone())
                 .collect(),
-            guess,
+            guess: guess.clone(),
+            current_expression: candidates
+                .first()
+                .map(|c| c.text.clone())
+                .unwrap_or_else(|| guess.clone()),
             // 简拼（半数以上音节是缩写）不问词：模型按声母凑出来的大多是生造词（复合语气、符号映射），
             // 只问整句补全；问字模式的答案不受这条限制（答案本来就对不上问题的拼音）。
             max_items: if abbreviated && !question {
@@ -162,6 +166,7 @@ impl Engine {
         let request = PredictionRequest {
             sequence: self.prediction_sequence,
             kind: PredictionKind::Translate,
+            // 严格隔离：翻译目标（选区或候选词）必须是唯一翻译源，绝对不得携带宿主前文，防止云端模型发生上下文串译与隐私泄漏
             before: String::new(),
             after: String::new(),
             pinyin: String::new(),
@@ -169,6 +174,7 @@ impl Engine {
             syllables: 0,
             candidates: Vec::new(),
             guess: String::new(),
+            current_expression: String::new(),
             max_items: 1,
             want_sentence: true,
             text: text.to_owned(),

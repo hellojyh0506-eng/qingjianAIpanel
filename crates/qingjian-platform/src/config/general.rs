@@ -2,7 +2,9 @@ use qingjian_core::ShuangpinScheme;
 use serde::{Deserialize, Serialize};
 
 use super::scheme::{Scheme, scheme_label};
-use super::{CandidateRenderer, LayoutMode, LogLevel, PreeditMode, ShiftLetter, ThemeMode};
+use super::{
+    CandidateRenderer, LayoutMode, LearningMode, LogLevel, PreeditMode, ShiftLetter, ThemeMode,
+};
 
 /// 每页最多几个候选：数字键只有 1–9。
 pub const MAX_PAGE_SIZE: usize = 9;
@@ -24,6 +26,9 @@ pub const LEARNING_LANGUAGE_OFF: &str = "off";
 pub struct GeneralConfig {
     /// 学习语言（ISO 639-1，`en` / `ja` / `es`；`off` 不显示译文）：候选旁显示哪种语言的译文。要有对应的释义表文件才生效。
     pub learning_language: String,
+
+    /// 英语学习模式：`daily`（默认，不主动打扰）/ `learn`（学习辅助）/ `drill`（主动回忆与对比训练）。
+    pub learning_mode: LearningMode,
 
     /// 每页候选数，1–9。
     pub page_size: usize,
@@ -123,6 +128,7 @@ impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
             learning_language: "en".to_owned(),
+            learning_mode: LearningMode::default(),
             page_size: MAX_PAGE_SIZE,
             page_keys: PAGE_KEY_OPTIONS[0].to_owned(),
             theme: ThemeMode::default(),

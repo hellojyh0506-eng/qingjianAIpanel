@@ -25,6 +25,9 @@ pub struct ShortcutConfig {
     /// 把应用里选中的文字译成学习语言（需要云服务开着）。
     pub translate_selection: KeyCombo,
 
+    /// 循环切换英语学习模式（Daily / Learn / Drill，缺省 Ctrl+Alt+L）。
+    pub toggle_learning_mode: KeyCombo,
+
     /// 数字键配这些修饰键：删掉候选（用户词整个删掉，词库词清掉对它的学习）。
     pub delete_candidate: Modifiers,
 }
@@ -42,6 +45,7 @@ impl Default for ShortcutConfig {
             translation,
             translation_second,
             translate_selection: KeyCombo::TRANSLATE_DEFAULT,
+            toggle_learning_mode: KeyCombo::LEARNING_MODE_DEFAULT,
             delete_candidate: Modifiers::SHIFT,
         }
     }

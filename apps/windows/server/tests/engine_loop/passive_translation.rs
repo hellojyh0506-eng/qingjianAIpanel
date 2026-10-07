@@ -57,7 +57,13 @@ fn router_with_mock_predictor() -> (Router, Arc<Mutex<Vec<PredictionRequest>>>, 
     };
     engine.set_predictor(Box::new(mock));
 
-    let mut router = Router::new(engine, RouterConfig::default());
+    let mut router = Router::new(
+        engine,
+        RouterConfig {
+            learning_mode: qingjian_platform::LearningMode::Learn,
+            ..RouterConfig::default()
+        },
+    );
     open_session(&mut router, SESSION, None);
     (router, requests, response)
 }
@@ -208,6 +214,43 @@ fn test_stale_response_discarded_on_new_typing() {
 }
 
 #[test]
+fn test_candidate_shift_discards_stale_target_translation() {
+    let (mut router, requests, response) = router_with_mock_predictor();
+
+    // 1. 用户输入 "xian"
+    type_letters(&mut router, "xian");
+    let req1 = requests.lock().unwrap().last().cloned().expect("第1次请求");
+
+    // 2. 用户继续输入 "qian"，首选变成 "先前"
+    type_letters(&mut router, "qian");
+    let req2 = requests.lock().unwrap().last().cloned().expect("第2次请求");
+    assert_ne!(req1.sequence, req2.sequence);
+
+    // 3. 云端返回针对第1个请求的结果 (比如对 "先" 的翻译 "first")
+    *response.lock().unwrap() = Some(Prediction {
+        sequence: req1.sequence,
+        words: Vec::new(),
+        sentence: Some("first".to_string()),
+    });
+    router.tick();
+
+    // 4. Poll 之后验证当前候选 "先前" 绝不会被挂上 "first"
+    let poll_msg = router.handle(ClientMessage::Poll { session: SESSION });
+    if let Some(ServerMessage::Update { frame, .. }) = poll_msg {
+        if let Some(first) = frame.candidates.items.first() {
+            assert_eq!(first.text, "先前");
+            if let Some(trans) = &first.translation {
+                assert_ne!(
+                    trans.senses()[0].text,
+                    "first",
+                    "当前首选词「先前」绝不能被旧候选「先」的翻译污染"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn test_learning_language_off_disables_all_passive_translation() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let dict = root.join("assets/sample/dict.tsv");
@@ -313,3 +356,169 @@ fn test_english_direct_mode_no_regression() {
         other => panic!("expected ModeSync, got {other:?}"),
     }
 }
+
+#[test]
+fn test_chongddren_passive_translation_strictly_binds_to_candidate_text_never_surrounding_context() {
+    let (mut router, requests, response) = router_with_mock_predictor();
+
+    // 1. 模拟宿主应用（如 ChatGPT 输入框）向输入法汇报大量历史前文
+    let historic_context = "他充电了吗？我不知道他有没有优化。你能提示她出来告诉我她在上面做了什么吗？翻译是什么来着？";
+    router.handle(ClientMessage::Surrounding {
+        session: SESSION,
+        text: historic_context.to_string(),
+    });
+
+    // 2. 用户键入 "chongddren"
+    type_letters(&mut router, "chongddren");
+
+    // 3. 验证发出的云端翻译请求：
+    //    - 目标文本必须是当前候选词 "充电的人"
+    //    - 严格隔离：before 必须为空字符串，绝对不能包含历史前文
+    let req = requests.lock().unwrap().last().cloned().expect("必须触发被动翻译请求");
+    assert_eq!(req.kind, qingjian_core::PredictionKind::Translate);
+    assert_eq!(req.text, "充电的人");
+    assert!(
+        req.before.is_empty(),
+        "被动翻译请求的 before 必须完全为空，严防泄漏宿主历史上下文"
+    );
+
+    // 4. 模拟模型正常返回 "the person charging up"
+    *response.lock().unwrap() = Some(Prediction {
+        sequence: req.sequence,
+        words: Vec::new(),
+        sentence: Some("the person charging up".to_string()),
+    });
+    router.tick();
+
+    // 5. 验证展示给用户的候选窗口：
+    //    - 首选为 "充电的人"
+    //    - 标注为 "the person charging up"
+    //    - 严禁出现历史长句
+    let poll_msg = router.handle(ClientMessage::Poll { session: SESSION });
+    if let Some(ServerMessage::Update { frame, .. }) = poll_msg {
+        let first = frame.candidates.items.first().expect("首个候选词存在");
+        assert_eq!(first.text, "充电的人");
+        let trans = first.translation.as_ref().expect("必须挂载被动翻译");
+        assert_eq!(trans.senses()[0].text, "the person charging up");
+        assert!(
+            !trans.senses()[0].text.contains("Did he finish charging"),
+            "候选翻译严禁被历史上下文污染"
+        );
+    } else {
+        panic!("expected Update message with frame");
+    }
+
+    // 6. 防御性测试：若外部模型由于某种原因返回了 > 100 字符的冗长串译句子，系统必须坚决丢弃
+    let rogue_long_sentence = "Did he finish charging? I'm not sure if he optimized it. Can you give her a hint to come out and tell me what she did up there? What's the translation again?";
+    *response.lock().unwrap() = Some(Prediction {
+        sequence: req.sequence,
+        words: Vec::new(),
+        sentence: Some(rogue_long_sentence.to_string()),
+    });
+    router.tick();
+    // 再次 Poll，验证候选框绝不会挂上该异常长句
+    let poll_rogue = router.handle(ClientMessage::Poll { session: SESSION });
+    if let Some(ServerMessage::Update { frame, .. }) = poll_rogue {
+        if let Some(first) = frame.candidates.items.first() {
+            if let Some(trans) = &first.translation {
+                assert_ne!(
+                    trans.senses()[0].text,
+                    rogue_long_sentence,
+                    "异常发散/串译长句必须被防发散规则丢弃"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_three_state_learning_mode_daily_learn_drill_switching_and_isolation() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let response = Arc::new(Mutex::new(None));
+
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let dict = root.join("assets/sample/dict.tsv");
+    let glossary = root.join("assets/sample/glossary-en.tsv");
+    let mut engine = assembly::assemble(&AssemblySpec {
+        glossary: Some((Language::English, glossary)),
+        english: Some(root.join("assets/sample/english.tsv")),
+        ..AssemblySpec::new(dict)
+    })
+    .expect("assemble engine");
+
+    let mock = MockPredictor {
+        requests: Arc::clone(&requests),
+        response: Arc::clone(&response),
+    };
+    engine.set_predictor(Box::new(mock));
+
+    // 1. 默认 Daily 模式启动
+    let mut router = Router::new(engine, RouterConfig::default());
+    open_session(&mut router, SESSION, None);
+    assert_eq!(router.learning_mode(), qingjian_platform::LearningMode::Daily);
+
+    // 2. 在 Daily 模式下输入「xianqian」，确认不会主动向云端发送被动翻译请求
+    let (_, _, frame) = type_letters(&mut router, "xianqian");
+    assert_eq!(frame.learning_mode, qingjian_platform::LearningMode::Daily);
+    assert!(
+        requests.lock().unwrap().iter().all(|r| r.kind != PredictionKind::Translate),
+        "Daily 模式绝不能主动请求被动翻译"
+    );
+
+    // 3. 清空缓冲区
+    router.handle(ClientMessage::Commit { session: SESSION });
+
+    // 4. 使用快捷键 Ctrl+Alt+L 切换到 Learn 模式
+    let toggle_key = KeyEvent::new(
+        'L' as u32,
+        Some('l'),
+        qingjian_platform::protocol::KeyModifiers {
+            ctrl: true,
+            alt: true,
+            ..Default::default()
+        },
+    );
+    let msg = router.handle(ClientMessage::Key {
+        session: SESSION,
+        event: toggle_key,
+    });
+    assert_eq!(router.learning_mode(), qingjian_platform::LearningMode::Learn);
+    if let Some(ServerMessage::KeyResult { frame, .. }) = msg {
+        assert_eq!(frame.learning_mode, qingjian_platform::LearningMode::Learn);
+    }
+
+    // 5. 在 Learn 模式下输入「xianqian」，确认触发了被动翻译请求
+    requests.lock().unwrap().clear();
+    let (_, _, frame) = type_letters(&mut router, "xianqian");
+    assert_eq!(frame.learning_mode, qingjian_platform::LearningMode::Learn);
+    assert!(
+        requests.lock().unwrap().iter().any(|r| r.kind == PredictionKind::Translate),
+        "Learn 模式必须触发当前首选被动翻译"
+    );
+
+    // 6. 清空缓冲区，再次按 Ctrl+Alt+L 切换到 Drill 模式
+    router.handle(ClientMessage::Commit { session: SESSION });
+    router.handle(ClientMessage::Key {
+        session: SESSION,
+        event: toggle_key,
+    });
+    assert_eq!(router.learning_mode(), qingjian_platform::LearningMode::Drill);
+
+    // 7. 再按一次 Ctrl+Alt+L 回到 Daily 模式
+    router.handle(ClientMessage::Key {
+        session: SESSION,
+        event: toggle_key,
+    });
+    assert_eq!(router.learning_mode(), qingjian_platform::LearningMode::Daily);
+
+    // 8. 测试状态栏事件切换
+    router.handle_status_event(qingjian_windows_server::dispatch::StatusEvent::ToggleLearningMode);
+    assert_eq!(router.learning_mode(), qingjian_platform::LearningMode::Learn);
+
+    router.handle_status_event(qingjian_windows_server::dispatch::StatusEvent::SetLearningMode(
+        qingjian_platform::LearningMode::Drill,
+    ));
+    assert_eq!(router.learning_mode(), qingjian_platform::LearningMode::Drill);
+}
+
+

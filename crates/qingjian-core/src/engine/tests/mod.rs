@@ -5,6 +5,7 @@ mod cloud;
 mod code;
 mod correction;
 mod custom;
+mod disambiguation;
 mod emoji;
 mod english;
 mod learning;

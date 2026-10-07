@@ -5,27 +5,28 @@ use serde::{Deserialize, Serialize};
 
 /// 系统提示。语言跟随上下文，不限定中文。
 pub const SYSTEM_PROMPT: &str = "\
-你是一个拼音输入法的云端联想引擎。用户正在打拼音，还没选词。你会收到一段 JSON：\
-letters（用户实际敲的字母，**可能有错字、漏字、多字、音节切错**）、pinyin（输入法按 letters 做的切分，' 分隔音节，单个字母是声母缩写，切分可能是错的）、\
-syllables（切分出的音节数，仅供参考）、before / after（当前光标前后的文本，应用给不出时为空）、\
-local_sentence（本地整句转换的结果，可能错）、local_candidates（本地词库排在前面的候选，第一个是本地首选）、max_items、want_sentence。
+你是一个拼音输入法的云端联想与智能预测引擎。你会收到一段 JSON：\
+letters（用户敲的字母）、pinyin（输入法的切分，' 分隔）、syllables（切分音节数）、\
+before（光标前已确认上屏文本）、after（光标后文本）、\
+current_expression（当前正在输入的候选表达，如「我喜欢你」或「我真的服了」）、\
+local_sentence（本地整句猜测）、local_candidates（本地候选列表）、max_items、want_sentence。
 
-**local_candidates 和 local_sentence 只是本地的猜测，可能全错。**它们的用途是告诉你本地已经能给什么：\
-和它们重复的词会被丢掉，所以不要照抄；也不要被它们带偏——请只根据 letters 与 before / after 独立判断用户想打什么。
+必须严格区分两个独立任务，绝对不得混淆：
+1. Task A（当前输入理解与候选重排）：
+   - 当输入为简拼/缩写（如 w'z'd'f'l、z'j'd'l）或错拼、方言音时，words 负责对当前拼音推断最地道的词或对 local_candidates 进行重排优选（如「我真的服了」）；
+   - 特别支持方言与网络高频口语感知（重点关注河南话等生动方言）：当输入或前文包含方言特征（如 妮儿、弄啥哩、我嘞个豆、我日他哥、恁、中、得劲、乖乖嘞、信球等）时，Task A 敏锐推断真实方言意图（如 hen'an'hua/he'nan'hua 推断「河南话」，wo'ri'ta'ge 推断「我日他哥」，wo'lei'ge'dou 推断「我嘞个豆」，ni'er 推断「妮儿」）；
+   - 严禁抛开当前 letters 胡乱生造无关词汇；
+2. Task B（后文自然续写预测）：
+   - sentence 的职责是【在用户说完 before + current_expression 之后，预测接下来的自然接续短语】！
+   - 例如：current_expression 为「我喜欢你」，sentence 应该预测紧随其后的自然接续（如「很久了」、「呀」、「但是……」或「我喜欢你很久了」）；
+   - 感知说话者的方言人设与口吻：当用户输入方言词汇（如「妮儿」、「弄啥哩」、「我嘞个豆」）时，自然揣摩其方言后续（如「妮儿」可接续「恁跑哪去了」、「去哪儿了」；「我嘞个豆」可接续「这也太绝了」、「真服了」；「弄啥哩」可接续「赶紧过来」）；
+   - **绝对严禁脱离当前表达随意生成完全不相干的独立句子**（严禁在「我喜欢你」旁边凭空返回「我想吃饭」这种无上下文依据的跳跃！）；
+   - 如果没有与 before + current_expression 强关联的高置信度续写，sentence 必须返回 null。
 
 输出 JSON：{\"words\": [{\"text\": \"…\", \"pinyin\": \"…\"}], \"sentence\": \"…\" 或 null}
 
-words：用户最可能想输入、而本地又给不出（或排错了）的词或短语，0 到 max_items 个，按可能性排序。要求：
-- 按 letters 推断用户想打什么，允许纠正错字、漏字、多字（如 zhgdoima → 这个东西吗）；pinyin 给该词**正确**的全拼，音节间用空格，字数等于音节数，\
-  不要比用户敲的多出或少掉音节；
-- 你的价值在：本地词库缺的术语、新词、人名机构名、缩写扩展；按 before / after 体现的领域（财务、软件开发、医学……）选对同音词；纠正错拼；
-- **letters 里的单个字母是声母缩写，不是完整音节**：不要按缩写拼凑出词来（「复合语气」「符号映射」这种首字母硬凑的不算答案，宁可不给）；
-- 只给真实存在的词，不要生造（「不态」「步太」这种组合）；不确定就少给；
-- 本地首选已经对了就不必再给同一个词，也不必给它的同音变体；没有更好的就给空数组，不要凑数。
-
-sentence：want_sentence 为 true 时给一条以这个词开头的完整短句或常用说法，用户常常是想不起来整句怎么说才只敲了开头几个字，\
-或者敲到一半（如 suoyiwoxiangq → 所以我想去吃饭）；有 before / after 就接得上它们，没有就给最常见、最自然的完整表达。\
-它只替换这段拼音，**不要把 before 的内容抄进来**。want_sentence 为 false 时给 null。语言跟随上下文。
+words：0 到 max_items 个。针对当前拼音给出匹配候选，音节字数与拼音严格对应。
+sentence：want_sentence 为 true 时，给出紧接在 current_expression 之后的自然接续短语。绝不抄袭 before，绝不跳脱当前表达。want_sentence 为 false 或无高置信续写时返回 null。
 
 不解释、不加引号、不加序号。";
 
@@ -45,13 +46,21 @@ question（输入法本地把拼音转成的汉字，可能有错字，只是帮
 answers：1 到 max_items 个，按可能性排序。text 是能直接上屏的字、词或短答案，不要解释；\
 pinyin 是 text 的带声调拼音（如 sēn），非中文答案给空字符串。不确定就少给，实在不懂就给空数组。";
 
-/// 翻译的系统提示：中文选区译成学习语言，外文选区译回中文，只要译文。方向由 Core 按文字判断，模型兜底。
+/// 翻译的系统提示：为口语练习与日常交流提供地道鲜活的 Gen Z 当代美式口语。拒绝机器翻译与死板应试英语。
 pub const TRANSLATE_SYSTEM_PROMPT: &str = "\
-你是一个输入法的翻译助手。用户在应用里选中了一段文字并按了翻译快捷键，你会收到 JSON：\
-text（选中的原文）、target_language（目标语言代码：zh 中文、en 英语、ja 日语）。\
-把 text 完整、自然地译成目标语言，保留原文的语气、换行与标点习惯；\
-原文已经是目标语言时：目标不是中文就改译成中文，目标是中文就原样返回。\
-不要解释、不要加引号、不要加「译文：」之类的前缀。\
+你是一个专为年轻人日常口语交流量身打造的英汉口语私教与即时翻译引擎。你会收到一段 JSON：\
+text（待翻译的原文）、target_language（目标语言代码：zh 中文、en 英语、ja 日语）。\
+核心使命：帮助用户练习和掌握最自然鲜活的当代美式口语（Gen Z / Young Native Speaker 口语实战）。\
+要求：\
+1. 严格且仅翻译 text 字段中的文本本身，绝对严禁翻译任何外部推测，严禁扩写或串入历史上下文；\
+2. 当 target_language 为 en（英语）时：\
+   - 必须是 100% 地道真实的美式口语（Authentic Gen Z Spoken American English），如同母语青年在日常微信/聊天、发消息、打语音、街头咖啡馆对话中脱口而出的自然表达；\
+   - 彻底拒绝死板教科书、考试做题英语（如 CET-4/6、中高考或语法试卷式死板英语）以及生硬字对字机器翻译；\
+   - 大量采用真实口语自然的缩写（I'm、you're、gonna、wanna、kinda、gotta）、地道口语动词短语与高频习惯搭配（例如「搞定了」译为「All set.」或「Got it covered.」；「累瘫了」译为「I'm beat.」或「I'm wiped out.」；「太逗了/笑死我了」译为「That's hilarious.」或「I'm dead.」；「你咋还不来？」译为「Where you at?」或「Why aren't you here yet?」；「别墨迹了」译为「Stop dragging your feet.」或「Quit stalling.」）；\
+   - 原文含有方言、调侃或情绪（如「我日他哥」、「我嘞个豆」、「得劲」）时，自然捕捉对应语气的鲜活美式口语（如「No freaking way.」「Holy crap.」「That feels so good.」），神形兼备；\
+   - 语调必须真实可信，严禁在没有语境的前提下强行尬塞网络烂梗；\
+3. 保留原文的语气、标点与情感；原文已经是目标语言时：目标不是中文就改译成中文，目标是中文就原样返回；\
+4. 绝不解释、不加引号、不加「译文：」之类的前缀，严格只输出单一 JSON。\
 输出 JSON：{\"sentence\": \"译文\"}";
 
 pub fn system_prompt(request: &PredictionRequest) -> &'static str {
@@ -75,6 +84,8 @@ struct UserMessage<'a> {
 
     after: &'a str,
 
+    current_expression: &'a str,
+
     local_sentence: &'a str,
 
     local_candidates: &'a [String],
@@ -96,7 +107,7 @@ struct QuestionMessage<'a> {
     max_items: usize,
 }
 
-/// 翻译发给模型的用户消息。
+/// 翻译发给模型的用户消息：严格只包含待翻译文本与目标语言，绝不泄漏光标前文或历史上下文。
 #[derive(Serialize)]
 struct TranslateMessage<'a> {
     text: &'a str,
@@ -127,6 +138,7 @@ pub fn user_prompt(request: &PredictionRequest) -> String {
         syllables: request.syllables,
         before: &request.before,
         after: &request.after,
+        current_expression: &request.current_expression,
         local_sentence: &request.guess,
         local_candidates: &request.candidates,
         max_items: request.max_items,
@@ -182,14 +194,22 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
         return parse_answers(raw.answers, request.max_items);
     }
     if request.kind == PredictionKind::Translate {
-        // 译文保留换行（原文可能是多段），只去首尾空白
-        return Reply {
-            words: Vec::new(),
-            sentence: raw
-                .sentence
-                .map(|s| s.trim().to_owned())
-                .filter(|s| !s.is_empty()),
-        };
+        let sentence = raw
+            .sentence
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty());
+
+        if let Some(s) = sentence {
+            let clean_s = strip_translation_prefix(&s);
+            if request.target_language == "en" && !is_valid_english_translation(&clean_s) {
+                return Reply::default();
+            }
+            return Reply {
+                words: Vec::new(),
+                sentence: Some(clean_s),
+            };
+        }
+        return Reply::default();
     }
     let mut reply = Reply::default();
     let mut seen: Vec<String> = Vec::new();
@@ -223,9 +243,58 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
         reply.sentence = raw
             .sentence
             .map(|s| strip_before(&clean(&s), &request.before))
-            .filter(|s| !s.is_empty() && Some(s.as_str()) != first_local);
+            .filter(|s| {
+                if s.is_empty() || Some(s.as_str()) == first_local {
+                    return false;
+                }
+                if !request.current_expression.is_empty() {
+                    let curr = &request.current_expression;
+                    if !is_coherent_continuation(curr, s) {
+                        return false;
+                    }
+                }
+                true
+            });
     }
     reply
+}
+
+/// 校验 Task B 预测的续写短语是否与当前表达 (Task A) 存在合理接续关系，
+/// 严格剔除突兀、脱节的无上下文替换句子 (如当前是 "我喜欢你"，预测却是 "我想吃饭")。
+pub fn is_coherent_continuation(curr: &str, candidate: &str) -> bool {
+    // 1. 如果 candidate 以 curr 开头（如 "我喜欢你很久了"），是自然完整接续
+    if candidate.starts_with(curr) {
+        return true;
+    }
+    // 2. 如果 candidate 自己也是一个重起主语的完整句子（如 "我想吃饭"、"你吃饭了吗"），
+    // 且没有以当前表达开头，则属于完全无关的抢镜/脱节句子，判定为非法
+    let has_restart_subject = candidate.starts_with("我")
+        || candidate.starts_with("你")
+        || candidate.starts_with("他")
+        || candidate.starts_with("她")
+        || candidate.starts_with("它")
+        || candidate.starts_with("我们")
+        || candidate.starts_with("你们")
+        || candidate.starts_with("他们");
+    if has_restart_subject {
+        // 如果 curr 是称谓/感叹/唤语/方言呼应（如 妮儿、兄弟、哥们、老哥、宝贝、我嘞个豆、我勒个豆、乖乖嘞、乖乖、我日他哥），
+        // 后面紧接 "你..."、"我..." 是真实自然的口语对话承接（如 "妮儿，你怎么了"、"我嘞个豆，我真的服了"），予以放行
+        if curr == "妮儿"
+            || curr == "兄弟"
+            || curr == "哥们"
+            || curr == "老哥"
+            || curr == "宝贝"
+            || curr == "我嘞个豆"
+            || curr == "我勒个豆"
+            || curr == "乖乖嘞"
+            || curr == "乖乖"
+            || curr == "我日他哥"
+        {
+            return true;
+        }
+        return false;
+    }
+    true
 }
 
 /// 问字模式的答案：去空、去重，拼音只是显示用的读音，不校验。
@@ -273,6 +342,49 @@ fn clean(text: &str) -> String {
         .collect()
 }
 
+fn strip_translation_prefix(s: &str) -> String {
+    let mut cleaned = s.trim();
+    for prefix in &[
+        "Translation:",
+        "translation:",
+        "译文：",
+        "译文:",
+        "Here is the translation:",
+        "English:",
+        "english:",
+    ] {
+        if let Some(stripped) = cleaned.strip_prefix(prefix) {
+            cleaned = stripped.trim();
+        }
+    }
+    if (cleaned.starts_with('"') && cleaned.ends_with('"'))
+        || (cleaned.starts_with('\'') && cleaned.ends_with('\''))
+        || (cleaned.starts_with('“') && cleaned.ends_with('”'))
+    {
+        if cleaned.chars().count() >= 2 {
+            let mut chars = cleaned.chars();
+            chars.next();
+            chars.next_back();
+            cleaned = chars.as_str().trim();
+        }
+    }
+    cleaned.to_string()
+}
+
+fn is_valid_english_translation(s: &str) -> bool {
+    let has_cjk = s.chars().any(|c| {
+        matches!(c,
+            '\u{4e00}'..='\u{9fff}' |
+            '\u{3400}'..='\u{4dbf}' |
+            '\u{f900}'..='\u{faff}'
+        )
+    });
+    if has_cjk {
+        return false;
+    }
+    s.chars().any(|c| c.is_ascii_alphabetic())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,6 +400,7 @@ mod tests {
             syllables: 2,
             candidates: vec!["张涛".into(), "张贴".into()],
             guess: String::new(),
+            current_expression: "张涛".into(),
             max_items: 2,
             want_sentence,
             text: String::new(),
@@ -394,6 +507,74 @@ mod tests {
             parse_reply(r#"{"sentence": ""}"#, &translate)
                 .sentence
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn translate_replies_reject_cjk_residue_and_strip_prefixes_for_english() {
+        let mut translate = request("", false);
+        translate.kind = PredictionKind::Translate;
+        translate.text = "现在我的输入法可以全剧翻译啦哈".to_owned();
+        translate.target_language = "en".to_owned();
+
+        // 包含中文残留的直接丢弃，防止污染候选框
+        let dirty_reply = r#"{"sentence": "Now my keyboard can do full剧翻译啦哈"}"#;
+        assert_eq!(parse_reply(dirty_reply, &translate).sentence, None);
+
+        // 带有 Translation: 前缀或者引号的自动净化
+        let prefixed_reply = r#"{"sentence": "Translation: \"My keyboard can translate anywhere now lol.\""}"#;
+        assert_eq!(
+            parse_reply(prefixed_reply, &translate).sentence.as_deref(),
+            Some("My keyboard can translate anywhere now lol.")
+        );
+    }
+
+    #[test]
+    fn test_task_a_vs_task_b_coherence_guard() {
+        let mut req = request("wo'x'h'n", true);
+        req.current_expression = "我喜欢你".to_owned();
+
+        // 案例 A: 云端返回了与当前表达完全脱节的句子 "我想吃饭" -> 必须严格拦截并丢弃
+        let discordant_reply = r#"{"sentence": "我想吃饭"}"#;
+        assert_eq!(
+            parse_reply(discordant_reply, &req).sentence,
+            None,
+            "Discordant sentence '我想吃饭' must be rejected when current_expression is '我喜欢你'"
+        );
+
+        // 案例 B: 云端返回自然接续短语 "很久了" -> 必须接受
+        let continuation_suffix = r#"{"sentence": "很久了"}"#;
+        assert_eq!(
+            parse_reply(continuation_suffix, &req).sentence.as_deref(),
+            Some("很久了"),
+            "Coherent continuation suffix '很久了' must be accepted"
+        );
+
+        // 案例 C: 云端返回完整自然续句 "我喜欢你很久了" -> 必须接受
+        let full_continuation = r#"{"sentence": "我喜欢你很久了"}"#;
+        assert_eq!(
+            parse_reply(full_continuation, &req).sentence.as_deref(),
+            Some("我喜欢你很久了"),
+            "Full continuation sentence starting with current_expression must be accepted"
+        );
+
+        // 案例 D: 方言呼应与感叹词（如 "妮儿"、"我嘞个豆"）后面接自然人称承接 -> 必须放行
+        let mut req_dialect = request("ni'er", true);
+        req_dialect.current_expression = "妮儿".to_owned();
+        let dialect_reply = r#"{"sentence": "你怎么了"}"#;
+        assert_eq!(
+            parse_reply(dialect_reply, &req_dialect).sentence.as_deref(),
+            Some("你怎么了"),
+            "Dialect vocative '妮儿' followed by '你怎么了' must be accepted"
+        );
+
+        let mut req_exclaim = request("wo'lei'ge'dou", true);
+        req_exclaim.current_expression = "我嘞个豆".to_owned();
+        let exclaim_reply = r#"{"sentence": "我真的服了"}"#;
+        assert_eq!(
+            parse_reply(exclaim_reply, &req_exclaim).sentence.as_deref(),
+            Some("我真的服了"),
+            "Dialect exclamation '我嘞个豆' followed by '我真的服了' must be accepted"
         );
     }
 }

@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use qingjian_core::{EmojiTable, Engine, Language};
 use qingjian_dictionary::{Dictionary, WordList};
-use qingjian_learning::{FrequencyLearner, InputLog, UsageStats, VocabularyBook};
+use qingjian_learning::{FrequencyLearner, InputLog, RecallBook, UsageStats, VocabularyBook};
 use qingjian_platform::{Config, code_tables, extra_dictionaries};
 use qingjian_translate::{Glossary, LayeredTranslator, LevelTable, PersonalGlossary};
 
@@ -41,7 +41,8 @@ pub fn assemble(spec: &AssemblySpec) -> Result<Engine, ServerError> {
     if let Some(dir) = &spec.user_dir {
         engine = engine
             .with_usage_meter(Box::new(UsageStats::open(dir.join("usage.tsv"))))
-            .with_vocabulary_tracker(Box::new(load_vocabulary(dir, spec.levels_dir.as_deref())));
+            .with_vocabulary_tracker(Box::new(load_vocabulary(dir, spec.levels_dir.as_deref())))
+            .with_recall_tracker(Box::new(RecallBook::open(dir.join("user-recall.tsv"))));
         if spec.input_log {
             let path = dir.join("input-log.jsonl");
             tracing::info!(path = %path.display(), "输入日志开着");

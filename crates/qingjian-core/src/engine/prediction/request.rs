@@ -32,6 +32,9 @@ pub struct PredictionRequest {
     /// 本地整句转换把这段拼音转成的汉字（问字模式是问题本身的汉字形式），可能有错字；转不出为空。
     pub guess: String,
 
+    /// 当前输入的最佳首选表达（如 "我喜欢你" 或 "我真的服了"），帮助模型明确当前输入意图，防止后文预测脱节。
+    pub current_expression: String,
+
     /// 最多要几条。
     pub max_items: usize,
 

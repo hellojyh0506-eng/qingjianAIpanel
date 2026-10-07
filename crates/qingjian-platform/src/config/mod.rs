@@ -5,6 +5,7 @@ mod dictionaries;
 mod general;
 mod key_combo;
 mod layout_mode;
+mod learning_mode;
 mod log_level;
 mod model;
 mod modifiers;
@@ -38,6 +39,7 @@ pub use general::{
 };
 pub use key_combo::KeyCombo;
 pub use layout_mode::LayoutMode;
+pub use learning_mode::LearningMode;
 pub use log_level::LogLevel;
 pub use model::LocalModelConfig;
 pub use modifiers::Modifiers;

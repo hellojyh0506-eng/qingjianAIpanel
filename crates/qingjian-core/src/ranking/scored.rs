@@ -47,6 +47,19 @@ pub type SortKey<'a> = (
     &'a str,
 );
 
+/// 中文高频虚词与功能词：在上下文有明确语法信号时，历史按键选择数不应硬性覆盖上下文得分。
+pub fn is_functional_word(text: &str) -> bool {
+    matches!(
+        text,
+        "吗" | "嘛" | "呢" | "啊" | "吧" | "哦" | "呀"
+            | "了" | "着" | "过"
+            | "的" | "地" | "得"
+            | "在" | "再"
+            | "他" | "她" | "它"
+            | "是" | "事"
+    )
+}
+
 impl<'a> Scored<'a> {
     /// 命中不是敲的原样（模糊音或敲错变体）。
     pub fn altered(&self) -> bool {
@@ -74,12 +87,18 @@ impl<'a> Scored<'a> {
 
     /// `choice` 是同输入串下的选择次数，`score` 是上下文得分（log 概率，已含用户加分与模糊音 / 敲错扣分）。
     pub(super) fn key(&self, choice: u32, score: f64) -> SortKey<'a> {
+        // 功能词/虚词不使用离散硬排序优先，由包含 choice 加成的 score 软性裁决
+        let effective_choice = if is_functional_word(self.hit.text) {
+            0
+        } else {
+            choice
+        };
         (
             Reverse(self.hit.exact),
             Reverse(self.coverage),
             self.abbreviated,
             Reverse(self.full_last),
-            Reverse(choice),
+            Reverse(effective_choice),
             Reverse((score * 1000.0).round() as i64),
             self.altered(),
             self.hit.text.chars().count(),

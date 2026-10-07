@@ -22,7 +22,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{DragDetect, ReleaseCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetCursorPos, HTCAPTION, HTCLIENT, IDC_HAND,
     LoadCursorW, MA_NOACTIVATE, SendMessageW, WM_EXITSIZEMOVE, WM_LBUTTONDOWN, WM_MOUSEACTIVATE,
-    WM_NCHITTEST, WM_NCLBUTTONDOWN, WM_TIMER, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WM_NCHITTEST, WM_NCLBUTTONDOWN, WM_RBUTTONUP, WM_TIMER, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{Error, PCWSTR, Result, w};
@@ -76,10 +76,11 @@ pub(super) struct StatusBar {
     painter: SharedPainter,
 }
 
-/// 三格从左到右的动作。
-const ACTIONS: [StatusAction; 3] = [
+/// 四格从左到右的动作：中英模式、全角标点、学习模式、设置。
+const ACTIONS: [StatusAction; 4] = [
     StatusAction::ToggleMode,
     StatusAction::TogglePunctuation,
+    StatusAction::ToggleLearningMode,
     StatusAction::OpenSettings,
 ];
 
@@ -179,22 +180,33 @@ impl StatusBar {
         }
     }
 
-    /// 渲染器要的三格：模式（品牌色）、标点（生效时品牌色，否则灰）、齿轮。
+    /// 渲染器要的四格：模式（品牌色）、标点（生效时品牌色，否则灰）、学习模式（学/练）、齿轮。
     fn status_cells(view: &StatusView) -> Vec<StatusCell> {
+        let (learn_text, learn_active) = match view.learning_mode {
+            qingjian_platform::LearningMode::Daily => ("学", false),
+            qingjian_platform::LearningMode::Learn => ("学", true),
+            qingjian_platform::LearningMode::Drill => ("练", true),
+        };
         vec![
             StatusCell::text(Self::mode_text(view), true),
             StatusCell::text(if view.full_width { "，。" } else { ",." }, view.full_width),
+            StatusCell::text(learn_text, learn_active),
             StatusCell::Gear,
         ]
     }
 
-    /// GDI 画法的三格，顺序同 [`ACTIONS`]。
+    /// GDI 画法的四格，顺序同 [`ACTIONS`]。
     fn cells(&self, theme: &Theme) -> Vec<CellSpec> {
         let data = self.data.borrow();
         let Some(view) = data.as_ref() else {
             return Vec::new();
         };
         let punctuation_active = view.full_width;
+        let (learn_text, learn_active) = match view.learning_mode {
+            qingjian_platform::LearningMode::Daily => ("学", false),
+            qingjian_platform::LearningMode::Learn => ("学", true),
+            qingjian_platform::LearningMode::Drill => ("练", true),
+        };
         vec![
             CellSpec {
                 text: Self::mode_text(view),
@@ -211,6 +223,16 @@ impl StatusBar {
                     theme.gloss_color
                 },
                 action: StatusAction::TogglePunctuation,
+            },
+            CellSpec {
+                text: learn_text.to_owned(),
+                font: theme.text_font,
+                color: if learn_active {
+                    theme.cloud_color
+                } else {
+                    theme.gloss_color
+                },
+                action: StatusAction::ToggleLearningMode,
             },
             CellSpec {
                 text: "\u{2699}".to_owned(),
@@ -424,6 +446,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             } else if let Some(placement) = placement_of(hwnd) {
                 // lparam 低 16 位是客户区 x（有符号）。
                 placement.on_click((lparam.0 & 0xFFFF) as i16 as i32);
+            }
+            LRESULT(0)
+        }
+        WM_RBUTTONUP => {
+            if let Some(placement) = placement_of(hwnd) {
+                placement.show_context_menu();
             }
             LRESULT(0)
         }

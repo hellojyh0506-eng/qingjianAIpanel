@@ -12,6 +12,7 @@
 
 mod costs;
 mod edit;
+pub mod recovery;
 mod result;
 pub mod typo;
 
@@ -25,8 +26,8 @@ use crate::parser::{self, Segmentation};
 /// 少于这么多字母不纠：短串的一处编辑几乎总能凑出别的合法拼音，误纠比不纠更烦。
 pub const MIN_LETTERS: usize = 4;
 
-/// 多于这么多字母不纠：变体数量随长度线性涨，而且这么长多半是整句简拼。
-pub const MAX_LETTERS: usize = 24;
+/// 多于这么多字母不纠（长句或整段拼音）。
+pub const MAX_LETTERS: usize = 64;
 
 /// 这段输入是否值得试纠错：纯小写字母、长度在范围内。
 pub fn eligible(input: &str) -> bool {

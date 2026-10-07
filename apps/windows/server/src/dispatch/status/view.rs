@@ -18,6 +18,9 @@ pub struct StatusView {
     /// 外观模式。
     pub theme: ThemeMode,
 
+    /// 当前英语学习模式（Daily / Learn / Drill）。
+    pub learning_mode: qingjian_platform::LearningMode,
+
     /// 配置里记住的内容左上角物理像素；`None` 首次按屏幕右下角摆。
     pub anchor: Option<(i32, i32)>,
 }

@@ -10,6 +10,7 @@ mod commit;
 mod composing;
 mod correcting;
 mod decoded;
+pub mod disambiguation;
 mod extras;
 mod gloss;
 mod input_log;
@@ -21,6 +22,7 @@ mod privacy;
 mod query;
 mod raw;
 mod rescoring;
+mod recall;
 mod session;
 mod setup;
 mod statistics;
@@ -53,6 +55,7 @@ pub use prediction::{
 
 pub use query::Query;
 pub use raw::RawPreedit;
+pub use recall::{NoRecallTracker, RecallItem, RecallOutcome, RecallTracker};
 pub use session::EngineSession;
 pub use statistics::{BOOKS, Book, NoUsageMeter, Usage, UsageMeter, UsageSummary, book_scale};
 pub use timings::Timings;
@@ -203,6 +206,9 @@ pub struct Engine {
 
     /// 学习语言的词汇记录（见过 / 上屏过哪些译词）；缺省不记也不标生词。
     vocabulary: Box<dyn VocabularyTracker>,
+
+    /// 主动回忆追踪器（记录待复习的词对与回忆结果）；缺省不记。
+    recall: Box<dyn RecallTracker>,
 
     /// 释义兜底：释义表里没有的词上屏后问云端；缺省不问。
     gloss_filler: Box<dyn GlossFiller>,
@@ -409,6 +415,7 @@ impl Engine {
             last_prediction_scope: String::new(),
             meter: Box::new(NoUsageMeter),
             vocabulary: Box::new(NoVocabularyTracker),
+            recall: Box::new(NoRecallTracker),
             gloss_filler: Box::new(NoGlossFiller),
             displayed: Vec::new(),
             last_query: std::cell::RefCell::new(None),
@@ -435,6 +442,25 @@ impl Engine {
             opencc: None,
             traditional_map: std::cell::RefCell::new(HashMap::new()),
         }
+    }
+
+    /// 当前生效的光标前文：优先取 TSF 传来的宿主前文。
+    pub fn effective_before(&self) -> Option<&str> {
+        self.rescoring_before.as_deref().filter(|s| !s.is_empty())
+    }
+
+    /// 当前生效的上下文（前词与再前词）：链上有上屏词则优先使用；否则从光标前文末尾提取。
+    pub fn effective_context(&self) -> (Option<String>, Option<String>) {
+        if let Some(prev) = self.chain.previous() {
+            return (
+                Some(prev.to_owned()),
+                self.chain.context().earlier.map(str::to_owned),
+            );
+        }
+        if let Some(before) = self.effective_before() {
+            return disambiguation::extract_context_from_before(before);
+        }
+        (None, None)
     }
 }
 

@@ -255,4 +255,13 @@ impl FrequencyLearner {
         self.words_dirty = false;
         Ok(())
     }
+
+    /// 个人纠错表文件与词频文件同目录。
+    pub(super) fn corrections_path(frequency_path: &Path) -> PathBuf {
+        frequency_path.with_file_name(USER_CORRECTIONS_FILE)
+    }
+
+    pub(super) fn save_corrections_to(&mut self, path: &Path) -> Result<(), LearningError> {
+        self.corrections.save_to(path)
+    }
 }

@@ -157,6 +157,22 @@ impl Learner for MutedLearner {
         self.inner.forget_english(word)
     }
 
+    fn record_correction(&mut self, context: &str, mistyped: &str, corrected: &str) {
+        if !self.muted() {
+            self.inner.record_correction(context, mistyped, corrected);
+        }
+    }
+
+    fn confirm_choice(&mut self, context: &str, choice: &str) {
+        if !self.muted() {
+            self.inner.confirm_choice(context, choice);
+        }
+    }
+
+    fn correction_adjustment(&self, before: Option<&str>, candidate: &str) -> f64 {
+        self.inner.correction_adjustment(before, candidate)
+    }
+
     fn flush(&mut self) {
         self.inner.flush();
     }

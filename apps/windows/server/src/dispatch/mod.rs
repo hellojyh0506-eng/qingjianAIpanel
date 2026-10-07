@@ -14,6 +14,7 @@ mod rescore;
 mod session;
 mod status;
 mod translate;
+mod recall;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -29,6 +30,7 @@ pub use self::candidates::{CandidateSink, NoopSink, RenderSettings};
 pub use self::code::find_code_table;
 use self::composed::Composed;
 pub use self::config::RouterConfig;
+use self::recall::RecallSession;
 use self::reload::ConfigReload;
 pub use self::reload::{DataDirs, attach_cloud};
 pub use self::rescore::find_model;
@@ -60,8 +62,17 @@ pub struct Router {
     /// 「翻译选中文字」进行态；与 `composed` 互斥。
     translation: Option<Translation>,
 
+    /// 「主动回忆」进行态；与 `composed` 互斥。
+    recall_session: Option<RecallSession>,
+
     /// 当前组句的被动英文学习翻译提示；缓冲变化时清空，仅作为学习旁路信息。
     pub(crate) passive_translation: Option<String>,
+
+    /// 当前英语学习模式（Daily / Learn / Drill）。
+    pub(crate) learning_mode: qingjian_platform::LearningMode,
+
+    /// 当前被动翻译请求对应的候选词；若当前首选词变更则作废旧译文，防止污染新候选。
+    pub(crate) passive_translation_target: Option<String>,
 
     /// 已发出、等 DLL 回选区的请求号；对不上的 `Selection` 丢弃。
     pending_selection: Option<u64>,
@@ -134,7 +145,10 @@ impl Router {
             focused: None,
             composed: None,
             translation: None,
+            recall_session: None,
             passive_translation: None,
+            passive_translation_target: None,
+            learning_mode: config.learning_mode,
             pending_selection: None,
             selection_seq: 0,
             sentence: None,
@@ -155,6 +169,11 @@ impl Router {
             applied_model: LocalModelConfig::default(),
             rescore: RescoreState::default(),
         }
+    }
+
+    /// 当前英语学习模式。
+    pub fn learning_mode(&self) -> qingjian_platform::LearningMode {
+        self.learning_mode
     }
 
     /// 下发给 DLL 的按键行为设置：`OpenSession` 的回包带一次，之后每拍 `SyncMode` 也跟着走，

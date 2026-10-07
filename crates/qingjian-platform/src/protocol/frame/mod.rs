@@ -55,6 +55,10 @@ pub struct Frame {
     /// 不参与 [`is_empty`](Self::is_empty)：单有提示不算在组句，否则空组句也会撑开候选窗口。
     #[serde(default)]
     pub notice: Option<String>,
+
+    /// 当前英语学习模式（Daily / Learn / Drill）。
+    #[serde(default)]
+    pub learning_mode: crate::LearningMode,
 }
 
 impl Frame {

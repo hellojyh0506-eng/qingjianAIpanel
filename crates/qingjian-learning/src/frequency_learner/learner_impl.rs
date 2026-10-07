@@ -273,5 +273,28 @@ impl Learner for FrequencyLearner {
                 }
             }
         }
+        if self.corrections.is_dirty() {
+            let corrections_path = Self::corrections_path(&path);
+            match self.save_corrections_to(&corrections_path) {
+                Ok(()) => {
+                    tracing::info!(path = %corrections_path.display(), rules = self.corrections.len(), "个人纠错与防混淆规则已保存")
+                }
+                Err(error) => {
+                    tracing::warn!(path = %corrections_path.display(), %error, "个人纠错与防混淆规则保存失败")
+                }
+            }
+        }
+    }
+
+    fn record_correction(&mut self, context: &str, mistyped: &str, corrected: &str) {
+        self.corrections.record_correction(context, mistyped, corrected);
+    }
+
+    fn confirm_choice(&mut self, context: &str, choice: &str) {
+        self.corrections.confirm_choice(context, choice);
+    }
+
+    fn correction_adjustment(&self, before: Option<&str>, candidate: &str) -> f64 {
+        self.corrections.adjustment(before, candidate)
     }
 }

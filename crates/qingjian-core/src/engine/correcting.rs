@@ -25,7 +25,7 @@ impl Engine {
     }
 
     pub(super) fn find_correction(&self, scope: &str) -> Option<Correction> {
-        if !correction::eligible(scope) || self.learner.raw_count(scope) > 0 {
+        if self.learner.raw_count(scope) > 0 {
             return None;
         }
         // 整段就是个英文词（hello）：用户多半在打英文，别把它「纠」成 喝了哦
@@ -34,6 +34,30 @@ impl Engine {
             .as_ref()
             .is_some_and(|english| english.get(scope).is_some())
         {
+            return None;
+        }
+
+        // 优先检查噪声 apostrophe 与音节碎片恢复 (如 ni'dao'di'si'n'g'bu'xi'm'g)
+        if scope.contains('\'') {
+            if let Some((rec_seg, _rec_cost, rec_joined)) =
+                correction::recovery::recover_noisy_pinyin(scope)
+            {
+                let conversion = self.convert_sentence(&rec_seg.patterns(), false)?;
+                if !conversion.has_placeholder() {
+                    return Some(Correction {
+                        original: scope.to_owned(),
+                        corrected: rec_joined,
+                        segmentation: rec_seg,
+                        edit: correction::Edit::Substitute {
+                            index: 0,
+                            from: ' ',
+                        },
+                    });
+                }
+            }
+        }
+
+        if !correction::eligible(scope) {
             return None;
         }
         let (segmentations, tail) = segment_longest_prefix(scope).ok()?;

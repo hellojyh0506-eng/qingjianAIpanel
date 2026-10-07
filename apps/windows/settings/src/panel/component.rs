@@ -53,6 +53,9 @@ impl Component for Settings {
             Message::LearningLanguage(Some(i)) if i < general::LANGUAGES.len() => {
                 self.save("general", "learning_language", general::LANGUAGES[i].1);
             }
+            Message::LearningMode(Some(i)) if i < general::LEARNING_MODES.len() => {
+                self.save("general", "learning_mode", general::LEARNING_MODES[i].1);
+            }
             Message::PageSize(Some(value)) => {
                 let size = (value.round() as i64).clamp(1, 9);
                 self.save("general", "page_size", size);
