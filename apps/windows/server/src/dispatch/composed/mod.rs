@@ -2,7 +2,10 @@
 
 mod state;
 
-use qingjian_core::{Candidate, CandidateLayout, CandidateList, CloudWord, Query};
+use qingjian_core::{
+    Candidate, CandidateLayout, CandidateList, CloudWord, Language, PredictionKind, Query, Sense,
+    Translation,
+};
 use qingjian_platform::protocol::{Frame, PROTOCOL_VERSION, PreeditKind, PreeditSegment};
 
 pub(super) use self::state::{Composed, TypedKeys};
@@ -14,6 +17,7 @@ impl Router {
         self.highlight = 0;
         self.navigated = false;
         self.sentence = None;
+        self.passive_translation = None;
         if self.engine.composition().is_empty() {
             self.composed = None;
             self.cancel_prediction();
@@ -29,8 +33,21 @@ impl Router {
             Some((items, preedit, cursor, typed_keys)) => {
                 let layout =
                     CandidateLayout::new(items, self.config.page_size, self.config.cloud_slots);
+                let learning_on = !self.config.learning_language_off
+                    && self.engine.learning_language() != Language::Chinese
+                    && !self.is_private();
+                let first_local = layout.local().first();
+                let has_local_trans = first_local
+                    .and_then(|c| self.engine.translate_word(&c.text))
+                    .is_some();
                 if self.engine.prediction_enabled() {
-                    self.engine.request_prediction(None, layout.local());
+                    if learning_on && !has_local_trans {
+                        if let Some(first) = first_local {
+                            self.engine.request_translation(&first.text);
+                        }
+                    } else {
+                        self.engine.request_prediction(None, layout.local());
+                    }
                 }
                 Composed::Candidates {
                     preedit,
@@ -69,6 +86,14 @@ impl Router {
                     tracing::info!("翻译选中文字：云端没有给出译文");
                     self.translation = None;
                 }
+            }
+            return;
+        }
+        if self.engine.last_prediction_kind() == PredictionKind::Translate {
+            if let Some(text) = prediction.sentence {
+                self.passive_translation = Some(text);
+                let shown = self.self_drawn_frame();
+                self.reconcile_candidates(&shown);
             }
             return;
         }
@@ -230,6 +255,23 @@ impl Router {
                     .collect();
                 let mut candidates = CandidateList { items };
                 self.engine.annotate(&mut candidates);
+                if let Some(passive) = &self.passive_translation {
+                    if page == 0 {
+                        if let Some(first) = candidates.items.first_mut() {
+                            if first.translation.is_none() {
+                                first.translation = Some(Translation::new(
+                                    self.engine.learning_language(),
+                                    vec![Sense {
+                                        part_of_speech: None,
+                                        text: passive.clone(),
+                                        reading: None,
+                                        fresh: false,
+                                    }],
+                                ));
+                            }
+                        }
+                    }
+                }
                 Frame {
                     preedit: preedit.clone(),
                     preedit_mode: self.config.preedit,

@@ -88,6 +88,9 @@ pub struct RouterConfig {
 
     /// 候选上是否显示辅码（`[general] aux_code_show`）。随帧下发给候选窗。
     pub aux_code_show: bool,
+
+    /// 学习语言关着（`[general] learning_language = "off"`）：候选旁不显示译文，被动翻译也停。
+    pub learning_language_off: bool,
 }
 
 impl RouterConfig {
@@ -137,6 +140,7 @@ impl From<&Config> for RouterConfig {
             wubi: config.general.wubi(),
             aux_code_key: config.general.aux_code_key(),
             aux_code_show: config.general.aux_code_show,
+            learning_language_off: config.general.learning_language_off(),
         }
     }
 }

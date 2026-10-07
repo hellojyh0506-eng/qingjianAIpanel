@@ -67,6 +67,7 @@ impl Router {
         self.stop_rescoring();
         self.composed = None;
         self.translation = None;
+        self.passive_translation = None;
         self.pending_selection = None;
         self.sentence = None;
         self.notice = None;

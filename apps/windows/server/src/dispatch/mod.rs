@@ -60,6 +60,9 @@ pub struct Router {
     /// 「翻译选中文字」进行态；与 `composed` 互斥。
     translation: Option<Translation>,
 
+    /// 当前组句的被动英文学习翻译提示；缓冲变化时清空，仅作为学习旁路信息。
+    pub(crate) passive_translation: Option<String>,
+
     /// 已发出、等 DLL 回选区的请求号；对不上的 `Selection` 丢弃。
     pending_selection: Option<u64>,
 
@@ -131,6 +134,7 @@ impl Router {
             focused: None,
             composed: None,
             translation: None,
+            passive_translation: None,
             pending_selection: None,
             selection_seq: 0,
             sentence: None,

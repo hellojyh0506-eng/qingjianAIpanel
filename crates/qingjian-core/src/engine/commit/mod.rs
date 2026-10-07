@@ -43,10 +43,14 @@ impl Engine {
                     self.english_translator
                         .translate(&text.to_ascii_lowercase())
                 }),
-                _ => self.translator.translate(text).map(|mut translation| {
-                    self.mark_fresh(&mut translation);
-                    translation
-                }),
+                _ => self
+                    .translator
+                    .translate(text)
+                    .map(|mut translation| {
+                        self.mark_fresh(&mut translation);
+                        translation
+                    })
+                    .or_else(|| candidate.translation.clone()),
             };
             hits += usize::from(candidate.translation.is_some());
         }

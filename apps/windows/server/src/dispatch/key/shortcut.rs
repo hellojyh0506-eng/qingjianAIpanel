@@ -1,6 +1,4 @@
-//! 组句中「修饰键 + 数字」的快捷键：上屏译词、删候选。与 macOS 壳对齐。
-
-use qingjian_core::{Candidate, CandidateList};
+use qingjian_core::{Candidate, CandidateList, Sense, Translation};
 use qingjian_platform::protocol::KeyModifiers;
 
 use super::Effect;
@@ -79,6 +77,25 @@ impl Router {
             items: vec![candidate],
         };
         self.engine.annotate(&mut list);
+        let page_size = self.config.page_size;
+        let page = self.highlight / page_size;
+        if page == 0 && digit == 1 {
+            if let Some(item) = list.items.first_mut() {
+                if item.translation.is_none() {
+                    if let Some(passive) = &self.passive_translation {
+                        item.translation = Some(Translation::new(
+                            self.engine.learning_language(),
+                            vec![Sense {
+                                part_of_speech: None,
+                                text: passive.clone(),
+                                reading: None,
+                                fresh: false,
+                            }],
+                        ));
+                    }
+                }
+            }
+        }
         list.items.pop()
     }
 }

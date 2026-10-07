@@ -40,6 +40,11 @@ impl Engine {
         self.predictor.policy()
     }
 
+    /// 最近一次发出的联想/翻译请求类型。
+    pub fn last_prediction_kind(&self) -> PredictionKind {
+        self.last_prediction_kind
+    }
+
     /// 发一次联想请求，返回序号；没接 Predictor、私密输入中或拼音太短时不发，返回 `None`。
     ///
     /// 要的是「当前作用域拼音对应的词」和整句补全；`candidates` 是本地候选，只取前几个当提示。

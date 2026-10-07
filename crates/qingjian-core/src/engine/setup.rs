@@ -515,4 +515,16 @@ impl Engine {
     pub fn learning_language(&self) -> Language {
         self.translator.language()
     }
+
+    /// 查词级别译文（O(1) 本地内存查表）；繁体模式下自动转为简体查找。
+    pub fn translate_word(&self, text: &str) -> Option<Translation> {
+        let mut text = text;
+        let traditional_map = self.traditional_map.borrow();
+        if self.traditional
+            && let Some(simp) = traditional_map.get(text)
+        {
+            text = simp.as_str();
+        }
+        self.translator.translate(text)
+    }
 }
