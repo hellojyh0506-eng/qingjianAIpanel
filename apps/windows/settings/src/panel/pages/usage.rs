@@ -109,8 +109,65 @@ pub(crate) fn view(settings: &Settings, _context: &mut ViewContext<Settings>) ->
                 .children([note(&vocabulary_line(vocabulary)), level_block(vocabulary)]),
             None => note("学习语言已关，不统计词汇。"),
         },
+        TextBlock::new()
+            .text("个人英语学习画像 (B2 → C1)")
+            .font_weight(FontWeight::SEMI_BOLD)
+            .into(),
+        profile_block(&dir),
     ]);
     page("统计", body)
+}
+
+fn profile_block(dir: &std::path::Path) -> View {
+    let vault = qingjian_learning::LearningVault::open(dir);
+    if vault.is_empty() {
+        return note("暂无英语学习记录：在打字时使用 [Try English] 或保存表达即可生成个人英语学习画像。");
+    }
+    let profile = vault.calculate_profile();
+    let stats_text = format!(
+        "已存表达 {} 条 · 训练尝试 {} 次 · 累计复习 {} 次",
+        profile.total_saved,
+        profile.total_attempts,
+        profile.total_reviews,
+    );
+
+    let dim_row = |name: &str, score: u8| -> View {
+        let filled = ((score as usize + 5) / 10).min(10);
+        let bar = format!("{:<10}", "█".repeat(filled));
+        StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(8.0)
+            .children([
+                cell(name, 110.0),
+                cell(format!("{bar} ({score}%)"), 200.0),
+            ])
+            .into()
+    };
+
+    let dims = [
+        dim_row("Vocabulary", profile.vocabulary.score),
+        dim_row("Grammar", profile.grammar.score),
+        dim_row("Collocations", profile.collocation.score),
+        dim_row("Naturalness", profile.naturalness.score),
+        dim_row("Phrasal Verbs", profile.phrasal_verbs.score),
+        dim_row("Pragmatics", profile.pragmatics.score),
+        dim_row("Register", profile.register.score),
+    ];
+
+    let weakness_text = if !profile.top_weaknesses.is_empty() {
+        format!("💡 主要提升机会：{}", profile.top_weaknesses.join(" / "))
+    } else {
+        "各项能力均衡，继续保持主动输出！".to_string()
+    };
+
+    StackPanel::new().spacing(8.0).children([
+        note(&stats_text),
+        StackPanel::new().spacing(4.0).children(dims).into(),
+        TextBlock::new()
+            .text(weakness_text)
+            .font_weight(FontWeight::SEMI_BOLD)
+            .into(),
+    ])
 }
 
 /// 有等级表才显示，一级一行。

@@ -45,11 +45,14 @@ pub enum DrillStage {
     Comparing,
     /// 对比完成展示阶段
     Compared,
+    /// 个人学习画像与账本查看阶段
+    Profile,
 }
 
 pub use qingjian_core::{
-    ComparisonResult, ComparisonStatus, ErrorMajorCategory, ErrorSubcategory, FeedbackItem,
-    RecallAttempt,
+    ComparisonResult, ComparisonStatus, DimensionStat, ErrorMajorCategory, ErrorRecord,
+    ErrorSubcategory, FeedbackItem, MasteryLevel, MasteryRecord, ProfileDimension, RecallAttempt,
+    ReviewItem, SavedExpression, UserAttempt, UserEnglishProfile,
 };
 
 /// 候选窗口第三层：轻量英语学习卡片帧数据。

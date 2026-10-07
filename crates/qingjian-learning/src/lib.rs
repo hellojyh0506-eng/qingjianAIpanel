@@ -10,6 +10,7 @@ mod frequency_learner;
 mod input_log;
 mod recall_book;
 mod usage_stats;
+mod vault;
 mod vocabulary_book;
 
 pub use corrections::{
@@ -20,9 +21,11 @@ pub use error::LearningError;
 pub use frequency_learner::FrequencyLearner;
 pub use input_log::InputLog;
 pub use qingjian_core::{
-    ComparisonResult, ComparisonStatus, ErrorMajorCategory, ErrorSubcategory, FeedbackItem,
-    RecallAttempt,
+    ComparisonResult, ComparisonStatus, DimensionStat, ErrorMajorCategory, ErrorRecord,
+    ErrorSubcategory, FeedbackItem, MasteryLevel, MasteryRecord, ProfileDimension, RecallAttempt,
+    RecallItem, RecallOutcome, ReviewItem, SavedExpression, UserAttempt, UserEnglishProfile,
 };
 pub use recall_book::{RecallBook, analyze_feedback_items};
 pub use usage_stats::UsageStats;
+pub use vault::LearningVault;
 pub use vocabulary_book::VocabularyBook;

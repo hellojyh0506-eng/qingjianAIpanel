@@ -241,6 +241,11 @@ impl Router {
                                         input,
                                         reference,
                                     );
+                                    if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                                        let mut vault = qingjian_learning::LearningVault::open(&user_dir);
+                                        vault.record_attempt(&attempt);
+                                        let _ = vault.flush();
+                                    }
                                     card.drill_attempt = Some(attempt);
                                     card.drill_stage =
                                         Some(qingjian_platform::protocol::DrillStage::Compared);
@@ -340,8 +345,79 @@ impl Router {
                                         self.engine.learning_language(),
                                         attempt,
                                     );
+                                }
+                                if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                                    let mut vault = qingjian_learning::LearningVault::open(&user_dir);
+                                    let saved_expr = card
+                                        .drill_attempt
+                                        .as_ref()
+                                        .map(|a| a.comparison.natural_expression.as_str())
+                                        .or_else(|| card.primary.as_ref().map(|p| p.text.as_str()))
+                                        .unwrap_or("");
+                                    let tag = card.primary.as_ref().map(|p| p.tag.as_str());
+                                    vault.save_expression(&card.target_text, saved_expr, tag, None);
+                                    let _ = vault.flush();
+                                    card.drill_notice = Some(format!("⭐ 已保存到生词本: {}", saved_expr));
+                                } else {
                                     card.drill_notice = Some("⭐ 已保存到生词本".to_string());
                                 }
+                                let shown = self.self_drawn_frame();
+                                self.reconcile_candidates(&shown);
+                                return ServerMessage::KeyResult {
+                                    session,
+                                    outcome: KeyOutcome::Consumed,
+                                    commit: None,
+                                    frame: self.current_frame(),
+                                };
+                            }
+                            if event.character.map(|c| c.to_ascii_lowercase()) == Some('p') {
+                                let profile_text = if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                                    let vault = qingjian_learning::LearningVault::open(&user_dir);
+                                    vault.calculate_profile().format_ascii_bars()
+                                } else {
+                                    "暂无学习画像数据".to_string()
+                                };
+                                card.drill_stage = Some(qingjian_platform::protocol::DrillStage::Profile);
+                                card.drill_notice = Some(profile_text);
+                                let shown = self.self_drawn_frame();
+                                self.reconcile_candidates(&shown);
+                                return ServerMessage::KeyResult {
+                                    session,
+                                    outcome: KeyOutcome::Consumed,
+                                    commit: None,
+                                    frame: self.current_frame(),
+                                };
+                            }
+                            if event.virtual_key == super::key::ESCAPE
+                                || event.virtual_key == super::key::RETURN
+                            {
+                                card.drill_stage = None;
+                                card.drill_input.clear();
+                                card.drill_attempt = None;
+                                card.drill_notice = None;
+                                let shown = self.self_drawn_frame();
+                                self.reconcile_candidates(&shown);
+                                return ServerMessage::KeyResult {
+                                    session,
+                                    outcome: KeyOutcome::Consumed,
+                                    commit: None,
+                                    frame: self.current_frame(),
+                                };
+                            }
+                            return ServerMessage::KeyResult {
+                                session,
+                                outcome: KeyOutcome::Consumed,
+                                commit: None,
+                                frame: self.current_frame(),
+                            };
+                        }
+                        qingjian_platform::protocol::DrillStage::Profile => {
+                            if event.character.map(|c| c.to_ascii_lowercase()) == Some('c') {
+                                if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                                    let mut vault = qingjian_learning::LearningVault::open(&user_dir);
+                                    let _ = vault.clear_all();
+                                }
+                                card.drill_notice = Some("已彻底清空个人学习画像与错题记录。\n请按 Esc 返回。".to_string());
                                 let shown = self.self_drawn_frame();
                                 self.reconcile_candidates(&shown);
                                 return ServerMessage::KeyResult {

@@ -40,6 +40,8 @@ pub use engine::{
     PredictionRequest, Predictor, QUESTION_PREFIX, Query, RESCORE_CONTEXT_CHARS, RawPreedit,
     RecallAttempt, RecallItem, RecallOutcome, RecallTracker, NoRecallTracker,
     ComparisonResult, ComparisonStatus, ErrorMajorCategory, ErrorSubcategory, FeedbackItem,
+    MasteryLevel, SavedExpression, ReviewItem, UserAttempt, ErrorRecord, MasteryRecord,
+    ProfileDimension, DimensionStat, UserEnglishProfile,
     SurroundingText, Timings, Translator, Usage, UsageMeter, UsageSummary, VocabularySummary,
     VocabularyTracker, book_scale, is_valid_aux_code_key,
 };

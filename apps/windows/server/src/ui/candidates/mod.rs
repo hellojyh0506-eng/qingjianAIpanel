@@ -248,6 +248,11 @@ impl CandidateWindowInner {
                                     input,
                                     ref_str,
                                 );
+                                if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                                    let mut vault = qingjian_learning::LearningVault::open(&user_dir);
+                                    vault.record_attempt(&attempt);
+                                    let _ = vault.flush();
+                                }
                                 card.drill_attempt = Some(render_data::convert_attempt(&attempt));
                                 card.drill_stage = Some(qingjian_render::DrillStage::Compared);
                                 card.drill_notice = None;
@@ -259,7 +264,40 @@ impl CandidateWindowInner {
                             card.drill_attempt = None;
                         }
                         view::LearningHitAction::Save => {
-                            card.drill_notice = Some("⭐ 已保存到生词本".to_string());
+                            let saved_expr = card
+                                .drill_attempt
+                                .as_ref()
+                                .map(|a| a.comparison.natural_expression.clone())
+                                .or_else(|| card.primary.as_ref().map(|p| p.text.clone()))
+                                .unwrap_or_default();
+                            if !saved_expr.is_empty() {
+                                if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                                    let mut vault = qingjian_learning::LearningVault::open(&user_dir);
+                                    let tag = card.primary.as_ref().map(|p| p.tag.as_str());
+                                    vault.save_expression(&card.target_text, &saved_expr, tag, None);
+                                    let _ = vault.flush();
+                                }
+                                card.drill_notice = Some(format!("⭐ 已保存到生词本: {}", saved_expr));
+                            } else {
+                                card.drill_notice = Some("⭐ 已保存到生词本".to_string());
+                            }
+                        }
+                        view::LearningHitAction::ShowProfile => {
+                            let profile_text = if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                                let vault = qingjian_learning::LearningVault::open(&user_dir);
+                                vault.calculate_profile().format_ascii_bars()
+                            } else {
+                                "暂无用户目录数据".to_string()
+                            };
+                            card.drill_stage = Some(qingjian_render::DrillStage::Profile);
+                            card.drill_notice = Some(profile_text);
+                        }
+                        view::LearningHitAction::ClearVault => {
+                            if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                                let mut vault = qingjian_learning::LearningVault::open(&user_dir);
+                                let _ = vault.clear_all();
+                            }
+                            card.drill_notice = Some("已彻底清空个人学习画像与错题记录。\n请按 Esc 返回。".to_string());
                         }
                         view::LearningHitAction::Finish => {
                             card.drill_stage = None;

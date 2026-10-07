@@ -19,6 +19,7 @@ pub enum DrillStage {
     Input,
     Comparing,
     Compared,
+    Profile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

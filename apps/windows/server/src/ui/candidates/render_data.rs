@@ -112,6 +112,9 @@ impl RenderData {
                     qingjian_platform::protocol::DrillStage::Compared => {
                         qingjian_render::DrillStage::Compared
                     }
+                    qingjian_platform::protocol::DrillStage::Profile => {
+                        qingjian_render::DrillStage::Profile
+                    }
                 }),
                 drill_input: card.drill_input.clone(),
                 drill_attempt: card.drill_attempt.as_ref().map(convert_attempt),

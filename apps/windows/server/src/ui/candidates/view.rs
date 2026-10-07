@@ -596,7 +596,7 @@ fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
 
                 let row1 = format!("🔴 你的表达: {}", user_expr);
                 let row2 = format!("🟢 地道表达: {}", natural_expr);
-                let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [完成 (Esc)]";
+                let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [📊 画像]   [完成 (Esc)]";
 
                 let r1_w = measure(hdc, theme.annotation_font, &row1).cx;
                 let r2_w = measure(hdc, theme.annotation_font, &row2).cx;
@@ -626,6 +626,28 @@ fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
                 }
                 return (width, height);
             }
+            qingjian_render::DrillStage::Profile => {
+                let title = "📊 个人英语学习画像 (B2 → C1)";
+                let title_w = measure(hdc, theme.annotation_font, title).cx;
+                let btns = "[🗑 清空画像数据]   [返回 (Esc)]";
+                let btns_w = measure(hdc, theme.index_font, btns).cx;
+                width = width.max(title_w).max(btns_w);
+                height += (line_h + theme.row_padding) * 2;
+
+                if let Some(text) = &card.drill_notice {
+                    for line in text.lines() {
+                        let lw = measure(hdc, theme.index_font, line).cx;
+                        width = width.max(lw);
+                        height += small_h + theme.row_padding / 2;
+                    }
+                } else {
+                    height += (small_h + theme.row_padding / 2) * 8;
+                }
+
+                width += theme.column_gap * 2;
+                height += theme.row_padding * 2;
+                return (width, height);
+            }
         }
     }
 
@@ -647,10 +669,12 @@ fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
     let main_w = measure(hdc, theme.annotation_font, main_text).cx;
     let drill_btn = "[Try English]";
     let drill_w = measure(hdc, theme.index_font, drill_btn).cx;
+    let profile_btn = "[📊 画像]";
+    let profile_w = measure(hdc, theme.index_font, profile_btn).cx;
     let btn_text = if card.expanded { "收起 ▴" } else { "更多译法 ▾" };
     let btn_w = measure(hdc, theme.index_font, btn_text).cx;
 
-    width = width.max(flag_w + main_w + theme.column_gap * 2 + drill_w + theme.column_gap + btn_w);
+    width = width.max(flag_w + main_w + theme.column_gap * 2 + drill_w + theme.column_gap + profile_w + theme.column_gap + btn_w);
     height += line_h + theme.row_padding * 2;
 
     if card.expanded && !card.alternatives.is_empty() {
@@ -809,8 +833,24 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
                 }
 
                 // 4. 底部按钮
-                let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [完成 (Esc)]";
+                let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [📊 画像]   [完成 (Esc)]";
                 draw_text(hdc, theme.index_font, theme.cloud_color, theme.padding, y, btns);
+                return;
+            }
+            qingjian_render::DrillStage::Profile => {
+                let title = "📊 个人英语学习画像 (B2 → C1)";
+                draw_text(hdc, theme.annotation_font, theme.fresh_color, theme.padding, y, title);
+                y += line_h + theme.row_padding / 2;
+
+                if let Some(text) = &card.drill_notice {
+                    for line in text.lines() {
+                        draw_text(hdc, theme.index_font, theme.text_color, theme.padding, y, line);
+                        y += small_h + theme.row_padding / 2;
+                    }
+                }
+
+                let btns = "[🗑 清空画像数据]   [返回 (Esc)]";
+                draw_text(hdc, theme.index_font, theme.cloud_color, theme.padding, y + theme.row_padding / 2, btns);
                 return;
             }
         }
@@ -842,12 +882,16 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
 
     let drill_btn = "[Try English]";
     let drill_w = measure(hdc, theme.index_font, drill_btn).cx;
+    let profile_btn = "[📊 画像]";
+    let profile_w = measure(hdc, theme.index_font, profile_btn).cx;
     let btn_text = if card.expanded { "收起 ▴" } else { "更多译法 ▾" };
     let btn_w = measure(hdc, theme.index_font, btn_text).cx;
     let btn_x = content_width - theme.padding - btn_w;
-    let drill_x = btn_x - theme.column_gap - drill_w;
+    let profile_x = btn_x - theme.column_gap - profile_w;
+    let drill_x = profile_x - theme.column_gap - drill_w;
 
     draw_text(hdc, theme.index_font, theme.fresh_color, drill_x, y, drill_btn);
+    draw_text(hdc, theme.index_font, theme.fresh_color, profile_x, y, profile_btn);
     draw_text(hdc, theme.index_font, theme.cloud_color, btn_x, y, btn_text);
 
     y += line_h + theme.row_padding;
@@ -906,6 +950,10 @@ pub(super) enum LearningHitAction {
     Retry,
     /// 点击「保存」记录到生词本
     Save,
+    /// 点击「📊 画像」查看学习画像
+    ShowProfile,
+    /// 点击「🗑 清空画像数据」彻底重置学习数据
+    ClearVault,
     /// 点击「完成」或「退出」关闭卡片
     Finish,
 }
@@ -958,6 +1006,19 @@ pub(super) fn hit_test_learning_card(
                         return Some(LearningHitAction::Retry);
                     } else if x < theme.padding + 260 {
                         return Some(LearningHitAction::Save);
+                    } else if x < theme.padding + 340 {
+                        return Some(LearningHitAction::ShowProfile);
+                    } else {
+                        return Some(LearningHitAction::Finish);
+                    }
+                }
+                return None;
+            }
+            qingjian_render::DrillStage::Profile => {
+                let btn_y = card_top + (line_h + theme.row_padding) * 2;
+                if y >= btn_y {
+                    if x < theme.padding + 140 {
+                        return Some(LearningHitAction::ClearVault);
                     } else {
                         return Some(LearningHitAction::Finish);
                     }
@@ -975,12 +1036,18 @@ pub(super) fn hit_test_learning_card(
         };
         let btn_text = if card.expanded { "收起 ▴" } else { "更多译法 ▾" };
         let btn_w = measure(hdc, theme.index_font, btn_text).cx;
+        let profile_w = measure(hdc, theme.index_font, "[📊 画像]").cx;
         let drill_w = measure(hdc, theme.index_font, "[Try English]").cx;
         let btn_x = content_w + theme.padding - btn_w;
-        let drill_x = btn_x - theme.column_gap - drill_w;
+        let profile_x = btn_x - theme.column_gap - profile_w;
+        let drill_x = profile_x - theme.column_gap - drill_w;
 
-        if x >= drill_x - 10 && x < btn_x - 5 {
+        if x >= drill_x - 10 && x < profile_x - 5 {
             return Some(LearningHitAction::StartDrill);
+        } else if x >= profile_x - 5 && x < btn_x - 5 {
+            return Some(LearningHitAction::ShowProfile);
+        } else if x >= btn_x - 5 {
+            return Some(LearningHitAction::ToggleExpand);
         }
         return Some(LearningHitAction::ToggleExpand);
     }

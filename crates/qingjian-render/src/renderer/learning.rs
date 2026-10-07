@@ -66,7 +66,7 @@ impl Renderer {
 
                     let row1 = format!("🔴 你的表达: {}", user_expr);
                     let row2 = format!("🟢 地道表达: {}", natural_expr);
-                    let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [完成 (Esc)]";
+                    let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [📊 画像]   [完成 (Esc)]";
 
                     let r1_w = self.measure(&row1, &style).width;
                     let r2_w = self.measure(&row2, &style).width;
@@ -94,6 +94,28 @@ impl Renderer {
                     if card.drill_notice.is_some() {
                         height += small_style.line_height + m.row_padding();
                     }
+                    return (width, height);
+                }
+                crate::frame::DrillStage::Profile => {
+                    let title = "📊 个人英语学习画像 (B2 → C1)";
+                    let title_w = self.measure(title, &style).width;
+                    let btns = "[🗑 清空画像数据]   [返回 (Esc)]";
+                    let btns_w = self.measure(btns, &m.index_style()).width;
+                    width = width.max(title_w).max(btns_w);
+                    height += (line_height + m.row_padding()) * 2.0;
+
+                    if let Some(text) = &card.drill_notice {
+                        for line in text.lines() {
+                            let lw = self.measure(line, &small_style).width;
+                            width = width.max(lw);
+                            height += small_style.line_height + m.row_padding() / 2.0;
+                        }
+                    } else {
+                        height += (small_style.line_height + m.row_padding() / 2.0) * 8.0;
+                    }
+
+                    width += m.column_gap() * 2.0;
+                    height += m.row_padding() * 2.0;
                     return (width, height);
                 }
             }
@@ -290,9 +312,26 @@ impl Renderer {
                         y += m.row_padding() / 2.0;
                     }
 
-                    let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [完成 (Esc)]";
+                    let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [📊 画像]   [完成 (Esc)]";
                     let btn_style = m.style(m.theme.index_font, m.theme.colors.cloud);
                     self.draw_text(canvas, btns, &btn_style, left + m.padding(), y);
+                    return;
+                }
+                crate::frame::DrillStage::Profile => {
+                    let title = "📊 个人英语学习画像 (B2 → C1)";
+                    self.draw_text(canvas, title, &tag_style, left + m.padding(), y);
+                    y += line_height + m.row_padding() / 2.0;
+
+                    if let Some(text) = &card.drill_notice {
+                        for line in text.lines() {
+                            self.draw_text(canvas, line, &small_style, left + m.padding(), y);
+                            y += small_style.line_height + m.row_padding() / 2.0;
+                        }
+                    }
+
+                    let btns = "[🗑 清空画像数据]   [返回 (Esc)]";
+                    let btn_style = m.style(m.theme.index_font, m.theme.colors.cloud);
+                    self.draw_text(canvas, btns, &btn_style, left + m.padding(), y + m.row_padding() / 2.0);
                     return;
                 }
             }
