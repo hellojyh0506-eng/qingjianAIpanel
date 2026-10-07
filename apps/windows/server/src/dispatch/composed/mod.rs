@@ -54,6 +54,7 @@ impl Router {
                                 commonality: "Common".to_string(),
                                 why_natural: "Natural spoken expression".to_string(),
                             };
+                            let due = self.today_due_count();
                             self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
                                 target_text: target.clone(),
                                 state: qingjian_platform::protocol::LearningState::Ready,
@@ -65,11 +66,15 @@ impl Router {
                                 drill_input: String::new(),
                                 drill_attempt: None,
                                 drill_notice: None,
+                                today_due_count: due,
+                                review_current_index: 0,
+                                review_total_count: due,
                             });
                             if self.engine.prediction_enabled() {
                                 self.engine.request_prediction(None, layout.local());
                             }
                         } else if self.engine.prediction_enabled() {
+                            let due = self.today_due_count();
                             self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
                                 target_text: target.clone(),
                                 state: qingjian_platform::protocol::LearningState::Loading,
@@ -81,6 +86,9 @@ impl Router {
                                 drill_input: String::new(),
                                 drill_attempt: None,
                                 drill_notice: None,
+                                today_due_count: due,
+                                review_current_index: 0,
+                                review_total_count: due,
                             });
                             self.engine.request_translation(&target);
                         }
@@ -197,6 +205,7 @@ impl Router {
                     let preserve_attempt = self.passive_learning_card.as_ref().and_then(|c| c.drill_attempt.clone());
                     let preserve_notice = self.passive_learning_card.as_ref().and_then(|c| c.drill_notice.clone());
 
+                    let due = self.today_due_count();
                     self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
                         target_text: target.clone(),
                         state: if primary_expr.is_some() || !alternatives.is_empty() {
@@ -212,6 +221,9 @@ impl Router {
                         drill_input: preserve_input,
                         drill_attempt: preserve_attempt,
                         drill_notice: preserve_notice,
+                        today_due_count: due,
+                        review_current_index: 0,
+                        review_total_count: due,
                     });
 
                     let shown = self.self_drawn_frame();
@@ -313,6 +325,7 @@ impl Router {
                 commonality: "Common".to_string(),
                 why_natural: "Natural spoken expression".to_string(),
             };
+            let due = self.today_due_count();
             self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
                 target_text: target.clone(),
                 state: qingjian_platform::protocol::LearningState::Ready,
@@ -324,8 +337,12 @@ impl Router {
                 drill_input: String::new(),
                 drill_attempt: None,
                 drill_notice: None,
+                today_due_count: due,
+                review_current_index: 0,
+                review_total_count: due,
             });
         } else if self.engine.prediction_enabled() {
+            let due = self.today_due_count();
             self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
                 target_text: target.clone(),
                 state: qingjian_platform::protocol::LearningState::Loading,
@@ -337,10 +354,24 @@ impl Router {
                 drill_input: String::new(),
                 drill_attempt: None,
                 drill_notice: None,
+                today_due_count: due,
+                review_current_index: 0,
+                review_total_count: due,
             });
             self.engine.request_translation(&target);
         } else {
             self.passive_learning_card = None;
+        }
+    }
+
+    /// 获取今日待复习总数
+    pub(crate) fn today_due_count(&self) -> usize {
+        if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+            let vault = qingjian_learning::LearningVault::open(&user_dir);
+            let now = jiff::Zoned::now().timestamp().as_second();
+            vault.today_due_count(now)
+        } else {
+            0
         }
     }
 

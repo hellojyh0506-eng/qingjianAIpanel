@@ -113,6 +113,16 @@ impl Router {
             && !chord.win
     }
 
+    /// 快捷键触发 FSRS 今日复习队列（默认 Ctrl+Alt+R）。
+    pub(super) fn matches_learning_review_combo(&self, event: &qingjian_platform::protocol::KeyEvent) -> bool {
+        let chord = event.modifiers.chord();
+        event.character.map(|c| c.to_ascii_lowercase()) == Some('r')
+            && chord.ctrl
+            && chord.alt
+            && !chord.shift
+            && !chord.win
+    }
+
     /// 任务栏图标右键菜单：标点与悬浮条的开关写回配置文件（热加载会再读回来），设置程序交给 UI 起。
     pub(super) fn handle_indicator(&mut self, command: IndicatorCommand) {
         match command {

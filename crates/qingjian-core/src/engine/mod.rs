@@ -59,7 +59,7 @@ pub use recall::{
     ComparisonResult, ComparisonStatus, DimensionStat, ErrorMajorCategory, ErrorRecord,
     ErrorSubcategory, FeedbackItem, MasteryLevel, MasteryRecord, NoRecallTracker,
     ProfileDimension, RecallAttempt, RecallItem, RecallOutcome, RecallTracker, ReviewItem,
-    SavedExpression, UserAttempt, UserEnglishProfile,
+    ReviewLogEntry, ReviewRating, SavedExpression, UserAttempt, UserEnglishProfile,
 };
 pub use session::EngineSession;
 pub use statistics::{BOOKS, Book, NoUsageMeter, Usage, UsageMeter, UsageSummary, book_scale};

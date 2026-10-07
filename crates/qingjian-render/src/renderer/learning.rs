@@ -118,6 +118,36 @@ impl Renderer {
                     height += m.row_padding() * 2.0;
                     return (width, height);
                 }
+                crate::frame::DrillStage::Review => {
+                    let total = card.review_total_count.max(1);
+                    let current = card.review_current_index.max(1);
+                    let title = format!("📚 今日待复习 ({}/{}) [中文: {}]", current, total, card.target_text);
+                    let title_w = self.measure(&title, &style).width;
+
+                    if card.drill_attempt.is_none() {
+                        let input_str = format!("你的尝试: {}|", card.drill_input);
+                        let input_w = self.measure(&input_str, &m.annotation_style(m.theme.colors.text)).width;
+                        let btns = "[对比 (Enter)]   [看答案 (Tab)]   [退出 (Esc)]";
+                        let btns_w = self.measure(btns, &m.index_style()).width;
+                        width = width.max(title_w).max(input_w).max(btns_w) + m.column_gap() * 2.0;
+                        height += (line_height + m.row_padding()) * 3.0;
+                    } else {
+                        let user_expr = card.drill_attempt.as_ref().map(|a| a.user_attempt.as_str()).unwrap_or(card.drill_input.as_str());
+                        let natural_expr = card.drill_attempt.as_ref().map(|a| a.comparison.natural_expression.as_str()).unwrap_or("");
+                        let r1 = format!("🔴 你的表达: {}", user_expr);
+                        let r2 = format!("🟢 地道表达: {}", natural_expr);
+                        let r1_w = self.measure(&r1, &style).width;
+                        let r2_w = self.measure(&r2, &style).width;
+                        let btns = "[1. Again (重来)]   [2. Good (掌握)]   [3. Easy (轻松)]   [退出 (Esc)]";
+                        let btns_w = self.measure(btns, &m.index_style()).width;
+                        width = width.max(title_w).max(r1_w).max(r2_w).max(btns_w) + m.column_gap() * 2.0;
+                        height += (line_height + m.row_padding()) * 3.5;
+                    }
+                    if card.drill_notice.is_some() {
+                        height += small_style.line_height + m.row_padding();
+                    }
+                    return (width, height);
+                }
             }
         }
 
@@ -138,12 +168,25 @@ impl Renderer {
             }
         };
         let main_width = self.measure(main_text, &style).width;
+        let review_btn = if card.today_due_count > 0 {
+            format!("[📚 复习 ({})]", card.today_due_count)
+        } else {
+            "[📚 复习]".to_string()
+        };
+        let review_width = self.measure(&review_btn, &m.index_style()).width;
         let drill_btn = "[Try English]";
         let drill_width = self.measure(drill_btn, &m.index_style()).width;
         let btn_text = if card.expanded { "收起 ▴" } else { "更多译法 ▾" };
         let btn_width = self.measure(btn_text, &m.index_style()).width;
 
-        let row1_width = flag_width + main_width + m.column_gap() * 2.0 + drill_width + m.column_gap() + btn_width;
+        let row1_width = flag_width
+            + main_width
+            + m.column_gap() * 2.0
+            + review_width
+            + m.column_gap()
+            + drill_width
+            + m.column_gap()
+            + btn_width;
         width = width.max(row1_width);
         height += line_height + m.row_padding() * 2.0;
 
@@ -334,6 +377,60 @@ impl Renderer {
                     self.draw_text(canvas, btns, &btn_style, left + m.padding(), y + m.row_padding() / 2.0);
                     return;
                 }
+                crate::frame::DrillStage::Review => {
+                    let total = card.review_total_count.max(1);
+                    let current = card.review_current_index.max(1);
+                    let title = format!("📚 今日待复习 ({}/{}) [中文: {}]", current, total, card.target_text);
+                    self.draw_text(canvas, &title, &tag_style, left + m.padding(), y);
+                    y += line_height + m.row_padding() / 2.0;
+
+                    if let Some(notice) = &card.drill_notice {
+                        let notice_style = m.style(m.theme.index_font, m.theme.colors.cloud);
+                        self.draw_text(canvas, notice, &notice_style, left + m.padding(), y);
+                        y += small_style.line_height + m.row_padding() / 2.0;
+                    }
+
+                    if card.drill_attempt.is_none() {
+                        // 输入回忆阶段
+                        canvas.fill_round_rect(
+                            left + m.padding(),
+                            y,
+                            content_width - m.padding() * 2.0,
+                            line_height + m.px(6.0),
+                            m.px(4.0),
+                            m.theme.colors.highlight,
+                        );
+                        let input_text = format!("你的尝试: {}|", card.drill_input);
+                        self.draw_text(
+                            canvas,
+                            &input_text,
+                            &active_text_style,
+                            left + m.padding() + m.px(4.0),
+                            y + m.px(2.0),
+                        );
+                        y += line_height + m.px(8.0) + m.row_padding() / 2.0;
+
+                        let btns = "[对比 (Enter)]   [看答案 (Tab)]   [退出 (Esc)]";
+                        let btn_style = m.style(m.theme.index_font, m.theme.colors.cloud);
+                        self.draw_text(canvas, btns, &btn_style, left + m.padding(), y);
+                    } else {
+                        // 评级推进阶段
+                        let user_expr = card.drill_attempt.as_ref().map(|a| a.user_attempt.as_str()).unwrap_or(card.drill_input.as_str());
+                        let natural_expr = card.drill_attempt.as_ref().map(|a| a.comparison.natural_expression.as_str()).unwrap_or("");
+                        let r1 = format!("🔴 你的表达: {}", user_expr);
+                        self.draw_text(canvas, &r1, &active_text_style, left + m.padding(), y);
+                        y += line_height + m.row_padding() / 2.0;
+
+                        let r2 = format!("🟢 地道表达: {}", natural_expr);
+                        self.draw_text(canvas, &r2, &tag_style, left + m.padding(), y);
+                        y += line_height + m.row_padding() / 2.0;
+
+                        let btns = "[1. Again (重来)]   [2. Good (掌握)]   [3. Easy (轻松)]   [退出 (Esc)]";
+                        let btn_style = m.style(m.theme.index_font, m.theme.colors.fresh);
+                        self.draw_text(canvas, btns, &btn_style, left + m.padding(), y);
+                    }
+                    return;
+                }
             }
         }
 
@@ -363,7 +460,15 @@ impl Renderer {
         };
         self.draw_text(canvas, main_text, text_color_style, x, y);
 
-        // [Try English] 与「更多译法 ▾ / 收起 ▴」
+        // [📚 复习 (N)]、[Try English] 与「更多译法 ▾ / 收起 ▴」
+        let review_btn = if card.today_due_count > 0 {
+            format!("[📚 复习 ({})]", card.today_due_count)
+        } else {
+            "[📚 复习]".to_string()
+        };
+        let review_style = m.style(m.theme.index_font, m.theme.colors.fresh);
+        let review_size = self.measure(&review_btn, &review_style);
+
         let drill_btn = "[Try English]";
         let drill_style = m.style(m.theme.index_font, m.theme.colors.fresh);
         let drill_size = self.measure(drill_btn, &drill_style);
@@ -374,7 +479,9 @@ impl Renderer {
 
         let btn_x = left + content_width - m.padding() - btn_size.width;
         let drill_x = btn_x - m.column_gap() - drill_size.width;
+        let review_x = drill_x - m.column_gap() - review_size.width;
 
+        self.draw_text(canvas, &review_btn, &review_style, review_x, y);
         self.draw_text(canvas, drill_btn, &drill_style, drill_x, y);
         self.draw_text(canvas, btn_text, &btn_style, btn_x, y);
 

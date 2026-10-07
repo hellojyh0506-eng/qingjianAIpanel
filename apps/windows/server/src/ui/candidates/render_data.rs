@@ -115,10 +115,16 @@ impl RenderData {
                     qingjian_platform::protocol::DrillStage::Profile => {
                         qingjian_render::DrillStage::Profile
                     }
+                    qingjian_platform::protocol::DrillStage::Review => {
+                        qingjian_render::DrillStage::Review
+                    }
                 }),
                 drill_input: card.drill_input.clone(),
                 drill_attempt: card.drill_attempt.as_ref().map(convert_attempt),
                 drill_notice: card.drill_notice.clone(),
+                today_due_count: card.today_due_count,
+                review_current_index: card.review_current_index,
+                review_total_count: card.review_total_count,
             }
         });
     }

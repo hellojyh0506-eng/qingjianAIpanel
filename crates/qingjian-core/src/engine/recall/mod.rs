@@ -3,7 +3,7 @@ mod tracker;
 
 pub use self::profile::{
     DimensionStat, ErrorRecord, MasteryLevel, MasteryRecord, ProfileDimension, ReviewItem,
-    SavedExpression, UserAttempt, UserEnglishProfile,
+    ReviewLogEntry, ReviewRating, SavedExpression, UserAttempt, UserEnglishProfile,
 };
 pub use self::tracker::{
     ComparisonResult, ComparisonStatus, ErrorMajorCategory, ErrorSubcategory, FeedbackItem,

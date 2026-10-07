@@ -292,6 +292,68 @@ impl CandidateWindowInner {
                             card.drill_stage = Some(qingjian_render::DrillStage::Profile);
                             card.drill_notice = Some(profile_text);
                         }
+                        view::LearningHitAction::StartReview => {
+                            if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                                let vault = qingjian_learning::LearningVault::open(&user_dir);
+                                let now = jiff::Zoned::now().timestamp().as_second();
+                                let due_list = vault.today_due_reviews(now);
+                                if due_list.is_empty() {
+                                    card.drill_notice = Some("🎉 今日暂无到期复习！记忆状态良好。".to_string());
+                                } else {
+                                    let first = due_list[0];
+                                    card.drill_stage = Some(qingjian_render::DrillStage::Review);
+                                    card.today_due_count = due_list.len();
+                                    card.review_current_index = 1;
+                                    card.review_total_count = due_list.len();
+                                    card.target_text = first.prompt.clone();
+                                    card.primary = Some(qingjian_render::LearningExpression {
+                                        text: first.expression.clone(),
+                                        ..Default::default()
+                                    });
+                                    card.drill_input.clear();
+                                    card.drill_attempt = None;
+                                    card.drill_notice = None;
+                                }
+                            } else {
+                                card.drill_notice = Some("暂无用户数据目录".to_string());
+                            }
+                        }
+                        view::LearningHitAction::RateAgain
+                        | view::LearningHitAction::RateGood
+                        | view::LearningHitAction::RateEasy => {
+                            let rating = match action {
+                                view::LearningHitAction::RateAgain => qingjian_learning::ReviewRating::Again,
+                                view::LearningHitAction::RateEasy => qingjian_learning::ReviewRating::Easy,
+                                _ => qingjian_learning::ReviewRating::Good,
+                            };
+                            if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                                let mut vault = qingjian_learning::LearningVault::open(&user_dir);
+                                let now = jiff::Zoned::now().timestamp().as_second();
+                                let target_expr = card.primary.as_ref().map(|p| p.text.clone()).unwrap_or_default();
+                                vault.process_review(&card.target_text, &target_expr, rating, now);
+                                let _ = vault.flush();
+
+                                let remaining = vault.today_due_reviews(now);
+                                if remaining.is_empty() {
+                                    card.drill_notice = Some("🎉 今日复习已全部完成！记忆已固化。\n请按 Esc 返回。".to_string());
+                                    card.drill_attempt = None;
+                                    card.drill_input.clear();
+                                    card.today_due_count = 0;
+                                } else {
+                                    let next = remaining[0];
+                                    card.today_due_count = remaining.len();
+                                    card.review_current_index += 1;
+                                    card.target_text = next.prompt.clone();
+                                    card.primary = Some(qingjian_render::LearningExpression {
+                                        text: next.expression.clone(),
+                                        ..Default::default()
+                                    });
+                                    card.drill_input.clear();
+                                    card.drill_attempt = None;
+                                    card.drill_notice = None;
+                                }
+                            }
+                        }
                         view::LearningHitAction::ClearVault => {
                             if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
                                 let mut vault = qingjian_learning::LearningVault::open(&user_dir);

@@ -60,17 +60,97 @@ pub struct SavedExpression {
     pub mastery: MasteryLevel,
 }
 
-/// 待复习项目 (Review Item)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// FSRS 复习评级 (Review Rating)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReviewRating {
+    /// 完全遗忘 / 表达错误
+    Again = 1,
+    /// 回忆吃力 / 存在瑕疵
+    Hard = 2,
+    /// 正常回忆 / 良好掌握
+    Good = 3,
+    /// 轻松秒答 / 非常熟悉
+    Easy = 4,
+}
+
+impl ReviewRating {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Again => "again",
+            Self::Hard => "hard",
+            Self::Good => "good",
+            Self::Easy => "easy",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Again => "Again (重来)",
+            Self::Hard => "Hard (困难)",
+            Self::Good => "Good (良好)",
+            Self::Easy => "Easy (轻松)",
+        }
+    }
+}
+
+/// 单次复习历史记录条目 (Review Log Entry)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReviewLogEntry {
+    pub rating: ReviewRating,
+    pub reviewed_at: i64,
+    pub scheduled_days: f32,
+    pub stability_before: f32,
+    pub stability_after: f32,
+    pub difficulty: f32,
+    pub elapsed_days: f32,
+}
+
+/// 待复习项目 (Review Item with FSRS state)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReviewItem {
     pub prompt: String,
+    pub expression: String,
+    /// 兼容目标文本字段，与 expression 等同
     pub target: String,
+    /// FSRS 难度 D (1.0 ~ 10.0，越小越容易)
+    pub difficulty: f32,
+    /// FSRS 记忆稳定性 S (以天为单位，例如 0.5, 2.5, 7.0, 30.0)
+    pub stability: f32,
+    /// 当前可提取概率 R (0.0 ~ 1.0)
+    pub retrievability: f32,
+    /// 到期复习时间戳 (unix seconds)
+    pub due_time: i64,
+    /// 下次到期时间戳（与 due_time 同步，保持兼容）
+    pub next_review_at: i64,
+    /// 上次复习时间戳 (unix seconds)
+    pub last_reviewed_at: i64,
     pub attempts_count: u32,
     pub success_count: u32,
     pub failure_count: u32,
-    pub last_reviewed_at: i64,
-    pub next_review_at: i64,
     pub mastery: MasteryLevel,
+    /// 完整复习日志历史
+    pub review_history: Vec<ReviewLogEntry>,
+}
+
+impl Default for ReviewItem {
+    fn default() -> Self {
+        Self {
+            prompt: String::new(),
+            expression: String::new(),
+            target: String::new(),
+            difficulty: 5.0,
+            stability: 1.0,
+            retrievability: 1.0,
+            due_time: 0,
+            next_review_at: 0,
+            last_reviewed_at: 0,
+            attempts_count: 0,
+            success_count: 0,
+            failure_count: 0,
+            mastery: MasteryLevel::Learning,
+            review_history: Vec::new(),
+        }
+    }
 }
 
 /// 用户单次主动回忆/对比尝试记录 (User Attempt)

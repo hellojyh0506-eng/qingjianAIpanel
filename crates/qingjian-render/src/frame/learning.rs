@@ -20,6 +20,7 @@ pub enum DrillStage {
     Comparing,
     Compared,
     Profile,
+    Review,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,4 +138,7 @@ pub struct LearningCard {
     pub drill_input: String,
     pub drill_attempt: Option<RecallAttempt>,
     pub drill_notice: Option<String>,
+    pub today_due_count: usize,
+    pub review_current_index: usize,
+    pub review_total_count: usize,
 }

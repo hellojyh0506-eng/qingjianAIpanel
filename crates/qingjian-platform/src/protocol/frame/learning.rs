@@ -47,12 +47,14 @@ pub enum DrillStage {
     Compared,
     /// 个人学习画像与账本查看阶段
     Profile,
+    /// FSRS 间隔复习调度阶段
+    Review,
 }
 
 pub use qingjian_core::{
     ComparisonResult, ComparisonStatus, DimensionStat, ErrorMajorCategory, ErrorRecord,
     ErrorSubcategory, FeedbackItem, MasteryLevel, MasteryRecord, ProfileDimension, RecallAttempt,
-    ReviewItem, SavedExpression, UserAttempt, UserEnglishProfile,
+    ReviewItem, ReviewLogEntry, ReviewRating, SavedExpression, UserAttempt, UserEnglishProfile,
 };
 
 /// 候选窗口第三层：轻量英语学习卡片帧数据。
@@ -79,4 +81,10 @@ pub struct LearningCardFrame {
     pub drill_attempt: Option<RecallAttempt>,
     /// 提示信息（例如 "⭐ 已保存到生词本"）
     pub drill_notice: Option<String>,
+    /// 今日待复习总数 (FSRS due today)
+    pub today_due_count: usize,
+    /// 当前复习在待复习队列中的当前序号 (1-indexed)
+    pub review_current_index: usize,
+    /// 当前待复习队列总数
+    pub review_total_count: usize,
 }

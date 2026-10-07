@@ -206,6 +206,40 @@ impl Router {
                 frame: self.current_frame(),
             };
         }
+        if self.composing() && self.matches_learning_review_combo(&event) {
+            if let Some(card) = self.passive_learning_card.as_mut() {
+                if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                    let vault = qingjian_learning::LearningVault::open(&user_dir);
+                    let now = jiff::Zoned::now().timestamp().as_second();
+                    let due_list = vault.today_due_reviews(now);
+                    if due_list.is_empty() {
+                        card.drill_notice = Some("🎉 今日暂无到期复习！记忆状态良好。".to_string());
+                    } else {
+                        let first = due_list[0];
+                        card.drill_stage = Some(qingjian_platform::protocol::DrillStage::Review);
+                        card.today_due_count = due_list.len();
+                        card.review_current_index = 1;
+                        card.review_total_count = due_list.len();
+                        card.target_text = first.prompt.clone();
+                        card.primary = Some(qingjian_platform::protocol::LearningExpression {
+                            text: first.expression.clone(),
+                            ..Default::default()
+                        });
+                        card.drill_input.clear();
+                        card.drill_attempt = None;
+                        card.drill_notice = None;
+                    }
+                }
+            }
+            let shown = self.self_drawn_frame();
+            self.reconcile_candidates(&shown);
+            return ServerMessage::KeyResult {
+                session,
+                outcome: KeyOutcome::Consumed,
+                commit: None,
+                frame: self.current_frame(),
+            };
+        }
         // Active Recall: 若候选卡片处于 Drill 输入或对比展示交互态，拦截按键并隔离到卡片本身，绝不污染中文组句
         if self.composing() {
             if let Some(card) = self.passive_learning_card.as_mut() {
@@ -443,6 +477,144 @@ impl Router {
                                     frame: self.current_frame(),
                                 };
                             }
+                            return ServerMessage::KeyResult {
+                                session,
+                                outcome: KeyOutcome::Consumed,
+                                commit: None,
+                                frame: self.current_frame(),
+                            };
+                        }
+                        qingjian_platform::protocol::DrillStage::Review => {
+                            if event.virtual_key == super::key::ESCAPE {
+                                card.drill_stage = None;
+                                card.drill_input.clear();
+                                card.drill_attempt = None;
+                                card.drill_notice = None;
+                                let shown = self.self_drawn_frame();
+                                self.reconcile_candidates(&shown);
+                                return ServerMessage::KeyResult {
+                                    session,
+                                    outcome: KeyOutcome::Consumed,
+                                    commit: None,
+                                    frame: self.current_frame(),
+                                };
+                            }
+                            if card.drill_attempt.is_none() {
+                                if event.virtual_key == super::key::RETURN {
+                                    if card
+                                        .drill_notice
+                                        .as_ref()
+                                        .map(|n| n.contains("全部完成"))
+                                        .unwrap_or(false)
+                                    {
+                                        card.drill_stage = None;
+                                        card.drill_input.clear();
+                                        card.drill_attempt = None;
+                                        card.drill_notice = None;
+                                    } else {
+                                        let input = card.drill_input.trim();
+                                        if input.is_empty() {
+                                            card.drill_notice =
+                                                Some("请输入英文表达进行复习对比".to_string());
+                                        } else {
+                                            let reference = card
+                                                .primary
+                                                .as_ref()
+                                                .map(|p| p.text.as_str())
+                                                .unwrap_or("");
+                                            let attempt =
+                                                qingjian_learning::RecallBook::evaluate_attempt(
+                                                    &card.target_text,
+                                                    input,
+                                                    reference,
+                                                );
+                                            if let Some(user_dir) =
+                                                qingjian_platform::dirs::user_dir()
+                                            {
+                                                let mut vault =
+                                                    qingjian_learning::LearningVault::open(&user_dir);
+                                                vault.record_attempt(&attempt);
+                                                let _ = vault.flush();
+                                            }
+                                            card.drill_attempt = Some(attempt);
+                                            card.drill_notice = None;
+                                        }
+                                    }
+                                } else if event.virtual_key == super::key::TAB {
+                                    let reference = card
+                                        .primary
+                                        .as_ref()
+                                        .map(|p| p.text.as_str())
+                                        .unwrap_or("");
+                                    card.drill_notice = Some(format!("参考答案: {}", reference));
+                                } else if event.virtual_key == super::key::BACK {
+                                    card.drill_input.pop();
+                                } else if let Some(c) = event.character {
+                                    if !c.is_control() {
+                                        card.drill_input.push(c);
+                                        card.drill_notice = None;
+                                    }
+                                }
+                            } else {
+                                if event.character.map(|c| c.to_ascii_lowercase()) == Some('r') {
+                                    card.drill_attempt = None;
+                                    card.drill_notice = None;
+                                } else if let Some(c) = event.character {
+                                    if c == '1' || c == '2' || c == '3' {
+                                        let rating = match c {
+                                            '1' => qingjian_learning::ReviewRating::Again,
+                                            '3' => qingjian_learning::ReviewRating::Easy,
+                                            _ => qingjian_learning::ReviewRating::Good,
+                                        };
+                                        if let Some(user_dir) =
+                                            qingjian_platform::dirs::user_dir()
+                                        {
+                                            let mut vault =
+                                                qingjian_learning::LearningVault::open(&user_dir);
+                                            let now = jiff::Zoned::now().timestamp().as_second();
+                                            let target_expr = card
+                                                .primary
+                                                .as_ref()
+                                                .map(|p| p.text.clone())
+                                                .unwrap_or_default();
+                                            vault.process_review(
+                                                &card.target_text,
+                                                &target_expr,
+                                                rating,
+                                                now,
+                                            );
+                                            let _ = vault.flush();
+
+                                            let remaining = vault.today_due_reviews(now);
+                                            if remaining.is_empty() {
+                                                card.drill_notice = Some(
+                                                    "🎉 今日复习已全部完成！记忆已固化。\n请按 Esc 返回。"
+                                                        .to_string(),
+                                                );
+                                                card.drill_attempt = None;
+                                                card.drill_input.clear();
+                                                card.today_due_count = 0;
+                                            } else {
+                                                let next = remaining[0];
+                                                card.today_due_count = remaining.len();
+                                                card.review_current_index += 1;
+                                                card.target_text = next.prompt.clone();
+                                                card.primary = Some(
+                                                    qingjian_platform::protocol::LearningExpression {
+                                                        text: next.expression.clone(),
+                                                        ..Default::default()
+                                                    },
+                                                );
+                                                card.drill_input.clear();
+                                                card.drill_attempt = None;
+                                                card.drill_notice = None;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            let shown = self.self_drawn_frame();
+                            self.reconcile_candidates(&shown);
                             return ServerMessage::KeyResult {
                                 session,
                                 outcome: KeyOutcome::Consumed,

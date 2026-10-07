@@ -2866,6 +2866,7 @@ version = "0.1.4-dev-fork"
 dependencies = [
  "dotenvy",
  "embed-manifest",
+ "jiff",
  "qingjian-core",
  "qingjian-dictionary",
  "qingjian-learning",

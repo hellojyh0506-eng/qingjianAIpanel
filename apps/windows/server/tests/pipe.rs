@@ -428,4 +428,77 @@ fn test_real_running_server_learning_mode_switch() {
     }
 }
 
+#[test]
+fn test_real_running_server_fsrs_review_round_trip() {
+    let mut client = match OpenOptions::new().read(true).write(true).open(r"\\.\pipe\qingjian") {
+        Ok(f) => f,
+        Err(_) => return, // Server not running, skip
+    };
+    let session = SessionId(999);
+    write_message(&mut client, &ClientMessage::OpenSession {
+        session,
+        app: None,
+        protocol: PROTOCOL_VERSION,
+    }).unwrap();
+    let _: ServerMessage = read_message(&mut client).unwrap().unwrap(); // SessionOpened
+
+    // 1. 打 nihao 建立组句
+    for c in "nihao".chars() {
+        write_message(
+            &mut client,
+            &ClientMessage::Key {
+                session,
+                event: letter(c),
+            },
+        ).unwrap();
+        let _: ServerMessage = read_message(&mut client).unwrap().unwrap();
+    }
+
+    // 2. 发送 Ctrl+Alt+R 启动 FSRS 今日复习交互
+    let review_key = KeyEvent::new(
+        'R' as u32,
+        Some('r'),
+        KeyModifiers {
+            ctrl: true,
+            alt: true,
+            ..Default::default()
+        },
+    );
+    write_message(&mut client, &ClientMessage::Key {
+        session,
+        event: review_key,
+    }).unwrap();
+
+    let msg: ServerMessage = read_message(&mut client).unwrap().unwrap();
+    if let ServerMessage::KeyResult { frame, outcome, .. } = msg {
+        assert_eq!(outcome, qingjian_platform::protocol::KeyOutcome::Consumed);
+        println!("FSRS review triggered on real server: learning_card={:?}", frame.learning_card.is_some());
+        if let Some(card) = frame.learning_card {
+            println!("Drill stage: {:?}", card.drill_stage);
+            // 无论是进入 Review 阶段还是提示今日无到期，均正确捕获
+            assert!(
+                card.drill_stage == Some(qingjian_platform::protocol::DrillStage::Review)
+                || card.drill_notice.is_some()
+            );
+        }
+    } else {
+        panic!("expected KeyResult");
+    }
+
+    // 3. 发送 Esc 退出复习/清空组句
+    let esc_key = KeyEvent::new(0x1B, None, Default::default());
+    write_message(&mut client, &ClientMessage::Key {
+        session,
+        event: esc_key,
+    }).unwrap();
+    let _: ServerMessage = read_message(&mut client).unwrap().unwrap();
+
+    // 再次 Esc 清理组句
+    write_message(&mut client, &ClientMessage::Key {
+        session,
+        event: esc_key,
+    }).unwrap();
+    let _: ServerMessage = read_message(&mut client).unwrap().unwrap();
+}
+
 

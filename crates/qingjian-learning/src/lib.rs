@@ -4,6 +4,7 @@
 //! [`InputLog`] 逐条记上屏（jsonl），给离线回归评测与个人模型用；[`UsageStats`] 按天数打了多少字（`usage.tsv`），
 //! [`VocabularyBook`] 记学习语言的译词看过 / 上屏过几次（`user-vocab.tsv`，候选里标生词的依据）。
 
+pub mod fsrs;
 mod corrections;
 mod error;
 mod frequency_learner;
@@ -19,13 +20,16 @@ pub use corrections::{
 };
 pub use error::LearningError;
 pub use frequency_learner::FrequencyLearner;
+pub use fsrs::FsrsScheduler;
 pub use input_log::InputLog;
 pub use qingjian_core::{
     ComparisonResult, ComparisonStatus, DimensionStat, ErrorMajorCategory, ErrorRecord,
     ErrorSubcategory, FeedbackItem, MasteryLevel, MasteryRecord, ProfileDimension, RecallAttempt,
-    RecallItem, RecallOutcome, ReviewItem, SavedExpression, UserAttempt, UserEnglishProfile,
+    RecallItem, RecallOutcome, ReviewItem, ReviewLogEntry, ReviewRating, SavedExpression,
+    UserAttempt, UserEnglishProfile,
 };
 pub use recall_book::{RecallBook, analyze_feedback_items};
 pub use usage_stats::UsageStats;
 pub use vault::LearningVault;
 pub use vocabulary_book::VocabularyBook;
+

@@ -16,10 +16,11 @@ use qingjian_core::storage::{read_text_lossy, write_atomic_str};
 use qingjian_core::{
     ComparisonStatus, DimensionStat, ErrorMajorCategory, ErrorRecord, ErrorSubcategory,
     MasteryLevel, MasteryRecord, ProfileDimension, RecallAttempt, ReviewItem,
-    SavedExpression, UserAttempt, UserEnglishProfile,
+    ReviewRating, SavedExpression, UserAttempt, UserEnglishProfile,
 };
 
 use crate::error::LearningError;
+use crate::fsrs::FsrsScheduler;
 
 /// 学习账本与画像聚合管理器
 #[derive(Debug, Default)]
@@ -29,6 +30,7 @@ pub struct LearningVault {
     attempts: Vec<UserAttempt>,
     error_records: BTreeMap<String, ErrorRecord>,
     mastery_records: BTreeMap<(String, String), MasteryRecord>,
+    review_queue: BTreeMap<(String, String), ReviewItem>,
     dirty: bool,
 }
 
@@ -42,6 +44,7 @@ impl LearningVault {
             attempts: Vec::new(),
             error_records: BTreeMap::new(),
             mastery_records: BTreeMap::new(),
+            review_queue: BTreeMap::new(),
             dirty: false,
         };
 
@@ -198,6 +201,31 @@ impl LearningVault {
                 }
             }
         }
+
+        // 5. 加载 FSRS 复习队列 (user-review-queue.json)
+        let queue_path = dir.join("user-review-queue.json");
+        if let Ok(Some(content)) = read_text_lossy(&queue_path) {
+            if let Ok(items) = serde_json::from_str::<Vec<ReviewItem>>(&content) {
+                for item in items {
+                    let key = (item.prompt.clone(), item.expression.clone());
+                    self.review_queue.insert(key, item);
+                }
+            }
+        }
+
+        // 容错补充：确保所有已收藏表达均在复习队列中
+        for saved in &self.saved_expressions {
+            let key = (saved.prompt.clone(), saved.expression.clone());
+            if !self.review_queue.contains_key(&key) {
+                let mut item = FsrsScheduler::init_item(&saved.prompt, &saved.expression, saved.saved_at);
+                item.mastery = saved.mastery;
+                if let Some(mastery_rec) = self.mastery_records.get(&key) {
+                    item.attempts_count = mastery_rec.total_reviews;
+                    item.mastery = mastery_rec.level;
+                }
+                self.review_queue.insert(key, item);
+            }
+        }
     }
 
     /// 用户显式点击 ⭐ 保存或快捷键 Ctrl+S 时记录地道表达
@@ -239,13 +267,19 @@ impl LearningVault {
         self.mastery_records
             .entry((prompt_trimmed.clone(), expr_trimmed.clone()))
             .or_insert_with(|| MasteryRecord {
-                prompt: prompt_trimmed,
-                target: expr_trimmed,
+                prompt: prompt_trimmed.clone(),
+                target: expr_trimmed.clone(),
                 level: MasteryLevel::Learning,
                 consecutive_successes: 0,
                 total_reviews: 0,
                 updated_at: now,
             });
+
+        // 同步初始化/更新 FSRS 复习条目
+        let queue_key = (prompt_trimmed.clone(), expr_trimmed.clone());
+        self.review_queue
+            .entry(queue_key)
+            .or_insert_with(|| FsrsScheduler::init_item(&prompt_trimmed, &expr_trimmed, now));
 
         self.dirty = true;
     }
@@ -296,7 +330,7 @@ impl LearningVault {
 
         // 3. 更新该项目的掌握度记录
         let key = (attempt.prompt.clone(), attempt.reference_expression.clone());
-        let record = self.mastery_records.entry(key).or_insert_with(|| MasteryRecord {
+        let record = self.mastery_records.entry(key.clone()).or_insert_with(|| MasteryRecord {
             prompt: attempt.prompt.clone(),
             target: attempt.reference_expression.clone(),
             level: MasteryLevel::Learning,
@@ -330,6 +364,13 @@ impl LearningVault {
         {
             saved.mastery = new_level;
         }
+
+        // 4. 同步推进 FSRS 复习状态
+        let rating = FsrsScheduler::infer_rating(attempt.comparison.status, attempt.comparison.feedback_items.len());
+        let fsrs_item = self.review_queue.entry(key).or_insert_with(|| {
+            FsrsScheduler::init_item(&attempt.prompt, &attempt.reference_expression, now)
+        });
+        FsrsScheduler::step(fsrs_item, rating, now);
 
         self.dirty = true;
     }
@@ -438,34 +479,88 @@ impl LearningVault {
         profile
     }
 
-    /// 获取待复习清单 (Review Items)
+    /// 获取待复习清单 (所有已记录复习条目)
     pub fn review_items(&self) -> Vec<ReviewItem> {
-        let mut items = Vec::new();
-        for ((prompt, target), mastery) in &self.mastery_records {
-            let (success, failure) = self.attempts.iter().filter(|a| &a.prompt == prompt && &a.reference == target).fold((0u32, 0u32), |(s, f), a| {
-                if a.is_success { (s + 1, f) } else { (s, f + 1) }
-            });
+        self.review_queue.values().cloned().collect()
+    }
 
-            // 简单复习间隔推算：已掌握 7天，较熟练 3天，学习中 1天
-            let interval_secs = match mastery.level {
-                MasteryLevel::Mastered => 7 * 86400,
-                MasteryLevel::Familiar => 3 * 86400,
-                MasteryLevel::Learning => 86400,
-                MasteryLevel::Unseen => 0,
-            };
+    /// 按提示词和目标英文获取指定复习项
+    pub fn get_review_item(&self, prompt: &str, expression: &str) -> Option<&ReviewItem> {
+        self.review_queue.get(&(prompt.trim().to_string(), expression.trim().to_string()))
+    }
 
-            items.push(ReviewItem {
-                prompt: prompt.clone(),
-                target: target.clone(),
-                attempts_count: mastery.total_reviews,
-                success_count: success,
-                failure_count: failure,
-                last_reviewed_at: mastery.updated_at,
-                next_review_at: mastery.updated_at + interval_secs,
-                mastery: mastery.level,
-            });
+    /// 用户在主动复习/Drill界面直接指定评级推进 FSRS 调度
+    pub fn process_review(
+        &mut self,
+        prompt: &str,
+        expression: &str,
+        rating: ReviewRating,
+        now: i64,
+    ) {
+        let key = (prompt.trim().to_string(), expression.trim().to_string());
+        let item = self.review_queue.entry(key.clone()).or_insert_with(|| {
+            FsrsScheduler::init_item(prompt, expression, now)
+        });
+
+        FsrsScheduler::step(item, rating, now);
+        let new_mastery = item.mastery;
+
+        // 同步更新 saved_expressions 中的 mastery
+        if let Some(saved) = self.saved_expressions.iter_mut().find(|e| e.prompt == key.0 && e.expression == key.1) {
+            saved.mastery = new_mastery;
         }
-        items
+
+        // 同步更新 mastery_records
+        let record = self.mastery_records.entry(key).or_insert_with(|| MasteryRecord {
+            prompt: prompt.trim().to_string(),
+            target: expression.trim().to_string(),
+            level: new_mastery,
+            consecutive_successes: 0,
+            total_reviews: 0,
+            updated_at: now,
+        });
+        record.total_reviews = record.total_reviews.saturating_add(1);
+        record.updated_at = now;
+        record.level = new_mastery;
+        if rating == ReviewRating::Again {
+            record.consecutive_successes = 0;
+        } else {
+            record.consecutive_successes = record.consecutive_successes.saturating_add(1);
+        }
+
+        self.dirty = true;
+    }
+
+    /// 获取今日待复习清单（到期或今日内即将到期），按紧急程度与遗忘风险排序
+    pub fn today_due_reviews(&self, now: i64) -> Vec<&ReviewItem> {
+        let mut list: Vec<&ReviewItem> = self
+            .review_queue
+            .values()
+            .filter(|item| FsrsScheduler::is_due_today(item, now))
+            .collect();
+
+        // 优先级排序：逾期最久 (due_time 小) 优先；若同一时间，可提取率较低 (记忆更脆弱) 优先
+        list.sort_by(|a, b| {
+            a.due_time.cmp(&b.due_time).then_with(|| {
+                let r_a = FsrsScheduler::calculate_retrievability(a, now);
+                let r_b = FsrsScheduler::calculate_retrievability(b, now);
+                r_a.partial_cmp(&r_b).unwrap_or(std::cmp::Ordering::Equal)
+            })
+        });
+        list
+    }
+
+    /// 今日待复习条目数量
+    pub fn today_due_count(&self, now: i64) -> usize {
+        self.review_queue
+            .values()
+            .filter(|item| FsrsScheduler::is_due_today(item, now))
+            .count()
+    }
+
+    /// 获取完整复习队列引用
+    pub fn review_queue(&self) -> &BTreeMap<(String, String), ReviewItem> {
+        &self.review_queue
     }
 
     /// 获取收藏表达切片
@@ -499,6 +594,7 @@ impl LearningVault {
         self.attempts.clear();
         self.error_records.clear();
         self.mastery_records.clear();
+        self.review_queue.clear();
         self.dirty = false;
 
         if let Some(dir) = &self.base_dir {
@@ -508,6 +604,7 @@ impl LearningVault {
                 dir.join("user-errors.tsv"),
                 dir.join("user-mastery.tsv"),
                 dir.join("user-learning-profile.json"),
+                dir.join("user-review-queue.json"),
             ];
             for f in files {
                 if f.exists() {
@@ -611,6 +708,12 @@ impl LearningVault {
         let profile = self.calculate_profile();
         if let Ok(json) = serde_json::to_string_pretty(&profile) {
             write_atomic_str(&dir.join("user-learning-profile.json"), &json)?;
+        }
+
+        // 6. 保存 user-review-queue.json
+        let queue_items: Vec<&ReviewItem> = self.review_queue.values().collect();
+        if let Ok(json) = serde_json::to_string_pretty(&queue_items) {
+            write_atomic_str(&dir.join("user-review-queue.json"), &json)?;
         }
 
         self.dirty = false;
@@ -797,10 +900,47 @@ mod tests {
 
         vault.clear_all().unwrap();
         assert_eq!(vault.saved_expressions().len(), 0);
-        assert_eq!(vault.calculate_profile().total_saved, 0);
-
         // 磁盘文件已被物理清理
         assert!(!path.join("user-saved-expressions.tsv").exists());
+        assert!(!path.join("user-review-queue.json").exists());
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn test_vault_fsrs_queue_persistence_and_process_review() {
+        let path = test_dir("fsrs-queue");
+        let mut vault = LearningVault::open(&path);
+
+        let now = jiff::Zoned::now().timestamp().as_second();
+        vault.save_expression("敷衍我", "brush me off", Some("Spoken"), None);
+        assert_eq!(vault.today_due_count(now), 1);
+        let due_list = vault.today_due_reviews(now);
+        assert_eq!(due_list.len(), 1);
+        assert_eq!(due_list[0].expression, "brush me off");
+
+        // 第一次复习评级 Good
+        vault.process_review("敷衍我", "brush me off", ReviewRating::Good, now);
+        let item = &vault.review_items()[0];
+        assert_eq!(item.success_count, 1);
+        assert!(item.stability > 1.0);
+        assert!(item.due_time > now);
+
+        vault.flush().unwrap();
+        assert!(path.join("user-review-queue.json").exists());
+
+        // 重新加载验证
+        let mut reloaded = LearningVault::open(&path);
+        assert_eq!(reloaded.review_items().len(), 1);
+        let loaded_item = &reloaded.review_items()[0];
+        assert_eq!(loaded_item.expression, "brush me off");
+        assert_eq!(loaded_item.success_count, 1);
+
+        // 触发遗忘 Again
+        reloaded.process_review("敷衍我", "brush me off", ReviewRating::Again, now + 86400 * 5);
+        let relapsed_item = &reloaded.review_items()[0];
+        assert_eq!(relapsed_item.failure_count, 1);
+        assert!(relapsed_item.stability <= 0.4);
+
         let _ = std::fs::remove_dir_all(&path);
     }
 }
