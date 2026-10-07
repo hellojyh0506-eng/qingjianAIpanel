@@ -107,7 +107,7 @@ fn test_real_tsf_com_lifecycle_and_all_scenarios() {
     let dll_path = std::env::var("QINGJIAN_TEST_DLL_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|_| manifest_dir.join("../../../target/debug/qingjian_tsf.dll"));
-    println!("[REAL-EMPIRICAL] 加载被测 TSF DLL: {}", dll_path.display());
+    println!("[CODE-VERIFIED] 加载被测 TSF DLL: {}", dll_path.display());
     assert!(dll_path.exists(), "被测 DLL 必须存在: {}", dll_path.display());
 
     let tmp_cfg = std::env::temp_dir().join(format!("qj_tsf_com_test_{}.toml", std::process::id()));
@@ -136,82 +136,82 @@ fn test_real_tsf_com_lifecycle_and_all_scenarios() {
 
     // 场景 1: a/A 放行 (VK_A = 0x41)
     let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(0x41), LPARAM(0)) }.expect("OnTestKeyDown 必须调用成功");
-    assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 1: 英文直通模式下 'a' 绝不能被 TSF 拦截，必须返回 FALSE (0) 放行给宿主");
+    assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 1: 英文直通模式下 'a' 绝不能被 TSF 拦截，必须返回 FALSE (0) 放行给宿主");
 
     // 场景 2: Caps/Shift 键本身放行
     let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(0x14), LPARAM(0)) }.expect("VK_CAPITAL");
-    assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 2: Caps Lock 键必须放行给宿主");
+    assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 2: Caps Lock 键必须放行给宿主");
     let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(0x10), LPARAM(0)) }.expect("VK_SHIFT");
-    assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 2: Shift 键必须放行给宿主");
+    assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 2: Shift 键必须放行给宿主");
 
     // 场景 3: 标点与数字放行 (VK_1 = 0x31, VK_OEM_MINUS = 0xBD, VK_OEM_PERIOD = 0xBE)
     for vk in 0x30..=0x39 {
         let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(vk as usize), LPARAM(0)) }.unwrap();
-        assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 3: 数字键 0x{vk:X} 必须放行给宿主");
+        assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 3: 数字键 0x{vk:X} 必须放行给宿主");
     }
     let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(0xBD), LPARAM(0)) }.unwrap(); // '-'
-    assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 3: 连字符 '-' 必须放行给宿主");
+    assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 3: 连字符 '-' 必须放行给宿主");
     let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(0xBE), LPARAM(0)) }.unwrap(); // '.'
-    assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 3: 句号 '.' 必须放行给宿主");
+    assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 3: 句号 '.' 必须放行给宿主");
 
     // 场景 4: 功能键 Space/Backspace/Enter/Esc 放行
     let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(0x20), LPARAM(0)) }.unwrap(); // Space
-    assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 4: 空格键 Space 必须放行给宿主");
+    assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 4: 空格键 Space 必须放行给宿主");
     let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(0x08), LPARAM(0)) }.unwrap(); // Backspace
-    assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 4: 退格键 Backspace 必须放行给宿主");
+    assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 4: 退格键 Backspace 必须放行给宿主");
     let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(0x0D), LPARAM(0)) }.unwrap(); // Enter
-    assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 4: 回车键 Enter 必须放行给宿主");
+    assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 4: 回车键 Enter 必须放行给宿主");
     let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(0x1B), LPARAM(0)) }.unwrap(); // Esc
-    assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 4: Esc 键必须放行给宿主");
+    assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 4: Esc 键必须放行给宿主");
 
     // 场景 5: 快捷键 Ctrl/Alt/Win 放行
     let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(0x11), LPARAM(0)) }.unwrap(); // VK_CONTROL
-    assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 5: Ctrl 键必须放行");
+    assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 5: Ctrl 键必须放行");
     let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(0x12), LPARAM(0)) }.unwrap(); // VK_MENU (Alt)
-    assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 5: Alt 键必须放行");
+    assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 5: Alt 键必须放行");
     let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(0x5B), LPARAM(0)) }.unwrap(); // VK_LWIN
-    assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 5: Win 键必须放行");
+    assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 5: Win 键必须放行");
 
     // 场景 6: 真实词串 "gpt6" 逐键实机 COM 调用
     for vk in [0x47, 0x50, 0x54, 0x36] { // G, P, T, 6
         let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(vk), LPARAM(0)) }.unwrap();
-        assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 6: 'gpt6' 逐键必须全部放行给宿主");
+        assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 6: 'gpt6' 逐键必须全部放行给宿主");
     }
 
     // 场景 7: 真实词串 "deepseek-r1" 逐键实机 COM 调用
     for vk in [0x44, 0x45, 0x45, 0x50, 0x53, 0x45, 0x45, 0x4B, 0xBD, 0x52, 0x31] {
         let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(vk), LPARAM(0)) }.unwrap();
-        assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 7: 'deepseek-r1' 逐键必须全部放行给宿主");
+        assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 7: 'deepseek-r1' 逐键必须全部放行给宿主");
     }
 
     // 场景 8: 真实词串 "C++" 逐键实机 COM 调用
     for vk in [0x43, 0xBB, 0xBB] {
         let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(vk), LPARAM(0)) }.unwrap();
-        assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 8: 'C++' 逐键必须全部放行给宿主");
+        assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 8: 'C++' 逐键必须全部放行给宿主");
     }
 
     // 场景 9: 真实词串 "I'm" 逐键实机 COM 调用
     for vk in [0x49, 0xDE, 0x4D] {
         let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(vk), LPARAM(0)) }.unwrap();
-        assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 9: 'I\\'m' 逐键必须全部放行给宿主");
+        assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 9: 'I\\'m' 逐键必须全部放行给宿主");
     }
 
     // 场景 10: 真实词串 "email@example.com" 逐键实机 COM 调用
     for vk in [0x45, 0x4D, 0x41, 0x49, 0x4C, 0x32, 0x45, 0x58, 0x41, 0x4D, 0x50, 0x4C, 0x45, 0xBE, 0x43, 0x4F, 0x4D] {
         let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(vk), LPARAM(0)) }.unwrap();
-        assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 10: 'email@example.com' 逐键必须全部放行给宿主");
+        assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 10: 'email@example.com' 逐键必须全部放行给宿主");
     }
 
     // 场景 11: 真实 URL 逐键实机 COM 调用 ("https://example.com/test?a=1&b=2")
     for vk in [0x48, 0x54, 0x54, 0x50, 0x53, 0xBA, 0xBF, 0xBF, 0x45, 0xBE, 0x43, 0xBF, 0xBF, 0x31] {
         let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(vk), LPARAM(0)) }.unwrap();
-        assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] 场景 11: URL 逐键必须全部放行给宿主");
+        assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] 场景 11: URL 逐键必须全部放行给宿主");
     }
 
     // 场景 12: 中文模式拼音拦截保护验证
     let _ = unsafe { sink.OnPreservedKey(None, &GUID_SWITCH_MODE) };
     let eat_zh = unsafe { sink.OnTestKeyDown(None, WPARAM(0x41), LPARAM(0)) }.unwrap();
-    assert_eq!(eat_zh, BOOL(1), "[REAL-EMPIRICAL] 场景 12: 中文模式下拼音字母 'a' 必须被拦截 (TRUE) 以进行拼音组句");
+    assert_eq!(eat_zh, BOOL(1), "[CODE-VERIFIED] 场景 12: 中文模式下拼音字母 'a' 必须被拦截 (TRUE) 以进行拼音组句");
 
     // ==========================================
     // 阶段 2 验证: 动态热切换至 English Direct OFF (v0.1.4 回归)
@@ -229,19 +229,19 @@ fn test_real_tsf_com_lifecycle_and_all_scenarios() {
 
     // 在 OFF 模式下：英文字母必须被拦截 (返回 TRUE)
     let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(0x41), LPARAM(0)) }.unwrap();
-    assert_eq!(eat, BOOL(1), "[REAL-EMPIRICAL] OFF 回归: english_direct=false 时 'a' 必须被拦截 (TRUE) 保持 v0.1.4 IME 注入行为");
+    assert_eq!(eat, BOOL(1), "[CODE-VERIFIED] OFF 回归: english_direct=false 时 'a' 必须被拦截 (TRUE) 保持 v0.1.4 IME 注入行为");
 
     // 在 OFF 模式下：标点必须被拦截
     let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(0xBD), LPARAM(0)) }.unwrap(); // '-'
-    assert_eq!(eat, BOOL(1), "[REAL-EMPIRICAL] OFF 回归: 连字符 '-' 必须被拦截 (TRUE)");
+    assert_eq!(eat, BOOL(1), "[CODE-VERIFIED] OFF 回归: 连字符 '-' 必须被拦截 (TRUE)");
 
     // 在 OFF 模式下：数字必须被拦截
     let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(0x31), LPARAM(0)) }.unwrap(); // '1'
-    assert_eq!(eat, BOOL(1), "[REAL-EMPIRICAL] OFF 回归: 数字 '1' 必须被拦截 (TRUE)");
+    assert_eq!(eat, BOOL(1), "[CODE-VERIFIED] OFF 回归: 数字 '1' 必须被拦截 (TRUE)");
 
     // 快捷键依然放行
     let eat = unsafe { sink.OnTestKeyDown(None, WPARAM(0x11), LPARAM(0)) }.unwrap(); // VK_CONTROL
-    assert_eq!(eat, BOOL(0), "[REAL-EMPIRICAL] OFF 回归: Ctrl 快捷键必须放行");
+    assert_eq!(eat, BOOL(0), "[CODE-VERIFIED] OFF 回归: Ctrl 快捷键必须放行");
 
     // 清理临时文件
     let _ = fs::remove_file(&tmp_cfg);
@@ -311,7 +311,7 @@ fn test_real_win32_host_window_message_delivery() {
         }
 
         let received: String = RECEIVED_CHARS.lock().unwrap().iter().collect();
-        assert_eq!(received, test_str, "[REAL-EMPIRICAL] 宿主窗口必须原生收到完整的字符流且顺序严格一致");
+        assert_eq!(received, test_str, "[CODE-VERIFIED] 宿主窗口必须原生收到完整的字符流且顺序严格一致");
 
         let _ = DestroyWindow(hwnd);
     }

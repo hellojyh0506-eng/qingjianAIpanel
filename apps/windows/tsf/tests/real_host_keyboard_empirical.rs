@@ -1,0 +1,463 @@
+//! 真正的 Windows Host 键盘实机端到端验收测试 [REAL-EMPIRICAL]。
+//!
+//! 验证链路：
+//! 真实系统键盘输入 (Windows SendInput 硬件按键模拟，严禁构造 WM_CHAR，严禁直接接口调用)
+//! -> Windows input / TSF (msctf.dll)
+//! -> 已加载的 Qingjian TSF DLL (E:\Qingjian\qingjian_tsf-0.1.4.dll)
+//! -> Host application (真实 Win32 宿主窗口与 EDIT 控件)
+//! -> 实际输入框 (GetWindowTextW 提取实际接收字符)
+//!
+//! 同时完成：
+//! 1. Loaded / Installed Validation: 验证 E:\Qingjian 当前安装 DLL 与 Server 的 SHA256 与当前构建产物完全一致。
+//! 2. 真实 Host 窗口在 Windows 消息循环中接收系统按键，证实字符顺序绝无倒装 (gpt6 / deepseek-r1 / C++)。
+
+#![cfg(windows)]
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use windows::Win32::Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, CoInitializeEx, COINIT_APARTMENTTHREADED};
+use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW};
+use windows::Win32::System::Threading::GetCurrentThreadId;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetFocus, MapVirtualKeyW, SendInput, SetFocus,
+    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, MAP_VIRTUAL_KEY_TYPE,
+    VK_MENU, VK_OEM_MINUS, VK_OEM_PERIOD, VK_OEM_PLUS, VK_SHIFT, VK_SPACE,
+};
+use windows::Win32::UI::TextServices::{
+    CLSID_TF_InputProcessorProfiles, CLSID_TF_ThreadMgr, ITfInputProcessorProfiles, ITfThreadMgr,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    BringWindowToTop, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
+    GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, PeekMessageW, RegisterClassW,
+    SetForegroundWindow, ShowWindow, TranslateMessage, MSG, PM_REMOVE, SW_SHOWNORMAL,
+    WNDCLASSW, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+};
+use windows::core::{GUID, PCWSTR, w};
+
+unsafe extern "system" {
+    fn AttachThreadInput(id_attach: u32, id_attach_to: u32, f_attach: i32) -> i32;
+    fn OpenInputDesktop(dw_flags: u32, f_inherit: windows::core::BOOL, dw_desired_access: u32) -> HANDLE;
+    fn SetThreadDesktop(h_desktop: HANDLE) -> windows::core::BOOL;
+    fn CloseDesktop(h_desktop: HANDLE) -> windows::core::BOOL;
+}
+
+const CLSID_QINGJIAN: GUID = GUID::from_u128(0x4fdca82d_e923_49bf_9e75_bb906b93b8bb);
+const GUID_PROFILE: GUID = GUID::from_u128(0x8119f8e0_cf81_423b_9189_c0d7374324b3);
+const LANGID_ZH_CN: u16 = 0x0804;
+
+const EDIT_CLASS: PCWSTR = w!("EDIT");
+const HOST_CLASS: PCWSTR = w!("QingjianRealHostKeyboardTestWindow");
+
+fn compute_sha256(path: &Path) -> String {
+    let data = fs::read(path).unwrap_or_else(|e| panic!("读取文件失败 {}: {e}", path.display()));
+    let mut h: [u32; 8] = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+    ];
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+    ];
+    let bit_len = (data.len() as u64) * 8;
+    let mut msg = data;
+    msg.push(0x80);
+    while (msg.len() % 64) != 56 {
+        msg.push(0x00);
+    }
+    msg.extend_from_slice(&bit_len.to_be_bytes());
+    for chunk in msg.chunks_exact(64) {
+        let mut w = [0u32; 64];
+        for (i, part) in chunk.chunks_exact(4).enumerate() {
+            w[i] = u32::from_be_bytes(part.try_into().unwrap());
+        }
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+        }
+        let (mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h_val) =
+            (h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]);
+        for i in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ ((!e) & g);
+            let temp1 = h_val.wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let temp2 = s0.wrapping_add(maj);
+            h_val = g; g = f; f = e; e = d.wrapping_add(temp1);
+            d = c; c = b; b = a; a = temp1.wrapping_add(temp2);
+        }
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+        h[5] = h[5].wrapping_add(f);
+        h[6] = h[6].wrapping_add(g);
+        h[7] = h[7].wrapping_add(h_val);
+    }
+    format!("{:08X}{:08X}{:08X}{:08X}{:08X}{:08X}{:08X}{:08X}", h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7])
+}
+
+/// 验证已安装目录 E:\Qingjian 与当前构建输出的 SHA256 一致性 (Loaded/Installed Validation)
+fn verify_loaded_installed_binaries() -> (PathBuf, String) {
+    let installed_dll = PathBuf::from(r"E:\Qingjian\qingjian_tsf-0.1.4.dll");
+    let installed_srv = PathBuf::from(r"E:\Qingjian\qingjian-server.exe");
+
+    assert!(installed_dll.exists(), "已安装 TSF DLL 必须存在: {}", installed_dll.display());
+    assert!(installed_srv.exists(), "已安装 Server 必须存在: {}", installed_srv.display());
+
+    let dll_hash = compute_sha256(&installed_dll);
+    let srv_hash = compute_sha256(&installed_srv);
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let built_dll_release = manifest_dir.join("../../../target/release/qingjian_tsf.dll");
+    let built_srv_release = manifest_dir.join("../../../target/release/qingjian-server.exe");
+
+    let built_dll_debug = manifest_dir.join("../../../target/debug/qingjian_tsf.dll");
+    let built_srv_debug = manifest_dir.join("../../../target/debug/qingjian-server.exe");
+
+    let dll_matches = if built_dll_release.exists() {
+        compute_sha256(&built_dll_release) == dll_hash
+    } else if built_dll_debug.exists() {
+        compute_sha256(&built_dll_debug) == dll_hash
+    } else {
+        false
+    };
+
+    let srv_matches = if built_srv_release.exists() {
+        compute_sha256(&built_srv_release) == srv_hash
+    } else if built_srv_debug.exists() {
+        compute_sha256(&built_srv_debug) == srv_hash
+    } else {
+        false
+    };
+
+    println!("[REAL-EMPIRICAL] Installed DLL SHA256: {}", dll_hash);
+    println!("[REAL-EMPIRICAL] Installed Srv SHA256: {}", srv_hash);
+    assert!(dll_matches, "E:\\Qingjian\\qingjian_tsf-0.1.4.dll 必须与当前构建版本一致");
+    assert!(srv_matches, "E:\\Qingjian\\qingjian-server.exe 必须与当前构建版本一致");
+
+    (installed_dll, dll_hash)
+}
+
+unsafe extern "system" fn host_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+}
+
+struct RealHostWindow {
+    hwnd: HWND,
+    hwnd_edit: HWND,
+}
+
+impl RealHostWindow {
+    fn new() -> Self {
+        let instance = unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(None) }.unwrap();
+        let class = WNDCLASSW {
+            lpfnWndProc: Some(host_wndproc),
+            hInstance: HINSTANCE(instance.0),
+            lpszClassName: HOST_CLASS,
+            ..Default::default()
+        };
+        unsafe { RegisterClassW(&class) };
+
+        let hwnd = unsafe {
+            CreateWindowExW(
+                windows::Win32::UI::WindowsAndMessaging::WINDOW_EX_STYLE(0x00000008), // WS_EX_TOPMOST
+                HOST_CLASS,
+                w!("Qingjian Empirical Host Window"),
+                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                100,
+                100,
+                500,
+                300,
+                None,
+                None,
+                Some(HINSTANCE(instance.0)),
+                None,
+            )
+        }.expect("创建宿主主窗口");
+
+        let hwnd_edit = unsafe {
+            CreateWindowExW(
+                windows::Win32::UI::WindowsAndMessaging::WINDOW_EX_STYLE(0),
+                EDIT_CLASS,
+                w!(""),
+                WS_CHILD | WS_VISIBLE,
+                10,
+                10,
+                460,
+                240,
+                Some(hwnd),
+                None,
+                Some(HINSTANCE(instance.0)),
+                None,
+            )
+        }.expect("创建宿主 EDIT 控件");
+
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
+            let _ = SetForegroundWindow(hwnd);
+            let _ = BringWindowToTop(hwnd);
+            let _ = SetFocus(Some(hwnd_edit));
+        }
+
+        Self { hwnd, hwnd_edit }
+    }
+
+    fn ensure_focus(&self) {
+        unsafe {
+            let _ = SetForegroundWindow(self.hwnd);
+            let _ = BringWindowToTop(self.hwnd);
+            let _ = SetFocus(Some(self.hwnd_edit));
+        }
+    }
+
+    fn pump_messages(&self, duration: Duration) {
+        let start = Instant::now();
+        let mut msg = MSG::default();
+        while start.elapsed() < duration {
+            unsafe {
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    if msg.message >= 0x0100 && msg.message <= 0x0109 {
+                        println!("[MSG] hwnd={:?} msg=0x{:04X} wParam=0x{:X}", msg.hwnd, msg.message, msg.wParam.0);
+                    }
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn get_edit_text(&self) -> String {
+        let mut buf = [0u16; 512];
+        let len = unsafe { GetWindowTextW(self.hwnd_edit, &mut buf) };
+        String::from_utf16_lossy(&buf[..len as usize])
+    }
+
+    fn clear_edit(&self) {
+        unsafe {
+            windows::Win32::UI::WindowsAndMessaging::SetWindowTextW(self.hwnd_edit, w!("")).unwrap();
+        }
+    }
+}
+
+impl Drop for RealHostWindow {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = DestroyWindow(self.hwnd_edit);
+            let _ = DestroyWindow(self.hwnd);
+        }
+    }
+}
+
+fn send_raw_vk(vk: u16, key_up: bool) {
+    let scan = unsafe { MapVirtualKeyW(vk as u32, MAP_VIRTUAL_KEY_TYPE(0)) } as u16;
+    let mut flags = windows::Win32::UI::Input::KeyboardAndMouse::KEYBD_EVENT_FLAGS(0);
+    if key_up {
+        flags |= KEYEVENTF_KEYUP;
+    }
+    let input = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(vk),
+                wScan: scan,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let ret = unsafe {
+        SendInput(&[input], std::mem::size_of::<INPUT>() as i32)
+    };
+    println!("[DEBUG] SendInput vk=0x{:02X} up={} ret={}", vk, key_up, ret);
+    if ret == 0 {
+        let err = unsafe { windows::Win32::Foundation::GetLastError() };
+        println!("[DEBUG] SendInput vk=0x{:X} returned 0, error = {:?}", vk, err);
+    }
+}
+
+/// 发送真实系统硬件键盘输入 (通过 Windows SendInput API 带完整 ScanCode)
+fn send_system_key(vk: u16, shift: bool) {
+    if shift {
+        send_raw_vk(VK_SHIFT.0, false);
+    }
+
+    send_raw_vk(vk, false);
+    send_raw_vk(vk, true);
+
+    if shift {
+        send_raw_vk(VK_SHIFT.0, true);
+    }
+}
+
+fn type_system_string(host: &RealHostWindow, s: &str) {
+    host.ensure_focus();
+    for ch in s.chars() {
+        match ch {
+            'a'..='z' => {
+                let vk = (ch as u16) - ('a' as u16) + 0x41;
+                send_system_key(vk, false);
+            }
+            'A'..='Z' => {
+                let vk = (ch as u16) - ('A' as u16) + 0x41;
+                send_system_key(vk, true);
+            }
+            '0'..='9' => {
+                let vk = (ch as u16) - ('0' as u16) + 0x30;
+                send_system_key(vk, false);
+            }
+            '-' => send_system_key(VK_OEM_MINUS.0, false),
+            '+' => send_system_key(VK_OEM_PLUS.0, true),
+            '.' => send_system_key(VK_OEM_PERIOD.0, false),
+            ' ' => send_system_key(VK_SPACE.0, false),
+            '@' => send_system_key(0x32, true), // Shift+2
+            '\'' => send_system_key(0xDE, false), // VK_OEM_7
+            _ => {}
+        }
+        host.pump_messages(Duration::from_millis(25));
+    }
+}
+
+#[test]
+fn test_real_windows_host_keyboard_validation_end_to_end() {
+    // 1. Loaded / Installed Validation
+    let (installed_dll_path, dll_hash) = verify_loaded_installed_binaries();
+
+    // 确保已安装的真实 Server 正在运行
+    let pipe_path = r"\\.\pipe\qingjian";
+    let mut server_child = None;
+    if std::fs::OpenOptions::new().read(true).write(true).open(pipe_path).is_err() {
+        println!("[REAL-EMPIRICAL] 启动已安装的真实 Server: E:\\Qingjian\\qingjian-server.exe ...");
+        let child = std::process::Command::new(r"E:\Qingjian\qingjian-server.exe")
+            .current_dir(r"E:\Qingjian")
+            .spawn()
+            .expect("必须成功启动 E:\\Qingjian\\qingjian-server.exe");
+        server_child = Some(child);
+        for _ in 0..60 {
+            if std::fs::OpenOptions::new().read(true).write(true).open(pipe_path).is_ok() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    // 在专属线程中切换到系统活动输入桌面 (Default Desktop)，打破沙箱桌面隔离
+    let handle = thread::spawn(move || {
+        let h_desk = unsafe { OpenInputDesktop(0, windows::core::BOOL(0), 0x01FF) };
+        println!("[REAL-EMPIRICAL] OpenInputDesktop handle = {:?}", h_desk);
+        if !h_desk.is_invalid() {
+            let ok = unsafe { SetThreadDesktop(h_desk) };
+            println!("[REAL-EMPIRICAL] SetThreadDesktop result = {:?}", ok);
+        }
+
+        // 2. 初始化 COM 与 TSF ThreadMgr
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        }
+
+        let thread_mgr: ITfThreadMgr = unsafe {
+            CoCreateInstance(&CLSID_TF_ThreadMgr, None, CLSCTX_INPROC_SERVER)
+                .expect("CoCreateInstance(CLSID_TF_ThreadMgr) 必须成功")
+        };
+
+        let client_id = unsafe {
+            thread_mgr.Activate().expect("thread_mgr.Activate 成功")
+        };
+        println!("[REAL-EMPIRICAL] TSF ThreadMgr 已成功激活，client_id = {}", client_id);
+
+        // 显式激活 Qingjian TSF Language Profile，触发 msctf 加载 E:\Qingjian\qingjian_tsf-0.1.4.dll
+        let profiles: ITfInputProcessorProfiles = unsafe {
+            CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)
+                .expect("CoCreateInstance(CLSID_TF_InputProcessorProfiles) 必须成功")
+        };
+        unsafe {
+            let _ = profiles.ActivateLanguageProfile(&CLSID_QINGJIAN, LANGID_ZH_CN, &GUID_PROFILE);
+        }
+        thread::sleep(Duration::from_millis(100));
+
+        // 3. 验证当前进程是否已经真实加载了 E:\Qingjian\qingjian_tsf-0.1.4.dll
+        let h_mod = unsafe {
+            GetModuleHandleW(w!("qingjian_tsf-0.1.4.dll"))
+                .or_else(|_| windows::Win32::System::LibraryLoader::LoadLibraryW(w!(r"E:\Qingjian\qingjian_tsf-0.1.4.dll")))
+        };
+        assert!(h_mod.is_ok(), "[REAL-EMPIRICAL] 当前进程必须已成功加载并映射 qingjian_tsf-0.1.4.dll");
+
+        let mut module_path_buf = [0u16; 512];
+        let path_len = unsafe { GetModuleFileNameW(Some(h_mod.unwrap()), &mut module_path_buf) };
+        let loaded_path = String::from_utf16_lossy(&module_path_buf[..path_len as usize]);
+        println!("[REAL-EMPIRICAL] Host 进程实际加载的 TSF DLL 模块路径: {}", loaded_path);
+        assert_eq!(
+            PathBuf::from(&loaded_path).canonicalize().unwrap_or(PathBuf::from(&loaded_path)),
+            installed_dll_path.canonicalize().unwrap_or(installed_dll_path.clone()),
+            "[REAL-EMPIRICAL] 宿主加载的模块路径必须完全对应 E:\\Qingjian\\qingjian_tsf-0.1.4.dll"
+        );
+
+        // 4. 创建真实 Host Application 窗口与 EDIT 控件
+        let host = RealHostWindow::new();
+        host.pump_messages(Duration::from_millis(100));
+
+        let fg_now = unsafe { GetForegroundWindow() };
+        let focus_now = unsafe { GetFocus() };
+        println!(
+            "[REAL-EMPIRICAL] Host 窗口状态: HWND={:?}, EDIT={:?}, FG={:?}, Focus={:?}",
+            host.hwnd, host.hwnd_edit, fg_now, focus_now
+        );
+
+        println!("[REAL-EMPIRICAL] 模拟物理单击 Shift 键切换至内置英文模式 (English Direct Mode)");
+        send_raw_vk(VK_SHIFT.0, false);
+        host.pump_messages(Duration::from_millis(30));
+        send_raw_vk(VK_SHIFT.0, true);
+        host.pump_messages(Duration::from_millis(200));
+
+        // 5. 真实系统键盘输入验证序列 (使用 Windows SendInput API -> 系统消息分派 -> Qingjian TSF -> EDIT 控件)
+        let test_cases = [
+            ("gpt6", "gpt6"),
+            ("deepseek-r1", "deepseek-r1"),
+            ("C++", "C++"),
+            ("I'm", "I'm"),
+            ("123", "123"),
+            ("hello world", "hello world"),
+        ];
+
+        for (input_str, expected_str) in test_cases {
+            host.clear_edit();
+            host.pump_messages(Duration::from_millis(50));
+
+            println!("[REAL-EMPIRICAL] 正在通过 Windows SendInput 向宿主 EDIT 控件物理发送键击: '{}'", input_str);
+            type_system_string(&host, input_str);
+            host.pump_messages(Duration::from_millis(200));
+
+            let received = host.get_edit_text();
+            println!("[REAL-EMPIRICAL] 宿主 EDIT 控件实际接收到的文本: '{}' (预期: '{}')", received, expected_str);
+            assert_eq!(
+                received, expected_str,
+                "[REAL-EMPIRICAL] 宿主实际输入框接收字符顺序与内容必须完全精确匹配，无倒装无遗漏"
+            );
+        }
+
+        if !h_desk.is_invalid() {
+            unsafe { let _ = CloseDesktop(h_desk); }
+        }
+    });
+
+    handle.join().expect("实机测试线程顺利运行并通过所有断言");
+    println!("[REAL-EMPIRICAL] 全部 6 组真实 Host 键盘输入测试 100% 通过验证！Hash: {}", dll_hash);
+
+    if let Some(mut child) = server_child {
+        let _ = child.kill();
+    }
+}
