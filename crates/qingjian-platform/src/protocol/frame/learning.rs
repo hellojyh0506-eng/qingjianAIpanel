@@ -47,7 +47,10 @@ pub enum DrillStage {
     Compared,
 }
 
-pub use qingjian_core::{ComparisonResult, ComparisonStatus, RecallAttempt};
+pub use qingjian_core::{
+    ComparisonResult, ComparisonStatus, ErrorMajorCategory, ErrorSubcategory, FeedbackItem,
+    RecallAttempt,
+};
 
 /// 候选窗口第三层：轻量英语学习卡片帧数据。
 /// 严格绑定当前高亮候选词，在 Learn 模式或主动展开时呈现。

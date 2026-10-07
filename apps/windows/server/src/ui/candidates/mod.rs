@@ -248,35 +248,7 @@ impl CandidateWindowInner {
                                     input,
                                     ref_str,
                                 );
-                                card.drill_attempt = Some(qingjian_render::RecallAttempt {
-                                    prompt: attempt.prompt,
-                                    user_attempt: attempt.user_attempt,
-                                    reference_expression: attempt.reference_expression,
-                                    timestamp: attempt.timestamp,
-                                    comparison: qingjian_render::ComparisonResult {
-                                        status: attempt.comparison.status.map(|s| match s {
-                                            qingjian_core::ComparisonStatus::ExactMatch => {
-                                                qingjian_render::ComparisonStatus::ExactMatch
-                                            }
-                                            qingjian_core::ComparisonStatus::NaturalBetter => {
-                                                qingjian_render::ComparisonStatus::NaturalBetter
-                                            }
-                                            qingjian_core::ComparisonStatus::GrammarIssue => {
-                                                qingjian_render::ComparisonStatus::GrammarIssue
-                                            }
-                                            qingjian_core::ComparisonStatus::Chinglish => {
-                                                qingjian_render::ComparisonStatus::Chinglish
-                                            }
-                                            qingjian_core::ComparisonStatus::EmptyInput => {
-                                                qingjian_render::ComparisonStatus::EmptyInput
-                                            }
-                                        }),
-                                        key_advice: attempt.comparison.key_advice,
-                                        user_formatted: attempt.comparison.user_formatted,
-                                        natural_expression: attempt.comparison.natural_expression,
-                                    },
-                                    error_categories: attempt.error_categories,
-                                });
+                                card.drill_attempt = Some(render_data::convert_attempt(&attempt));
                                 card.drill_stage = Some(qingjian_render::DrillStage::Compared);
                                 card.drill_notice = None;
                             }

@@ -39,7 +39,7 @@ pub use engine::{
     NoTranslator, NoUsageMeter, NoVocabularyTracker, Prediction, PredictionAlternative, PredictionKind, PredictionPolicy,
     PredictionRequest, Predictor, QUESTION_PREFIX, Query, RESCORE_CONTEXT_CHARS, RawPreedit,
     RecallAttempt, RecallItem, RecallOutcome, RecallTracker, NoRecallTracker,
-    ComparisonResult, ComparisonStatus,
+    ComparisonResult, ComparisonStatus, ErrorMajorCategory, ErrorSubcategory, FeedbackItem,
     SurroundingText, Timings, Translator, Usage, UsageMeter, UsageSummary, VocabularySummary,
     VocabularyTracker, book_scale, is_valid_aux_code_key,
 };

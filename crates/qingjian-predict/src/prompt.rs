@@ -65,17 +65,51 @@ text（待翻译的原文）、target_language（目标语言代码：zh 中文�
 输出 JSON 格式：\
 {\"sentence\": \"最佳口语译文\", \"alternatives\": [{\"text\": \"…\", \"tag\": \"Casual/Natural/Professional/Formal/Idiomatic\", \"meaning\": \"…\", \"tone\": \"…\", \"scenario\": \"…\", \"commonality\": \"…\", \"why_natural\": \"…\"}]}";
 
-/// 主动回忆对比的系统提示：为口语学习者提供对比与反馈。
+/// 主动回忆对比的系统提示：为口语学习者提供对比与结构化错误分类 (Error Taxonomy) 反馈。
 pub const COMPARE_SYSTEM_PROMPT: &str = "\
-你是一个专为英语口语学习者提供对比与反馈的 AI 助教。你会收到一段 JSON：\
-prompt（中文原文/提示）、user_attempt（用户的英文表达尝试）、reference（更地道的母语口语参考表达）。\
-你的任务是评估用户的表达，并提供专业、鼓励、精炼的反馈：\
-1. status: \"ExactMatch\"（表达地道准确）/ \"NaturalBetter\"（能理解但参考表达更自然地道）/ \"GrammarIssue\"（有明显语法时态搭配错误）/ \"Chinglish\"（中式直译）；\
-2. key_advice: 简短的一两句话解释原因（例如指出为何参考词汇如 swamped 比用户的 very busy 更地道生动，或指出具体语法搭配问题）；\
-3. error_categories: 错误或提升维度列表，如 [\"Collocation\"], [\"Grammar\"], [\"Chinglish\"], [\"Naturalness\"] 等（完全正确时为空列表）；\
-4. natural_expression: 最推荐的地道美式口语表达。\
-输出 JSON 格式：\
-{\"status\": \"…\", \"key_advice\": \"…\", \"error_categories\": [\"…\"], \"natural_expression\": \"…\"}";
+你是一个专为英语口语进阶者（帮助 B2 跃升至 C1）量身打造的美式口语私教与评测引擎。你会收到一段 JSON：\
+prompt（中文原文/提示）、user_attempt（用户的英文尝试）、reference（地道美式参考表达）。\
+你的任务是深入分析用户的表达，并基于统一 Error Taxonomy 输出结构化反馈：
+
+统一错误分类体系：
+1. Grammar（语法）：article（冠词）、tense（时态语态）、preposition（介词）、word order（词序）、agreement（主谓一致）、countability（单复数/不可数）
+2. Vocabulary（用词）：wrong word（选词不当）、literal translation（字面直译）、vocabulary precision（词汇精度）
+3. Collocation（搭配）：unnatural collocation（搭配生硬）、incorrect verb-noun pairing（动宾不当）、adjective-noun pairing（修饰不当）、fixed expression（固定用法差异）
+4. Naturalness（自然度）：awkward phrasing（表达别扭）、redundancy（冗余）、unnatural sentence rhythm（节奏生硬）、Chinglish（中式直译）
+5. Phrasal / Idiomatic（短语习语）：missing phrasal verb（缺少短语动词）、wrong idiom（习语误用）、unnatural literal equivalent（生硬对等词）
+6. Pragmatics（语用语域）：too direct（过于直接）、too formal（偏正式书面）、too casual（过于随意）、wrong social tone（语气不合社交场景）
+
+核心评测与纠错原则（绝对硬约束）：
+1. 重点放在 B2 → C1 突破瓶颈：naturalness, collocation, lexical precision, phrasal verbs, pragmatics。
+2. 优先告诉用户「最值得改的一项」，最多输出 1~3 条核心反馈（feedback_items），绝对不要为了显得专业而罗列十几个琐碎问题。
+3. 严格防范 AI 胡乱纠错（Anti-Pedantry）：
+   - 明确正确、符合母语者习惯的表达严禁强行挑刺改写！
+   - 合理的美式口语缩略（如 I've been, gonna, wanna, kinda, gotta, I'm good, no worries）绝不得判错！
+   - 纯粹的地域差异（英美差异）或风格选择不得当作语法错误；
+   - 用户的词句没有语法硬伤时，明确说明表达本身没错（如“busy 没有错，但 swamped 更口语、更符合忙得不可开交的语义”）。
+4. status 判定：
+   - ExactMatch: 用户的表达准确地道，完全符合母语者习惯；
+   - NaturalBetter: 语法表达本身基本正确，但参考表达显著更地道更精准；
+   - GrammarIssue: 存在客观语法、时态、介词或搭配错误；
+   - Chinglish: 存在典型中式直译思维；
+   - EmptyInput: 用户未输入内容。
+
+输出格式（严格单一 JSON，无额外 Markdown 或解释）：
+{
+  \"status\": \"ExactMatch/NaturalBetter/GrammarIssue/Chinglish\",
+  \"primary_category\": \"Grammar/Vocabulary/Collocation/Naturalness/PhrasalIdiomatic/Pragmatics\",
+  \"key_advice\": \"简短核心建议，指出最关键的提升点\",
+  \"natural_expression\": \"推荐的地道表达\",
+  \"feedback_items\": [
+    {
+      \"major_category\": \"Grammar/Vocabulary/Collocation/Naturalness/PhrasalIdiomatic/Pragmatics\",
+      \"subcategory\": \"具体子类型，如 Tense, UnnaturalCollocation, AwkwardPhrasing, Chinglish\",
+      \"label\": \"中文短标签，如 时态冲突、搭配生硬、地道升级\",
+      \"explanation\": \"简明扼要的原因说明\",
+      \"suggestion\": \"具体改进词句\"
+    }
+  ]
+}";
 
 pub fn system_prompt(request: &PredictionRequest) -> &'static str {
     match request.kind {
@@ -215,6 +249,9 @@ struct RawReply {
     /// 主动回忆对比模式：评估状态
     status: Option<String>,
 
+    /// 主动回忆对比模式：核心主类别
+    primary_category: Option<String>,
+
     /// 主动回忆对比模式：核心建议
     key_advice: Option<String>,
 
@@ -223,6 +260,19 @@ struct RawReply {
 
     /// 主动回忆对比模式：推荐的自然口语表达
     natural_expression: Option<String>,
+
+    /// 主动回忆对比模式：结构化建议列表
+    feedback_items: Vec<RawFeedbackItem>,
+}
+
+#[derive(Deserialize, Default, Clone)]
+#[serde(default)]
+struct RawFeedbackItem {
+    major_category: String,
+    subcategory: String,
+    label: String,
+    explanation: String,
+    suggestion: Option<String>,
 }
 
 #[derive(Deserialize, Default, Clone)]
@@ -266,22 +316,38 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| request.reference.clone());
         let status_str = raw.status.unwrap_or_else(|| "NaturalBetter".to_string());
-        let cat_str = if raw.error_categories.is_empty() {
-            "Collocation".to_string()
-        } else {
-            raw.error_categories.join(", ")
-        };
+        let primary_cat = raw.primary_category.unwrap_or_else(|| {
+            if raw.error_categories.is_empty() {
+                "Naturalness".to_string()
+            } else {
+                raw.error_categories[0].clone()
+            }
+        });
 
         let mut alternatives = Vec::new();
+        // 主表达项
         alternatives.push(PredictionAlternative {
-            text: nat_expr,
+            text: nat_expr.clone(),
             tag: status_str,
             meaning: request.text.clone(),
-            tone: cat_str,
+            tone: primary_cat,
             scenario: String::new(),
             commonality: String::new(),
             why_natural: key_advice.clone().unwrap_or_default(),
         });
+
+        // 附加结构化建议细项 (最多 3 条)
+        for item in raw.feedback_items.into_iter().take(3) {
+            alternatives.push(PredictionAlternative {
+                text: nat_expr.clone(),
+                tag: item.major_category,
+                meaning: item.subcategory,
+                tone: item.label,
+                scenario: String::new(),
+                commonality: item.suggestion.unwrap_or_default(),
+                why_natural: item.explanation,
+            });
+        }
 
         return Reply {
             words: Vec::new(),

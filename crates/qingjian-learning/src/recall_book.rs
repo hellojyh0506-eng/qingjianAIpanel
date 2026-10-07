@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use jiff::civil::Date;
 use qingjian_core::storage::{read_text_lossy, write_atomic_str};
 use qingjian_core::{
-    ComparisonResult, ComparisonStatus, Language, RecallAttempt, RecallItem, RecallOutcome,
-    RecallTracker,
+    ComparisonResult, ComparisonStatus, ErrorMajorCategory, ErrorSubcategory, FeedbackItem,
+    Language, RecallAttempt, RecallItem, RecallOutcome, RecallTracker,
 };
 
 use crate::error::LearningError;
@@ -371,12 +371,14 @@ impl RecallBook {
                     key_advice: "请输入英文尝试进行对比".to_string(),
                     user_formatted: String::new(),
                     natural_expression: reference.to_string(),
+                    primary_category: None,
+                    feedback_items: Vec::new(),
                 },
                 error_categories: Vec::new(),
             };
         }
 
-        // 1. Exact match / colloquial cluster match
+        // 1. Exact match / colloquial cluster match (Zero Error, Anti-Overcorrection)
         if Self::evaluate_with_prompt(trimmed, reference, Some(prompt)) {
             return RecallAttempt {
                 prompt: prompt.to_string(),
@@ -388,48 +390,55 @@ impl RecallBook {
                     key_advice: "表达非常地道准确，完全符合母语者习惯！".to_string(),
                     user_formatted: trimmed.to_string(),
                     natural_expression: reference.to_string(),
+                    primary_category: None,
+                    feedback_items: Vec::new(),
                 },
                 error_categories: Vec::new(),
             };
         }
 
-        // 2. Grammar error detection
-        if let Some(advice) = detect_grammar_error(trimmed) {
-            return RecallAttempt {
-                prompt: prompt.to_string(),
-                user_attempt: trimmed.to_string(),
-                reference_expression: reference.to_string(),
-                timestamp,
-                comparison: ComparisonResult {
-                    status: Some(ComparisonStatus::GrammarIssue),
-                    key_advice: advice,
-                    user_formatted: trimmed.to_string(),
-                    natural_expression: reference.to_string(),
-                },
-                error_categories: vec!["grammar".to_string()],
-            };
-        }
+        let feedback_items = analyze_feedback_items(trimmed, reference);
+        let primary_category = feedback_items.first().map(|f| f.major_category);
 
-        // 3. Chinglish detection
-        if let Some(advice) = detect_chinglish(trimmed) {
-            return RecallAttempt {
-                prompt: prompt.to_string(),
-                user_attempt: trimmed.to_string(),
-                reference_expression: reference.to_string(),
-                timestamp,
-                comparison: ComparisonResult {
-                    status: Some(ComparisonStatus::Chinglish),
-                    key_advice: advice,
-                    user_formatted: trimmed.to_string(),
-                    natural_expression: reference.to_string(),
-                },
-                error_categories: vec!["chinglish".to_string()],
-            };
-        }
+        let (status, key_advice) = if let Some(first) = feedback_items.first() {
+            let advice = format!("{}: {}", first.label, first.explanation);
+            match first.major_category {
+                ErrorMajorCategory::Grammar => (ComparisonStatus::GrammarIssue, advice),
+                ErrorMajorCategory::Naturalness if first.subcategory == ErrorSubcategory::Chinglish => {
+                    (ComparisonStatus::Chinglish, advice)
+                }
+                ErrorMajorCategory::Collocation if first.subcategory == ErrorSubcategory::UnnaturalCollocation => {
+                    (ComparisonStatus::GrammarIssue, advice)
+                }
+                _ => (ComparisonStatus::NaturalBetter, advice),
+            }
+        } else {
+            (
+                ComparisonStatus::NaturalBetter,
+                "语义基本正确，但母语者在日常口语中更倾向于使用该地道表达。".to_string(),
+            )
+        };
 
-        // 4. Meaning correct but less natural
-        let advice = generate_natural_advice(trimmed, reference)
-            .unwrap_or_else(|| "语义基本正确，但母语者在日常口语中更倾向于使用该地道表达。".to_string());
+        let mut error_categories = Vec::new();
+        for item in &feedback_items {
+            let cat_str = format!("{:?}", item.major_category).to_ascii_lowercase();
+            if !error_categories.contains(&cat_str) {
+                error_categories.push(cat_str);
+            }
+            let sub_str = format!("{:?}", item.subcategory).to_ascii_lowercase();
+            if !error_categories.contains(&sub_str) {
+                error_categories.push(sub_str);
+            }
+        }
+        if status == ComparisonStatus::GrammarIssue && !error_categories.contains(&"grammar".to_string()) {
+            error_categories.push("grammar".to_string());
+        }
+        if status == ComparisonStatus::Chinglish && !error_categories.contains(&"chinglish".to_string()) {
+            error_categories.push("chinglish".to_string());
+        }
+        if error_categories.is_empty() {
+            error_categories.push("naturalness".to_string());
+        }
 
         RecallAttempt {
             prompt: prompt.to_string(),
@@ -437,12 +446,14 @@ impl RecallBook {
             reference_expression: reference.to_string(),
             timestamp,
             comparison: ComparisonResult {
-                status: Some(ComparisonStatus::NaturalBetter),
-                key_advice: advice,
+                status: Some(status),
+                key_advice,
                 user_formatted: trimmed.to_string(),
                 natural_expression: reference.to_string(),
+                primary_category,
+                feedback_items,
             },
-            error_categories: vec!["naturalness".to_string()],
+            error_categories,
         }
     }
 
@@ -575,6 +586,8 @@ fn canonicalize_contractions(s: &str) -> String {
             "we'd" => { result.push("we"); result.push("would"); }
             "gonna" => { result.push("going"); result.push("to"); }
             "gotta" => { result.push("got"); result.push("to"); }
+            "wanna" => { result.push("want"); result.push("to"); }
+            "kinda" => { result.push("kind"); result.push("of"); }
             other => result.push(other),
         }
     }
@@ -703,102 +716,239 @@ fn matches_intent_cluster(input: &str, prompt: &str) -> bool {
     false
 }
 
-pub fn detect_grammar_error(input: &str) -> Option<String> {
-    let lower = input.to_ascii_lowercase();
-
-    // 1. "very like"
-    if lower.contains("very like") {
-        return Some("B2语法建议：'very like' 不符合英语搭配习惯，修饰动词应用 'really like' 或在句末用 'like it very much'。".to_string());
-    }
-
-    // 2. "discuss about"
-    if lower.contains("discuss about")
-        || lower.contains("discusses about")
-        || lower.contains("discussed about")
-        || lower.contains("discussing about")
-    {
-        return Some("动词搭配冗余：'discuss' 为及物动词，应直接接宾语，不加介词 'about'。".to_string());
-    }
-
-    // 3. "depend of"
-    if lower.contains("depend of")
-        || lower.contains("depends of")
-        || lower.contains("depended of")
-    {
-        return Some("介词错误：应为 'depend on / upon' 而非 'depend of'。".to_string());
-    }
-
-    // 4. "according to me"
-    if lower.contains("according to me") {
-        return Some("语用视角建议：'according to' 用于引述他人或第三方资料，表达个人看法请用 'in my opinion' 或 'from my perspective'。".to_string());
-    }
-
-    // 5. 时态冲突 (yesterday with present tense)
-    if lower.contains("yesterday") {
-        if lower.contains("i'm")
-            || lower.contains("i am")
-            || lower.contains(" is ")
-            || lower.contains(" are ")
-            || lower.contains(" am ")
-        {
-            return Some("时态冲突：时间状语 'yesterday' 表示过去，谓语动词应使用过去时（如 was / were）。".to_string());
-        }
-    }
-
-    // 6. "make a photo"
-    if lower.contains("make a photo")
-        || lower.contains("make a picture")
-        || lower.contains("make photos")
-    {
-        return Some("动词搭配错误：拍照应使用 'take a picture/photo'，而不是 'make'。".to_string());
-    }
-
-    None
-}
-
-pub fn detect_chinglish(input: &str) -> Option<String> {
-    let lower = input.to_ascii_lowercase();
-
-    // 1. "give you some color to see see"
-    if lower.contains("color to see") || lower.contains("give you some color") {
-        return Some("字面直译中式表达：'give you some color to see see' 属于字面直译，地道英文可使用 'teach you a lesson' 或 'show you what I'm made of'。".to_string());
-    }
-
-    // 2. "head is burning" / "head burning"
-    if lower.contains("head is burning") || lower.contains("head burning") {
-        return Some("中式直译：形容忙得焦头烂额不要字面直译 'head is burning'，地道美式口语常用 'swamped'、'slammed' 或 'snowed under'。".to_string());
-    }
-
-    // 3. "busy like dog" / "busy like a dog"
-    if lower.contains("busy like dog") || lower.contains("busy like a dog") {
-        return Some("中式直译：'忙成狗'字面直译为 'busy like dog' 不符合习惯，美式口语推荐 'I've been swamped' 或 'working around the clock'。".to_string());
-    }
-
-    // 4. "people mountain people sea"
-    if lower.contains("people mountain") {
-        return Some("字面直译中式表达：'people mountain people sea' 为直译，地道表达应为 'packed'、'jam-packed' 或 'extremely crowded'。".to_string());
-    }
-
-    None
-}
-
-pub fn generate_natural_advice(input: &str, reference: &str) -> Option<String> {
+/// 依据统一 Error Taxonomy 结构化评测用户的英文表达
+pub fn analyze_feedback_items(input: &str, reference: &str) -> Vec<FeedbackItem> {
+    let mut items = Vec::new();
     let lower_in = input.to_ascii_lowercase();
     let lower_ref = reference.to_ascii_lowercase();
 
+    // ==========================================
+    // 1. Grammar (时态、介词、冠词、语序、主谓一致、单复数)
+    // ==========================================
+    // 1.1 Tense: yesterday with present tense
+    if lower_in.contains("yesterday") {
+        if lower_in.contains("i'm")
+            || lower_in.contains("i am")
+            || lower_in.contains(" is ")
+            || lower_in.contains(" are ")
+            || lower_in.contains(" am ")
+        {
+            items.push(FeedbackItem {
+                major_category: ErrorMajorCategory::Grammar,
+                subcategory: ErrorSubcategory::Tense,
+                label: "时态冲突".to_string(),
+                explanation: "时间状语 'yesterday' 表示过去，谓语动词应使用过去时（如 was / were）。".to_string(),
+                suggestion: Some("was / were".to_string()),
+            });
+        }
+    }
+    // 1.2 Preposition: "depend of"
+    if lower_in.contains("depend of")
+        || lower_in.contains("depends of")
+        || lower_in.contains("depended of")
+    {
+        items.push(FeedbackItem {
+            major_category: ErrorMajorCategory::Grammar,
+            subcategory: ErrorSubcategory::Preposition,
+            label: "介词错误".to_string(),
+            explanation: "应为 'depend on / upon' 而非 'depend of'。".to_string(),
+            suggestion: Some("depend on".to_string()),
+        });
+    }
+    // 1.3 Countability: "an advice" / "advices" / "informations"
+    if lower_in.contains("an advice") || lower_in.contains("advices") {
+        items.push(FeedbackItem {
+            major_category: ErrorMajorCategory::Grammar,
+            subcategory: ErrorSubcategory::Countability,
+            label: "不可数名词误用".to_string(),
+            explanation: "'advice' 为不可数名词，不能加不定冠词 'an' 或复数 's'，可用 'a piece of advice' 或 'some advice'。".to_string(),
+            suggestion: Some("some advice / a piece of advice".to_string()),
+        });
+    }
+
+    // ==========================================
+    // 2. Collocation (固定搭配、动宾搭配、修饰搭配)
+    // ==========================================
+    // 2.1 Unnatural collocation: "very like"
+    if lower_in.contains("very like") {
+        items.push(FeedbackItem {
+            major_category: ErrorMajorCategory::Collocation,
+            subcategory: ErrorSubcategory::UnnaturalCollocation,
+            label: "搭配生硬".to_string(),
+            explanation: "'very like' 不符合英语搭配习惯，修饰动词应用 'really like' 或在句末用 'like it very much'。".to_string(),
+            suggestion: Some("really like".to_string()),
+        });
+    }
+    // 2.2 Fixed expression / redundant prep: "discuss about"
+    if lower_in.contains("discuss about")
+        || lower_in.contains("discusses about")
+        || lower_in.contains("discussed about")
+        || lower_in.contains("discussing about")
+    {
+        items.push(FeedbackItem {
+            major_category: ErrorMajorCategory::Collocation,
+            subcategory: ErrorSubcategory::FixedExpression,
+            label: "动词搭配冗余".to_string(),
+            explanation: "'discuss' 为及物动词，应直接接宾语，不加介词 'about'。".to_string(),
+            suggestion: Some("discuss + 宾语".to_string()),
+        });
+    }
+    // 2.3 Verb-noun pairing: "make a photo"
+    if lower_in.contains("make a photo")
+        || lower_in.contains("make a picture")
+        || lower_in.contains("make photos")
+    {
+        items.push(FeedbackItem {
+            major_category: ErrorMajorCategory::Collocation,
+            subcategory: ErrorSubcategory::IncorrectVerbNounPairing,
+            label: "动宾搭配不当".to_string(),
+            explanation: "拍照应使用 'take a picture/photo'，而不是 'make'。".to_string(),
+            suggestion: Some("take a picture / take a photo".to_string()),
+        });
+    }
+
+    // ==========================================
+    // 3. Naturalness (中式直译 Chinglish、表述别扭、冗余)
+    // ==========================================
+    // 3.1 Chinglish: "give you some color to see see"
+    if lower_in.contains("color to see") || lower_in.contains("give you some color") {
+        items.push(FeedbackItem {
+            major_category: ErrorMajorCategory::Naturalness,
+            subcategory: ErrorSubcategory::Chinglish,
+            label: "字面直译中式表达".to_string(),
+            explanation: "'give you some color to see see' 属于字面直译，地道英文可使用 'teach you a lesson' 或 'show you what I'm made of'。".to_string(),
+            suggestion: Some("teach you a lesson".to_string()),
+        });
+    }
+    // 3.2 Chinglish: "head is burning"
+    if lower_in.contains("head is burning") || lower_in.contains("head burning") {
+        items.push(FeedbackItem {
+            major_category: ErrorMajorCategory::Naturalness,
+            subcategory: ErrorSubcategory::Chinglish,
+            label: "中式思维直译".to_string(),
+            explanation: "形容忙得焦头烂额不要字面直译 'head is burning'，地道美式口语常用 'swamped'、'slammed' 或 'snowed under'。".to_string(),
+            suggestion: Some("swamped / slammed".to_string()),
+        });
+    }
+    // 3.3 Chinglish: "busy like dog"
+    if lower_in.contains("busy like dog") || lower_in.contains("busy like a dog") {
+        items.push(FeedbackItem {
+            major_category: ErrorMajorCategory::Naturalness,
+            subcategory: ErrorSubcategory::Chinglish,
+            label: "中式思维直译".to_string(),
+            explanation: "'忙成狗'字面直译为 'busy like dog' 不符合习惯，美式口语推荐 'I've been swamped' 或 'working around the clock'。".to_string(),
+            suggestion: Some("swamped".to_string()),
+        });
+    }
+    // 3.4 Chinglish: "people mountain people sea"
+    if lower_in.contains("people mountain") {
+        items.push(FeedbackItem {
+            major_category: ErrorMajorCategory::Naturalness,
+            subcategory: ErrorSubcategory::Chinglish,
+            label: "字面直译中式表达".to_string(),
+            explanation: "'people mountain people sea' 为直译，地道表达应为 'packed'、'jam-packed' 或 'extremely crowded'。".to_string(),
+            suggestion: Some("jam-packed / packed".to_string()),
+        });
+    }
+    // 3.5 Awkward phrasing vs natural upgrade (swamped vs very busy)
     if lower_ref.contains("swamped") && (lower_in.contains("busy") || lower_in.contains("very busy")) {
-        return Some("表达进阶：'swamped' 比 'very busy' 更符合这种“忙到被事情淹没”的自然口语表达。".to_string());
+        items.push(FeedbackItem {
+            major_category: ErrorMajorCategory::Naturalness,
+            subcategory: ErrorSubcategory::AwkwardPhrasing,
+            label: "地道表达升级".to_string(),
+            explanation: "busy 没有错，但 swamped 更口语、更符合“忙得不可开交”的语义。".to_string(),
+            suggestion: Some("swamped".to_string()),
+        });
     }
 
+    // ==========================================
+    // 4. Vocabulary (用词精度、选词不当)
+    // ==========================================
+    // 4.1 Precision: "regular" vs "often customer"
     if lower_ref.contains("regular") && (lower_in.contains("often") || lower_in.contains("customer")) {
-        return Some("表达进阶：'regular' 是地道的'常客'名词表达，比说明性词汇更简练地道。".to_string());
+        items.push(FeedbackItem {
+            major_category: ErrorMajorCategory::Vocabulary,
+            subcategory: ErrorSubcategory::VocabularyPrecision,
+            label: "用词精度提升".to_string(),
+            explanation: "'regular' 是地道的'常客'名词表达，比说明性短语更简练地道。".to_string(),
+            suggestion: Some("regular".to_string()),
+        });
+    }
+    // 4.2 Wrong word: "look the tv"
+    if lower_in.contains("look the tv") || lower_in.contains("look tv") || lower_in.contains("look television") {
+        items.push(FeedbackItem {
+            major_category: ErrorMajorCategory::Vocabulary,
+            subcategory: ErrorSubcategory::WrongWord,
+            label: "动词选词不当".to_string(),
+            explanation: "看电视习惯使用动词 'watch' 而不是 'look'。".to_string(),
+            suggestion: Some("watch TV".to_string()),
+        });
     }
 
+    // ==========================================
+    // 5. Phrasal / Idiomatic (短语动词、习语对等)
+    // ==========================================
+    if lower_ref.contains("call off") && lower_in.contains("cancel") {
+        items.push(FeedbackItem {
+            major_category: ErrorMajorCategory::PhrasalIdiomatic,
+            subcategory: ErrorSubcategory::MissingPhrasalVerb,
+            label: "短语动词升级".to_string(),
+            explanation: "在日常交流与会议讨论中，使用短语动词 'call off' 往往比正式书面词 'cancel' 更自然流畅。".to_string(),
+            suggestion: Some("call off".to_string()),
+        });
+    }
+
+    // ==========================================
+    // 6. Pragmatics (语用视角、语境基调、礼貌程度)
+    // ==========================================
+    // 6.1 "according to me" -> personal perspective
+    if lower_in.contains("according to me") {
+        items.push(FeedbackItem {
+            major_category: ErrorMajorCategory::Pragmatics,
+            subcategory: ErrorSubcategory::WrongSocialTone,
+            label: "语用视角建议".to_string(),
+            explanation: "'according to' 用于引述他人或第三方资料，表达个人看法请用 'in my opinion' 或 'from my perspective'。".to_string(),
+            suggestion: Some("in my opinion / from my perspective".to_string()),
+        });
+    }
+    // 6.2 Too formal: "we're good" vs "it is done"
     if lower_ref.contains("we're good") && lower_in.contains("it is done") {
-        return Some("口语建议：母语者日常确认事情办妥时，常使用轻快自然的 'We're good'。".to_string());
+        items.push(FeedbackItem {
+            major_category: ErrorMajorCategory::Pragmatics,
+            subcategory: ErrorSubcategory::TooFormal,
+            label: "口语社交语境".to_string(),
+            explanation: "母语者日常确认事情办妥时，常使用轻快自然的 'We're good'。".to_string(),
+            suggestion: Some("We're good".to_string()),
+        });
     }
 
-    None
+    // 严控数量：最多保留 1~3 条最核心建议，不搞信息轰炸
+    items.truncate(3);
+    items
+}
+
+#[allow(dead_code)]
+pub fn detect_grammar_error(input: &str) -> Option<String> {
+    analyze_feedback_items(input, "")
+        .into_iter()
+        .find(|item| item.major_category == ErrorMajorCategory::Grammar || item.major_category == ErrorMajorCategory::Collocation)
+        .map(|item| format!("{}: {}", item.label, item.explanation))
+}
+
+#[allow(dead_code)]
+pub fn detect_chinglish(input: &str) -> Option<String> {
+    analyze_feedback_items(input, "")
+        .into_iter()
+        .find(|item| item.major_category == ErrorMajorCategory::Naturalness && item.subcategory == ErrorSubcategory::Chinglish)
+        .map(|item| format!("{}: {}", item.label, item.explanation))
+}
+
+#[allow(dead_code)]
+pub fn generate_natural_advice(input: &str, reference: &str) -> Option<String> {
+    analyze_feedback_items(input, reference)
+        .into_iter()
+        .find(|item| item.major_category == ErrorMajorCategory::Naturalness || item.major_category == ErrorMajorCategory::Vocabulary || item.major_category == ErrorMajorCategory::PhrasalIdiomatic || item.major_category == ErrorMajorCategory::Pragmatics)
+        .map(|item| format!("{}: {}", item.label, item.explanation))
 }
 
 fn normalize(s: &str) -> String {

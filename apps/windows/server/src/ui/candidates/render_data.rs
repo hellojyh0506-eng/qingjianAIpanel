@@ -167,7 +167,7 @@ fn convert_expr(
     }
 }
 
-fn convert_attempt(
+pub(crate) fn convert_attempt(
     attempt: &qingjian_platform::protocol::RecallAttempt,
 ) -> qingjian_render::RecallAttempt {
     qingjian_render::RecallAttempt {
@@ -196,8 +196,128 @@ fn convert_attempt(
             key_advice: attempt.comparison.key_advice.clone(),
             user_formatted: attempt.comparison.user_formatted.clone(),
             natural_expression: attempt.comparison.natural_expression.clone(),
+            primary_category: attempt.comparison.primary_category.map(convert_major_category),
+            feedback_items: attempt
+                .comparison
+                .feedback_items
+                .iter()
+                .map(|item| qingjian_render::FeedbackItem {
+                    major_category: convert_major_category(item.major_category),
+                    subcategory: convert_subcategory(&item.subcategory),
+                    label: item.label.clone(),
+                    explanation: item.explanation.clone(),
+                    suggestion: item.suggestion.clone(),
+                })
+                .collect(),
         },
         error_categories: attempt.error_categories.clone(),
+    }
+}
+
+fn convert_major_category(
+    cat: qingjian_platform::protocol::ErrorMajorCategory,
+) -> qingjian_render::ErrorMajorCategory {
+    match cat {
+        qingjian_platform::protocol::ErrorMajorCategory::Grammar => {
+            qingjian_render::ErrorMajorCategory::Grammar
+        }
+        qingjian_platform::protocol::ErrorMajorCategory::Vocabulary => {
+            qingjian_render::ErrorMajorCategory::Vocabulary
+        }
+        qingjian_platform::protocol::ErrorMajorCategory::Collocation => {
+            qingjian_render::ErrorMajorCategory::Collocation
+        }
+        qingjian_platform::protocol::ErrorMajorCategory::Naturalness => {
+            qingjian_render::ErrorMajorCategory::Naturalness
+        }
+        qingjian_platform::protocol::ErrorMajorCategory::PhrasalIdiomatic => {
+            qingjian_render::ErrorMajorCategory::PhrasalIdiomatic
+        }
+        qingjian_platform::protocol::ErrorMajorCategory::Pragmatics => {
+            qingjian_render::ErrorMajorCategory::Pragmatics
+        }
+    }
+}
+
+fn convert_subcategory(
+    sub: &qingjian_platform::protocol::ErrorSubcategory,
+) -> qingjian_render::ErrorSubcategory {
+    match sub {
+        qingjian_platform::protocol::ErrorSubcategory::Article => {
+            qingjian_render::ErrorSubcategory::Article
+        }
+        qingjian_platform::protocol::ErrorSubcategory::Tense => {
+            qingjian_render::ErrorSubcategory::Tense
+        }
+        qingjian_platform::protocol::ErrorSubcategory::Preposition => {
+            qingjian_render::ErrorSubcategory::Preposition
+        }
+        qingjian_platform::protocol::ErrorSubcategory::WordOrder => {
+            qingjian_render::ErrorSubcategory::WordOrder
+        }
+        qingjian_platform::protocol::ErrorSubcategory::Agreement => {
+            qingjian_render::ErrorSubcategory::Agreement
+        }
+        qingjian_platform::protocol::ErrorSubcategory::Countability => {
+            qingjian_render::ErrorSubcategory::Countability
+        }
+        qingjian_platform::protocol::ErrorSubcategory::WrongWord => {
+            qingjian_render::ErrorSubcategory::WrongWord
+        }
+        qingjian_platform::protocol::ErrorSubcategory::LiteralTranslation => {
+            qingjian_render::ErrorSubcategory::LiteralTranslation
+        }
+        qingjian_platform::protocol::ErrorSubcategory::VocabularyPrecision => {
+            qingjian_render::ErrorSubcategory::VocabularyPrecision
+        }
+        qingjian_platform::protocol::ErrorSubcategory::UnnaturalCollocation => {
+            qingjian_render::ErrorSubcategory::UnnaturalCollocation
+        }
+        qingjian_platform::protocol::ErrorSubcategory::IncorrectVerbNounPairing => {
+            qingjian_render::ErrorSubcategory::IncorrectVerbNounPairing
+        }
+        qingjian_platform::protocol::ErrorSubcategory::AdjectiveNounPairing => {
+            qingjian_render::ErrorSubcategory::AdjectiveNounPairing
+        }
+        qingjian_platform::protocol::ErrorSubcategory::FixedExpression => {
+            qingjian_render::ErrorSubcategory::FixedExpression
+        }
+        qingjian_platform::protocol::ErrorSubcategory::AwkwardPhrasing => {
+            qingjian_render::ErrorSubcategory::AwkwardPhrasing
+        }
+        qingjian_platform::protocol::ErrorSubcategory::Redundancy => {
+            qingjian_render::ErrorSubcategory::Redundancy
+        }
+        qingjian_platform::protocol::ErrorSubcategory::UnnaturalSentenceRhythm => {
+            qingjian_render::ErrorSubcategory::UnnaturalSentenceRhythm
+        }
+        qingjian_platform::protocol::ErrorSubcategory::Chinglish => {
+            qingjian_render::ErrorSubcategory::Chinglish
+        }
+        qingjian_platform::protocol::ErrorSubcategory::MissingPhrasalVerb => {
+            qingjian_render::ErrorSubcategory::MissingPhrasalVerb
+        }
+        qingjian_platform::protocol::ErrorSubcategory::WrongIdiom => {
+            qingjian_render::ErrorSubcategory::WrongIdiom
+        }
+        qingjian_platform::protocol::ErrorSubcategory::UnnaturalLiteralEquivalent => {
+            qingjian_render::ErrorSubcategory::UnnaturalLiteralEquivalent
+        }
+        qingjian_platform::protocol::ErrorSubcategory::TooDirect => {
+            qingjian_render::ErrorSubcategory::TooDirect
+        }
+        qingjian_platform::protocol::ErrorSubcategory::TooFormal => {
+            qingjian_render::ErrorSubcategory::TooFormal
+        }
+        qingjian_platform::protocol::ErrorSubcategory::TooCasual => {
+            qingjian_render::ErrorSubcategory::TooCasual
+        }
+        qingjian_platform::protocol::ErrorSubcategory::WrongSocialTone => {
+            qingjian_render::ErrorSubcategory::WrongSocialTone
+        }
+        qingjian_platform::protocol::ErrorSubcategory::Other(s) => {
+            qingjian_render::ErrorSubcategory::Other(s.clone())
+        }
     }
 }
 

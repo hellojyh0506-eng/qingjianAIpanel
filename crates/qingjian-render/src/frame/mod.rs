@@ -6,8 +6,8 @@ mod row;
 mod tone;
 
 pub use learning::{
-    ComparisonResult, ComparisonStatus, DrillStage, LearningCard, LearningExpression,
-    LearningStatus, RecallAttempt,
+    ComparisonResult, ComparisonStatus, DrillStage, ErrorMajorCategory, ErrorSubcategory,
+    FeedbackItem, LearningCard, LearningExpression, LearningStatus, RecallAttempt,
 };
 pub use preedit::{Preedit, PreeditSegment, PreeditStyle};
 pub use row::Row;

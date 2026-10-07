@@ -4,8 +4,8 @@ pub mod learning;
 pub mod preedit;
 
 pub use learning::{
-    ComparisonResult, ComparisonStatus, DrillStage, LearningCardFrame, LearningExpression,
-    LearningState, RecallAttempt,
+    ComparisonResult, ComparisonStatus, DrillStage, ErrorMajorCategory, ErrorSubcategory,
+    FeedbackItem, LearningCardFrame, LearningExpression, LearningState, RecallAttempt,
 };
 pub use preedit::{PreeditKind, PreeditSegment};
 

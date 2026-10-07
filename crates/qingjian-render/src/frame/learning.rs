@@ -30,12 +30,75 @@ pub enum ComparisonStatus {
     EmptyInput,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorMajorCategory {
+    Grammar,
+    Vocabulary,
+    Collocation,
+    Naturalness,
+    PhrasalIdiomatic,
+    Pragmatics,
+}
+
+impl ErrorMajorCategory {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Grammar => "语法",
+            Self::Vocabulary => "用词",
+            Self::Collocation => "搭配",
+            Self::Naturalness => "自然度",
+            Self::PhrasalIdiomatic => "短语习语",
+            Self::Pragmatics => "语用语域",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErrorSubcategory {
+    Article,
+    Tense,
+    Preposition,
+    WordOrder,
+    Agreement,
+    Countability,
+    WrongWord,
+    LiteralTranslation,
+    VocabularyPrecision,
+    UnnaturalCollocation,
+    IncorrectVerbNounPairing,
+    AdjectiveNounPairing,
+    FixedExpression,
+    AwkwardPhrasing,
+    Redundancy,
+    UnnaturalSentenceRhythm,
+    Chinglish,
+    MissingPhrasalVerb,
+    WrongIdiom,
+    UnnaturalLiteralEquivalent,
+    TooDirect,
+    TooFormal,
+    TooCasual,
+    WrongSocialTone,
+    Other(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeedbackItem {
+    pub major_category: ErrorMajorCategory,
+    pub subcategory: ErrorSubcategory,
+    pub label: String,
+    pub explanation: String,
+    pub suggestion: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ComparisonResult {
     pub status: Option<ComparisonStatus>,
     pub key_advice: String,
     pub user_formatted: String,
     pub natural_expression: String,
+    pub primary_category: Option<ErrorMajorCategory>,
+    pub feedback_items: Vec<FeedbackItem>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

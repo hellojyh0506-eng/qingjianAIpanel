@@ -1,6 +1,6 @@
 mod tracker;
 
 pub use self::tracker::{
-    ComparisonResult, ComparisonStatus, NoRecallTracker, RecallAttempt, RecallItem, RecallOutcome,
-    RecallTracker,
+    ComparisonResult, ComparisonStatus, ErrorMajorCategory, ErrorSubcategory, FeedbackItem,
+    NoRecallTracker, RecallAttempt, RecallItem, RecallOutcome, RecallTracker,
 };

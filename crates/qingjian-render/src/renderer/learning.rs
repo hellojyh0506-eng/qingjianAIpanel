@@ -58,19 +58,39 @@ impl Renderer {
                         .as_ref()
                         .map(|a| a.comparison.key_advice.as_str())
                         .unwrap_or("");
+                    let feedback_items = card
+                        .drill_attempt
+                        .as_ref()
+                        .map(|a| a.comparison.feedback_items.as_slice())
+                        .unwrap_or(&[]);
 
                     let row1 = format!("🔴 你的表达: {}", user_expr);
                     let row2 = format!("🟢 地道表达: {}", natural_expr);
-                    let row3 = format!("💡 关键建议: {}", advice);
                     let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [完成 (Esc)]";
 
                     let r1_w = self.measure(&row1, &style).width;
                     let r2_w = self.measure(&row2, &style).width;
-                    let r3_w = self.measure(&row3, &small_style).width;
                     let btns_w = self.measure(btns, &m.index_style()).width;
 
-                    width = width.max(r1_w).max(r2_w).max(r3_w).max(btns_w) + m.column_gap() * 2.0;
-                    height += (line_height + m.row_padding()) * 3.0 + small_style.line_height + m.row_padding() * 2.0;
+                    width = width.max(r1_w).max(r2_w).max(btns_w);
+                    height += (line_height + m.row_padding()) * 2.0;
+
+                    if feedback_items.is_empty() {
+                        let row3 = format!("💡 关键建议: {}", advice);
+                        let r3_w = self.measure(&row3, &small_style).width;
+                        width = width.max(r3_w);
+                        height += small_style.line_height + m.row_padding();
+                    } else {
+                        for item in feedback_items.iter().take(3) {
+                            let row_item = format!("💡 [{}] {}", item.label, item.explanation);
+                            let rw = self.measure(&row_item, &small_style).width;
+                            width = width.max(rw);
+                            height += small_style.line_height + m.row_padding();
+                        }
+                    }
+
+                    width += m.column_gap() * 2.0;
+                    height += small_style.line_height + m.row_padding() * 2.0;
                     if card.drill_notice.is_some() {
                         height += small_style.line_height + m.row_padding();
                     }
@@ -243,6 +263,12 @@ impl Renderer {
                         .map(|a| a.comparison.key_advice.as_str())
                         .unwrap_or("");
 
+                    let feedback_items = card
+                        .drill_attempt
+                        .as_ref()
+                        .map(|a| a.comparison.feedback_items.as_slice())
+                        .unwrap_or(&[]);
+
                     let r1 = format!("🔴 你的表达: {}", user_expr);
                     self.draw_text(canvas, &r1, &active_text_style, left + m.padding(), y);
                     y += line_height + m.row_padding() / 2.0;
@@ -251,9 +277,18 @@ impl Renderer {
                     self.draw_text(canvas, &r2, &tag_style, left + m.padding(), y);
                     y += line_height + m.row_padding() / 2.0;
 
-                    let r3 = format!("💡 关键建议: {}", advice);
-                    self.draw_text(canvas, &r3, &small_style, left + m.padding(), y);
-                    y += small_style.line_height + m.row_padding();
+                    if feedback_items.is_empty() {
+                        let r3 = format!("💡 关键建议: {}", advice);
+                        self.draw_text(canvas, &r3, &small_style, left + m.padding(), y);
+                        y += small_style.line_height + m.row_padding();
+                    } else {
+                        for item in feedback_items.iter().take(3) {
+                            let r_item = format!("💡 [{}] {}", item.label, item.explanation);
+                            self.draw_text(canvas, &r_item, &small_style, left + m.padding(), y);
+                            y += small_style.line_height + m.row_padding() / 2.0;
+                        }
+                        y += m.row_padding() / 2.0;
+                    }
 
                     let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [完成 (Esc)]";
                     let btn_style = m.style(m.theme.index_font, m.theme.colors.cloud);

@@ -588,19 +588,39 @@ fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
                     .as_ref()
                     .map(|a| a.comparison.key_advice.as_str())
                     .unwrap_or("");
+                let feedback_items = card
+                    .drill_attempt
+                    .as_ref()
+                    .map(|a| a.comparison.feedback_items.as_slice())
+                    .unwrap_or(&[]);
 
                 let row1 = format!("🔴 你的表达: {}", user_expr);
                 let row2 = format!("🟢 地道表达: {}", natural_expr);
-                let row3 = format!("💡 关键建议: {}", advice);
                 let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [完成 (Esc)]";
 
                 let r1_w = measure(hdc, theme.annotation_font, &row1).cx;
                 let r2_w = measure(hdc, theme.annotation_font, &row2).cx;
-                let r3_w = measure(hdc, theme.index_font, &row3).cx;
                 let btns_w = measure(hdc, theme.index_font, btns).cx;
 
-                width = width.max(r1_w).max(r2_w).max(r3_w).max(btns_w) + theme.column_gap * 2;
-                height += (line_h + theme.row_padding) * 3 + small_h + theme.row_padding * 2;
+                width = width.max(r1_w).max(r2_w).max(btns_w);
+                height += (line_h + theme.row_padding) * 2;
+
+                if feedback_items.is_empty() {
+                    let row3 = format!("💡 关键建议: {}", advice);
+                    let r3_w = measure(hdc, theme.index_font, &row3).cx;
+                    width = width.max(r3_w);
+                    height += small_h + theme.row_padding;
+                } else {
+                    for item in feedback_items.iter().take(3) {
+                        let row_item = format!("💡 [{}] {}", item.label, item.explanation);
+                        let rw = measure(hdc, theme.index_font, &row_item).cx;
+                        width = width.max(rw);
+                        height += small_h + theme.row_padding;
+                    }
+                }
+
+                width += theme.column_gap * 2;
+                height += small_h + theme.row_padding * 2;
                 if card.drill_notice.is_some() {
                     height += small_h + theme.row_padding;
                 }
@@ -758,6 +778,11 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
                     .as_ref()
                     .map(|a| a.comparison.key_advice.as_str())
                     .unwrap_or("");
+                let feedback_items = card
+                    .drill_attempt
+                    .as_ref()
+                    .map(|a| a.comparison.feedback_items.as_slice())
+                    .unwrap_or(&[]);
 
                 // 1. 你的表达
                 let r1 = format!("🔴 你的表达: {}", user_expr);
@@ -769,10 +794,19 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
                 draw_text(hdc, theme.annotation_font, theme.fresh_color, theme.padding, y, &r2);
                 y += line_h + theme.row_padding / 2;
 
-                // 3. 关键建议
-                let r3 = format!("💡 关键建议: {}", advice);
-                draw_text(hdc, theme.index_font, theme.pos_color, theme.padding, y, &r3);
-                y += small_h + theme.row_padding;
+                // 3. 结构化错误诊断 / 关键建议 (1~3条)
+                if feedback_items.is_empty() {
+                    let r3 = format!("💡 关键建议: {}", advice);
+                    draw_text(hdc, theme.index_font, theme.pos_color, theme.padding, y, &r3);
+                    y += small_h + theme.row_padding;
+                } else {
+                    for item in feedback_items.iter().take(3) {
+                        let r_item = format!("💡 [{}] {}", item.label, item.explanation);
+                        draw_text(hdc, theme.index_font, theme.pos_color, theme.padding, y, &r_item);
+                        y += small_h + theme.row_padding / 2;
+                    }
+                    y += theme.row_padding / 2;
+                }
 
                 // 4. 底部按钮
                 let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [完成 (Esc)]";

@@ -18,6 +18,121 @@ pub enum ComparisonStatus {
     EmptyInput,
 }
 
+/// 顶级错误类别 (Major Category)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ErrorMajorCategory {
+    Grammar,
+    Vocabulary,
+    Collocation,
+    Naturalness,
+    PhrasalIdiomatic,
+    Pragmatics,
+}
+
+impl ErrorMajorCategory {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Grammar => "语法",
+            Self::Vocabulary => "用词",
+            Self::Collocation => "搭配",
+            Self::Naturalness => "自然度",
+            Self::PhrasalIdiomatic => "短语习语",
+            Self::Pragmatics => "语用语域",
+        }
+    }
+}
+
+/// 细分错误类型 (Error Subcategory)
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ErrorSubcategory {
+    // Grammar
+    Article,
+    Tense,
+    Preposition,
+    WordOrder,
+    Agreement,
+    Countability,
+
+    // Vocabulary
+    WrongWord,
+    LiteralTranslation,
+    VocabularyPrecision,
+
+    // Collocation
+    UnnaturalCollocation,
+    IncorrectVerbNounPairing,
+    AdjectiveNounPairing,
+    FixedExpression,
+
+    // Naturalness
+    AwkwardPhrasing,
+    Redundancy,
+    UnnaturalSentenceRhythm,
+    Chinglish,
+
+    // Phrasal / Idiomatic
+    MissingPhrasalVerb,
+    WrongIdiom,
+    UnnaturalLiteralEquivalent,
+
+    // Pragmatics
+    TooDirect,
+    TooFormal,
+    TooCasual,
+    WrongSocialTone,
+
+    // Other/Extensible
+    Other(String),
+}
+
+impl ErrorSubcategory {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Article => "冠词使用",
+            Self::Tense => "时态语态",
+            Self::Preposition => "介词搭配",
+            Self::WordOrder => "词序语序",
+            Self::Agreement => "主谓一致",
+            Self::Countability => "可数单复数",
+
+            Self::WrongWord => "用词不当",
+            Self::LiteralTranslation => "字面直译",
+            Self::VocabularyPrecision => "用词精度",
+
+            Self::UnnaturalCollocation => "搭配生硬",
+            Self::IncorrectVerbNounPairing => "动宾搭配不当",
+            Self::AdjectiveNounPairing => "修饰搭配不当",
+            Self::FixedExpression => "固定表达差异",
+
+            Self::AwkwardPhrasing => "表述别扭",
+            Self::Redundancy => "表达冗余",
+            Self::UnnaturalSentenceRhythm => "节奏不自然",
+            Self::Chinglish => "中式思维直译",
+
+            Self::MissingPhrasalVerb => "缺少地道短语动词",
+            Self::WrongIdiom => "习语误用",
+            Self::UnnaturalLiteralEquivalent => "生硬对等词",
+
+            Self::TooDirect => "过于生硬直接",
+            Self::TooFormal => "语域偏书面正式",
+            Self::TooCasual => "语域过于口语随意",
+            Self::WrongSocialTone => "语气不合社交语境",
+
+            Self::Other(_) => "其他建议",
+        }
+    }
+}
+
+/// 结构化单条反馈建议
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FeedbackItem {
+    pub major_category: ErrorMajorCategory,
+    pub subcategory: ErrorSubcategory,
+    pub label: String,
+    pub explanation: String,
+    pub suggestion: Option<String>,
+}
+
 /// 主动回忆对比结果
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ComparisonResult {
@@ -25,6 +140,8 @@ pub struct ComparisonResult {
     pub key_advice: String,
     pub user_formatted: String,
     pub natural_expression: String,
+    pub primary_category: Option<ErrorMajorCategory>,
+    pub feedback_items: Vec<FeedbackItem>,
 }
 
 /// 用户的一次主动回忆练习记录 (Attempt)
