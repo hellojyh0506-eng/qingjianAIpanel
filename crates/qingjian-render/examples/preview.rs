@@ -246,6 +246,7 @@ fn matrix() -> Frame {
         footer: Some("2/12".into()),
         sentence: None,
         status: None,
+        learning_card: None,
     }
 }
 
@@ -301,6 +302,7 @@ fn nihao() -> Frame {
         footer: Some("1/6".to_owned()),
         sentence: None,
         status: None,
+        learning_card: None,
     }
 }
 
@@ -373,6 +375,7 @@ fn corrected_japanese() -> Frame {
         footer: None,
         sentence: None,
         status: Some("已删除「开放」".to_owned()),
+        learning_card: None,
     }
 }
 
@@ -387,6 +390,7 @@ fn probe() -> Frame {
         footer: None,
         sentence: None,
         status: None,
+        learning_card: None,
     }
 }
 

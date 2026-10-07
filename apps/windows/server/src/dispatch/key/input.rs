@@ -353,7 +353,7 @@ impl Router {
         }
     }
 
-    fn composing(&self) -> bool {
+    pub(crate) fn composing(&self) -> bool {
         !self.engine.composition().is_empty()
     }
 }

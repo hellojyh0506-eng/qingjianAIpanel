@@ -150,6 +150,7 @@ fn test_p1_three_state_cycle_and_isolation() {
         sequence: req.sequence,
         words: Vec::new(),
         sentence: Some("previously".to_string()),
+        alternatives: Vec::new(),
     });
     router.tick();
 

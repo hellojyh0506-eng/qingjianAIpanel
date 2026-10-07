@@ -22,3 +22,4 @@ pub use config::{
     UpdateChannel, UpdateConfig, scheme_label,
 };
 pub use error::ConfigError;
+pub use protocol::{LearningCardFrame, LearningExpression, LearningState};

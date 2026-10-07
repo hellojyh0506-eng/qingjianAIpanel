@@ -171,6 +171,25 @@ impl Router {
                 request: self.selection_seq,
             };
         }
+        if self.composing()
+            && self.learning_mode == qingjian_platform::LearningMode::Learn
+            && self.matches_learning_expand_combo(&event)
+        {
+            if let Some(card) = self.passive_learning_card.as_mut() {
+                card.expanded = !card.expanded;
+                if !card.expanded {
+                    card.selected_index = None;
+                }
+            }
+            let shown = self.self_drawn_frame();
+            self.reconcile_candidates(&shown);
+            return ServerMessage::KeyResult {
+                session,
+                outcome: KeyOutcome::Consumed,
+                commit: None,
+                frame: self.current_frame(),
+            };
+        }
         let (commit, outcome) = match self.apply_key(&event) {
             Effect::Changed(commit) => {
                 self.recompose();

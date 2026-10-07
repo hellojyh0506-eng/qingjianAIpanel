@@ -19,6 +19,7 @@ impl Router {
         self.sentence = None;
         self.passive_translation = None;
         self.passive_translation_target = None;
+        self.passive_learning_card = None;
         self.recall_session = None;
         if self.engine.composition().is_empty() {
             self.composed = None;
@@ -39,19 +40,47 @@ impl Router {
                     && !self.config.learning_language_off
                     && self.engine.learning_language() != Language::Chinese
                     && !self.is_private();
-                let first_local = layout.local().first();
-                let has_local_trans = first_local
-                    .and_then(|c| self.engine.translate_word(&c.text))
-                    .is_some();
-                if self.engine.prediction_enabled() {
-                    if learning_on && !has_local_trans {
-                        if let Some(first) = first_local {
-                            self.passive_translation_target = Some(first.text.clone());
-                            self.engine.request_translation(&first.text);
+                let first_target = layout.candidate(0).map(|c| c.text.clone());
+                if learning_on {
+                    if let Some(target) = first_target {
+                        self.passive_translation_target = Some(target.clone());
+                        if let Some(local_trans) = self.engine.translate_word(&target).and_then(|t| t.senses().first().map(|s| s.text.clone())) {
+                            let expr = qingjian_platform::protocol::LearningExpression {
+                                text: local_trans,
+                                tag: "Natural".to_string(),
+                                meaning: target.clone(),
+                                tone: "Casual".to_string(),
+                                scenario: "Daily conversation".to_string(),
+                                commonality: "Common".to_string(),
+                                why_natural: "Natural spoken expression".to_string(),
+                            };
+                            self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
+                                target_text: target.clone(),
+                                state: qingjian_platform::protocol::LearningState::Ready,
+                                primary: Some(expr.clone()),
+                                alternatives: vec![expr],
+                                expanded: false,
+                                selected_index: None,
+                            });
+                            if self.engine.prediction_enabled() {
+                                self.engine.request_prediction(None, layout.local());
+                            }
+                        } else if self.engine.prediction_enabled() {
+                            self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
+                                target_text: target.clone(),
+                                state: qingjian_platform::protocol::LearningState::Loading,
+                                primary: None,
+                                alternatives: Vec::new(),
+                                expanded: false,
+                                selected_index: None,
+                            });
+                            self.engine.request_translation(&target);
                         }
-                    } else {
+                    } else if self.engine.prediction_enabled() {
                         self.engine.request_prediction(None, layout.local());
                     }
+                } else if self.engine.prediction_enabled() {
+                    self.engine.request_prediction(None, layout.local());
                 }
                 Composed::Candidates {
                     preedit,
@@ -94,30 +123,89 @@ impl Router {
             return;
         }
         if self.engine.last_prediction_kind() == PredictionKind::Translate {
-            if let Some(text) = prediction.sentence {
-                let current_first_text = match &self.composed {
-                    Some(Composed::Candidates { layout, .. }) => {
-                        layout.candidate(0).map(|c| c.text.clone())
-                    }
-                    _ => None,
-                };
-                if let (Some(curr), Some(target)) = (current_first_text, &self.passive_translation_target) {
-                    if curr == *target {
+            let current_highlight_text = match &self.composed {
+                Some(Composed::Candidates { layout, .. }) => {
+                    layout.candidate(self.highlight).map(|c| c.text.clone())
+                }
+                _ => None,
+            };
+            if let (Some(curr), Some(target)) = (current_highlight_text, &self.passive_translation_target) {
+                if curr == *target {
+                    if let Some(text) = &prediction.sentence {
                         // 异常防发散保护：若目标短语 <= 10 汉字，译文超过 100 字符，判定为模型幻觉或串译发散，坚决丢弃
                         if target.chars().count() <= 10 && text.chars().count() > 100 {
                             tracing::warn!(target = %target, trans_len = text.len(), "丢弃长度严重失真的被动翻译异常");
+                            if let Some(card) = self.passive_learning_card.as_mut() {
+                                card.state = qingjian_platform::protocol::LearningState::Failed;
+                            }
                             return;
                         }
-                        self.passive_translation = Some(text);
-                        let shown = self.self_drawn_frame();
-                        self.reconcile_candidates(&shown);
-                    } else {
-                        tracing::debug!(
-                            "丢弃过期的被动翻译结果: 目标为 {:?}, 但当前首选为 {:?}",
-                            target,
-                            curr
-                        );
                     }
+
+                    self.passive_translation = prediction.sentence.clone();
+
+                    let primary_expr = prediction.alternatives.first().cloned().map(|alt| {
+                        qingjian_platform::protocol::LearningExpression {
+                            text: alt.text,
+                            tag: alt.tag,
+                            meaning: alt.meaning,
+                            tone: alt.tone,
+                            scenario: alt.scenario,
+                            commonality: alt.commonality,
+                            why_natural: alt.why_natural,
+                        }
+                    }).or_else(|| {
+                        prediction.sentence.as_ref().map(|s| {
+                            qingjian_platform::protocol::LearningExpression {
+                                text: s.clone(),
+                                tag: "Natural".to_string(),
+                                meaning: target.clone(),
+                                tone: "Casual".to_string(),
+                                scenario: "Daily conversation".to_string(),
+                                commonality: "Common".to_string(),
+                                why_natural: "Natural spoken English".to_string(),
+                            }
+                        })
+                    });
+
+                    let alternatives: Vec<qingjian_platform::protocol::LearningExpression> = prediction
+                        .alternatives
+                        .into_iter()
+                        .map(|alt| qingjian_platform::protocol::LearningExpression {
+                            text: alt.text,
+                            tag: alt.tag,
+                            meaning: alt.meaning,
+                            tone: alt.tone,
+                            scenario: alt.scenario,
+                            commonality: alt.commonality,
+                            why_natural: alt.why_natural,
+                        })
+                        .collect();
+
+                    let preserve_expanded = self.passive_learning_card.as_ref().map(|c| c.expanded).unwrap_or(false);
+                    let preserve_selected = self.passive_learning_card.as_ref().and_then(|c| c.selected_index);
+
+                    self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
+                        target_text: target.clone(),
+                        state: if primary_expr.is_some() || !alternatives.is_empty() {
+                            qingjian_platform::protocol::LearningState::Ready
+                        } else {
+                            qingjian_platform::protocol::LearningState::Failed
+                        },
+                        primary: primary_expr,
+                        alternatives,
+                        expanded: preserve_expanded,
+                        selected_index: preserve_selected,
+                    });
+
+                    let shown = self.self_drawn_frame();
+                    self.reconcile_candidates(&shown);
+                } else {
+                    tracing::debug!(
+                        "丢弃过期的被动翻译结果: 目标为 {:?}, 但当前高亮为 {:?}",
+                        target,
+                        curr
+                    );
                 }
             }
             return;
@@ -147,8 +235,11 @@ impl Router {
             return;
         }
         let next = (self.highlight as isize + delta).clamp(0, count as isize - 1) as usize;
-        self.navigated |= next != self.highlight;
-        self.highlight = next;
+        if next != self.highlight {
+            self.navigated = true;
+            self.highlight = next;
+            self.on_candidate_selection_changed();
+        }
     }
 
     /// 整页翻 `step`，高亮落到目标页第一个候选。
@@ -166,7 +257,67 @@ impl Router {
             self.navigated = true;
             self.engine.note_page_turn();
         }
-        self.highlight = (target * page_size).min(count - 1);
+        let next = (target * page_size).min(count - 1);
+        if next != self.highlight {
+            self.highlight = next;
+            self.on_candidate_selection_changed();
+        }
+    }
+
+    /// 高亮候选词变更时：若处于 Learn 模式，立即同步绑定新候选词，取消旧请求并抛弃不匹配旧结果。
+    pub(super) fn on_candidate_selection_changed(&mut self) {
+        let learning_on = self.learning_mode == qingjian_platform::LearningMode::Learn
+            && !self.config.learning_language_off
+            && self.engine.learning_language() != Language::Chinese
+            && !self.is_private();
+        if !learning_on {
+            return;
+        }
+        let current_target = self.layout_candidate(self.highlight).map(|c| c.text);
+        let Some(target) = current_target else {
+            return;
+        };
+
+        if let Some(card) = &self.passive_learning_card {
+            if card.target_text == target {
+                return;
+            }
+        }
+
+        let preserve_expanded = self.passive_learning_card.as_ref().map(|c| c.expanded).unwrap_or(false);
+
+        self.passive_translation_target = Some(target.clone());
+        if let Some(local_trans) = self.engine.translate_word(&target).and_then(|t| t.senses().first().map(|s| s.text.clone())) {
+            let expr = qingjian_platform::protocol::LearningExpression {
+                text: local_trans,
+                tag: "Natural".to_string(),
+                meaning: target.clone(),
+                tone: "Casual".to_string(),
+                scenario: "Daily conversation".to_string(),
+                commonality: "Common".to_string(),
+                why_natural: "Natural spoken expression".to_string(),
+            };
+            self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
+                target_text: target.clone(),
+                state: qingjian_platform::protocol::LearningState::Ready,
+                primary: Some(expr.clone()),
+                alternatives: vec![expr],
+                expanded: preserve_expanded,
+                selected_index: None,
+            });
+        } else if self.engine.prediction_enabled() {
+            self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
+                target_text: target.clone(),
+                state: qingjian_platform::protocol::LearningState::Loading,
+                primary: None,
+                alternatives: Vec::new(),
+                expanded: preserve_expanded,
+                selected_index: None,
+            });
+            self.engine.request_translation(&target);
+        } else {
+            self.passive_learning_card = None;
+        }
     }
 
     pub(super) fn candidate_count(&self) -> usize {
@@ -271,6 +422,7 @@ impl Router {
                 sentence: None,
                 notice: self.notice.clone(),
                 learning_mode: self.learning_mode,
+                learning_card: None,
             },
             Some(Composed::Candidates {
                 preedit,
@@ -305,6 +457,11 @@ impl Router {
                         }
                     }
                 }
+                let learning_card = if self.learning_mode == qingjian_platform::LearningMode::Learn {
+                    self.passive_learning_card.clone()
+                } else {
+                    None
+                };
                 Frame {
                     preedit: preedit.clone(),
                     preedit_mode: self.config.preedit,
@@ -319,6 +476,7 @@ impl Router {
                     sentence: self.sentence.clone(),
                     notice: self.notice.clone(),
                     learning_mode: self.learning_mode,
+                    learning_card,
                 }
             }
         }

@@ -8,15 +8,17 @@ pub(crate) mod theme;
 pub(crate) mod view;
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use windows::Win32::Foundation::{E_INVALIDARG, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{GetDC, ReleaseDC};
 use windows::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, IDC_ARROW, LoadCursorW, SW_HIDE, SW_SHOWNA,
-    ShowWindow, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, HTCLIENT, IDC_ARROW, LoadCursorW,
+    MA_NOACTIVATE, SW_HIDE, SW_SHOWNA, ShowWindow, WM_LBUTTONDOWN, WM_MOUSEACTIVATE,
+    WM_NCHITTEST, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{Error, PCWSTR, Result, w};
 
@@ -53,73 +55,28 @@ fn system_prefers_dark() -> bool {
         .is_ok_and(|value| value == 0)
 }
 
-/// 候选窗口。内容经 `UpdateLayeredWindow` 一次贴上，窗口过程只走默认处理。
-pub(crate) struct CandidateWindow {
+thread_local! {
+    /// 本线程活着的候选窗口：HWND → CandidateWindowInner。
+    static WINDOWS: RefCell<HashMap<isize, Rc<CandidateWindowInner>>> = RefCell::new(HashMap::new());
+}
+
+fn candidate_window_of(hwnd: HWND) -> Option<Rc<CandidateWindowInner>> {
+    WINDOWS.with(|map| map.borrow().get(&(hwnd.0 as isize)).cloned())
+}
+
+struct CandidateWindowInner {
     hwnd: HWND,
-
-    /// 绘制内容。
     data: RefCell<RenderData>,
-
-    /// 上次用的 DPI，变了重建字体。
     dpi: Cell<u32>,
-
-    /// 上次解析出的深浅，变了重建配色。
     dark: Cell<bool>,
-
-    /// 上次记进日志的缩放值（窗口 DPI、光标所在显示器 DPI）：变了才再记一条（#146）。
     logged_dpi: Cell<Option<(u32, Option<u32>)>>,
-
-    /// 青简渲染器；`None` 走 GDI。
+    last_anchor: Cell<Option<RECT>>,
     painter: SharedPainter,
 }
 
-impl CandidateWindow {
-    /// 建一个隐藏的候选窗口。
-    pub(crate) fn new(painter: SharedPainter) -> Result<Self> {
-        CLASS.ensure(|| WNDCLASSEXW {
-            lpfnWndProc: Some(wndproc),
-            hInstance: super::module_handle(),
-            hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }.unwrap_or_default(),
-            lpszClassName: CLASS_NAME,
-            ..Default::default()
-        })?;
-        let dpi = unsafe { GetDpiForSystem() }.max(96);
-        let dark = resolve_dark(ThemeMode::default());
-        let data = RefCell::new(RenderData::empty(Rc::new(Theme::new(dpi, dark))));
-        // NOACTIVATE：显示时不抢应用焦点。
-        let hwnd = unsafe {
-            CreateWindowExW(
-                WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
-                CLASS_NAME,
-                w!("青简候选"),
-                WS_POPUP,
-                0,
-                0,
-                0,
-                0,
-                None,
-                None,
-                Some(super::module_handle()),
-                None,
-            )?
-        };
-        Ok(Self {
-            hwnd,
-            data,
-            dpi: Cell::new(dpi),
-            dark: Cell::new(dark),
-            logged_dpi: Cell::new(None),
-            painter,
-        })
-    }
-
-    /// 刷新内容（不定位、不显示）。
-    pub(crate) fn set_content(&self, frame: &Frame) {
-        self.data.borrow_mut().set(frame);
-    }
-
-    /// 按光标矩形定位并显示：贴光标下方（放不下放上方），四周留出阴影。
-    pub(crate) fn show(&self, anchor: RECT) {
+impl CandidateWindowInner {
+    fn show(&self, anchor: RECT) {
+        self.last_anchor.set(Some(anchor));
         self.sync_theme(anchor);
         let rendered = {
             let data = self.data.borrow();
@@ -165,7 +122,6 @@ impl CandidateWindow {
         }
     }
 
-    /// GDI 画法：量尺寸、定位、合成。
     fn show_gdi(&self, anchor: RECT) -> Result<()> {
         let margin = layered::shadow_margin(self.dpi.get());
         let content = self.preferred_size();
@@ -188,14 +144,10 @@ impl CandidateWindow {
         )
     }
 
-    pub(crate) fn hide(&self) {
+    fn hide(&self) {
         let _ = unsafe { ShowWindow(self.hwnd, SW_HIDE) };
     }
 
-    /// DPI 或深浅变了就重建主题；每次 `show` 前调。
-    ///
-    /// DPI 取光标所在显示器的：窗口藏着时改了缩放（或睡眠唤醒后多显示器重排），
-    /// `GetDpiForWindow` 会停在旧值，候选字就大小不对（#146）。
     fn sync_theme(&self, anchor: RECT) {
         let caret = POINT {
             x: anchor.left,
@@ -217,7 +169,6 @@ impl CandidateWindow {
         }
     }
 
-    /// 缩放值变了就记一条，多显示器 / 睡眠唤醒的问题从日志里能看出取到的是哪个值（#146）。
     fn log_dpi(&self, caret: POINT, window_dpi: u32, monitor_dpi: Option<u32>, used: u32) {
         if self.logged_dpi.replace(Some((window_dpi, monitor_dpi)))
             == Some((window_dpi, monitor_dpi))
@@ -235,18 +186,116 @@ impl CandidateWindow {
         );
     }
 
-    /// 内容需要的大小（不含阴影留白）。
     fn preferred_size(&self) -> (i32, i32) {
         let hdc = unsafe { GetDC(Some(self.hwnd)) };
         let size = view::preferred_size(hdc, &self.data.borrow());
         unsafe { ReleaseDC(Some(self.hwnd), hdc) };
         (size.cx, size.cy)
     }
+
+    fn on_lbutton_down(&self, x: i32, y: i32) {
+        let action = {
+            let data = self.data.borrow();
+            let hdc = unsafe { GetDC(Some(self.hwnd)) };
+            let action = view::hit_test_learning_card(hdc, &data, x, y);
+            unsafe { ReleaseDC(Some(self.hwnd), hdc) };
+            action
+        };
+        if let Some(action) = action {
+            {
+                let mut data = self.data.borrow_mut();
+                if let Some(card) = data.learning_card.as_mut() {
+                    match action {
+                        view::LearningHitAction::ToggleExpand => {
+                            card.expanded = !card.expanded;
+                            if !card.expanded {
+                                card.selected_index = None;
+                            }
+                        }
+                        view::LearningHitAction::ToggleAlternative(idx) => {
+                            if card.selected_index == Some(idx) {
+                                card.selected_index = None;
+                            } else {
+                                card.selected_index = Some(idx);
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(anchor) = self.last_anchor.get() {
+                self.show(anchor);
+            }
+        }
+    }
+}
+
+/// 候选窗口。内容经 `UpdateLayeredWindow` 一次贴上，窗口过程只走默认处理。
+pub(crate) struct CandidateWindow {
+    inner: Rc<CandidateWindowInner>,
+}
+
+impl CandidateWindow {
+    /// 建一个隐藏的候选窗口。
+    pub(crate) fn new(painter: SharedPainter) -> Result<Self> {
+        CLASS.ensure(|| WNDCLASSEXW {
+            lpfnWndProc: Some(wndproc),
+            hInstance: super::module_handle(),
+            hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }.unwrap_or_default(),
+            lpszClassName: CLASS_NAME,
+            ..Default::default()
+        })?;
+        let dpi = unsafe { GetDpiForSystem() }.max(96);
+        let dark = resolve_dark(ThemeMode::default());
+        let data = RefCell::new(RenderData::empty(Rc::new(Theme::new(dpi, dark))));
+        // NOACTIVATE：显示时不抢应用焦点。
+        let hwnd = unsafe {
+            CreateWindowExW(
+                WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+                CLASS_NAME,
+                w!("青简候选"),
+                WS_POPUP,
+                0,
+                0,
+                0,
+                0,
+                None,
+                None,
+                Some(super::module_handle()),
+                None,
+            )?
+        };
+        let inner = Rc::new(CandidateWindowInner {
+            hwnd,
+            data,
+            dpi: Cell::new(dpi),
+            dark: Cell::new(dark),
+            logged_dpi: Cell::new(None),
+            last_anchor: Cell::new(None),
+            painter,
+        });
+        WINDOWS.with(|map| map.borrow_mut().insert(hwnd.0 as isize, Rc::clone(&inner)));
+        Ok(Self { inner })
+    }
+
+    /// 刷新内容（不定位、不显示）。
+    pub(crate) fn set_content(&self, frame: &Frame) {
+        self.inner.data.borrow_mut().set(frame);
+    }
+
+    /// 按光标矩形定位并显示：贴光标下方（放不下放上方），四周留出阴影。
+    pub(crate) fn show(&self, anchor: RECT) {
+        self.inner.show(anchor);
+    }
+
+    pub(crate) fn hide(&self) {
+        self.inner.hide();
+    }
 }
 
 impl Drop for CandidateWindow {
     fn drop(&mut self) {
-        let _ = unsafe { DestroyWindow(self.hwnd) };
+        WINDOWS.with(|map| map.borrow_mut().remove(&(self.inner.hwnd.0 as isize)));
+        let _ = unsafe { DestroyWindow(self.inner.hwnd) };
     }
 }
 
@@ -272,9 +321,21 @@ fn place(anchor: RECT, content: (i32, i32)) -> (i32, i32) {
     (x, y)
 }
 
-/// 分层窗口无需 `WM_PAINT`，全交默认处理。
+/// 分层窗口过程：鼠标消息不抢焦点（MA_NOACTIVATE），支持点击展开更多译法。
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+    match msg {
+        WM_NCHITTEST => LRESULT(HTCLIENT as isize),
+        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        WM_LBUTTONDOWN => {
+            if let Some(inner) = candidate_window_of(hwnd) {
+                let x = (lparam.0 & 0xFFFF) as i16 as i32;
+                let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+                inner.on_lbutton_down(x, y);
+            }
+            LRESULT(0)
+        }
+        _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+    }
 }
 
 #[cfg(test)]

@@ -33,9 +33,10 @@ pub(super) fn preferred_size(hdc: HDC, data: &RenderData) -> SIZE {
         LayoutMode::Vertical => vertical_size(hdc, data),
         LayoutMode::Horizontal => horizontal_size(hdc, data),
     };
+    let (learning_width, learning_height) = learning_card_size(hdc, data);
     SIZE {
-        cx: top_width.max(body_width).max(notice_width) + theme.padding * 2,
-        cy: top_height + notice_height + body_height + theme.padding * 2,
+        cx: top_width.max(body_width).max(notice_width).max(learning_width) + theme.padding * 2,
+        cy: top_height + notice_height + body_height + learning_height + theme.padding * 2,
     }
 }
 
@@ -110,10 +111,18 @@ pub(super) fn paint(hdc: HDC, data: &RenderData, client: RECT) {
     let mut y = theme.padding;
     y += draw_top_line(hdc, data, y);
     y += draw_notice(hdc, data, y);
-    match data.layout {
-        LayoutMode::Vertical => draw_rows(hdc, data, y, client.right - client.left),
-        LayoutMode::Horizontal => draw_horizontal(hdc, data, y, client.right - client.left),
-    }
+    let rows_height = match data.layout {
+        LayoutMode::Vertical => {
+            draw_rows(hdc, data, y, client.right - client.left);
+            vertical_size(hdc, data).1
+        }
+        LayoutMode::Horizontal => {
+            draw_horizontal(hdc, data, y, client.right - client.left);
+            horizontal_size(hdc, data).1
+        }
+    };
+    y += rows_height;
+    draw_learning_card(hdc, data, y, client.right - client.left);
 }
 
 /// 顶部拼音行：各段按样式画、自己画光标、右侧整句补全。返回占用高度。
@@ -527,4 +536,198 @@ fn fill_round_rect(hdc: HDC, rect: RECT, color: COLORREF, radius: i32) {
         let _ = DeleteObject(brush.into());
         let _ = DeleteObject(region.into());
     }
+}
+
+/// GDI 下轻量英语学习卡片的尺寸计算。
+fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
+    let Some(card) = &data.learning_card else {
+        return (0, 0);
+    };
+    let theme = &data.theme;
+    let mut width = 0;
+    let mut height = 0;
+    let line_h = line_height(hdc, theme.annotation_font);
+
+    let flag = "🇺🇸 ";
+    let flag_w = measure(hdc, theme.annotation_font, flag).cx;
+    let main_text = match card.status {
+        qingjian_render::LearningStatus::Loading => "正在推荐地道口语...",
+        qingjian_render::LearningStatus::Failed => "暂无地道口语推荐",
+        qingjian_render::LearningStatus::Ready => {
+            if let Some(prim) = &card.primary {
+                prim.text.as_str()
+            } else if let Some(first) = card.alternatives.first() {
+                first.text.as_str()
+            } else {
+                ""
+            }
+        }
+    };
+    let main_w = measure(hdc, theme.annotation_font, main_text).cx;
+    let btn_text = if card.expanded { "收起 ▴" } else { "更多译法 ▾" };
+    let btn_w = measure(hdc, theme.index_font, btn_text).cx;
+
+    width = width.max(flag_w + main_w + theme.column_gap * 2 + btn_w);
+    height += line_h + theme.row_padding * 2;
+
+    if card.expanded && !card.alternatives.is_empty() {
+        height += theme.row_padding;
+        for alt in &card.alternatives {
+            let tag_str = format!("[{}] ", alt.tag);
+            let tag_w = measure(hdc, theme.index_font, &tag_str).cx;
+            let text_w = measure(hdc, theme.annotation_font, &alt.text).cx;
+            width = width.max(tag_w + text_w + theme.column_gap);
+            height += line_h + theme.row_padding;
+        }
+        if let Some(sel_idx) = card.selected_index {
+            if let Some(alt) = card.alternatives.get(sel_idx) {
+                let detail_lines = [
+                    format!("含义: {}", alt.meaning),
+                    format!("语气: {}", alt.tone),
+                    format!("场景: {}", alt.scenario),
+                    format!("频度: {}", alt.commonality),
+                    format!("为什么地道: {}", alt.why_natural),
+                ];
+                let small_h = line_height(hdc, theme.index_font);
+                for line in &detail_lines {
+                    let lw = measure(hdc, theme.index_font, line).cx;
+                    width = width.max(lw + theme.column_gap * 2);
+                    height += small_h + 2;
+                }
+                height += theme.row_padding;
+            }
+        }
+    }
+    (width, height)
+}
+
+/// GDI 下绘制轻量英语学习卡片。
+fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i32) {
+    let Some(card) = &data.learning_card else {
+        return;
+    };
+    let theme = &data.theme;
+    let sep = RECT {
+        left: theme.padding,
+        top: y + theme.row_padding / 2,
+        right: content_width - theme.padding,
+        bottom: y + theme.row_padding / 2 + 1,
+    };
+    fill_rect(hdc, sep, theme.pos_color);
+    y += theme.row_padding;
+
+    let flag = "🇺🇸 ";
+    let mut x = theme.padding;
+    x += draw_text(hdc, theme.annotation_font, theme.fresh_color, x, y, flag);
+
+    let main_text = match card.status {
+        qingjian_render::LearningStatus::Loading => "正在推荐地道口语...",
+        qingjian_render::LearningStatus::Failed => "暂无地道口语推荐",
+        qingjian_render::LearningStatus::Ready => {
+            if let Some(prim) = &card.primary {
+                prim.text.as_str()
+            } else if let Some(first) = card.alternatives.first() {
+                first.text.as_str()
+            } else {
+                ""
+            }
+        }
+    };
+    let text_color = if card.status == qingjian_render::LearningStatus::Ready {
+        theme.text_color
+    } else {
+        theme.gloss_color
+    };
+    draw_text(hdc, theme.annotation_font, text_color, x, y, main_text);
+
+    let btn_text = if card.expanded { "收起 ▴" } else { "更多译法 ▾" };
+    let btn_w = measure(hdc, theme.index_font, btn_text).cx;
+    let btn_x = content_width - theme.padding - btn_w;
+    draw_text(hdc, theme.index_font, theme.cloud_color, btn_x, y, btn_text);
+
+    let line_h = line_height(hdc, theme.annotation_font);
+    y += line_h + theme.row_padding;
+
+    if card.expanded && !card.alternatives.is_empty() {
+        for (idx, alt) in card.alternatives.iter().enumerate() {
+            let row_h = line_h + theme.row_padding;
+            if card.selected_index == Some(idx) {
+                let rect = RECT {
+                    left: theme.padding / 2,
+                    top: y - theme.row_padding / 4,
+                    right: content_width - theme.padding / 2,
+                    bottom: y - theme.row_padding / 4 + row_h,
+                };
+                fill_round_rect(hdc, rect, theme.highlight, theme.corner_radius / 2);
+            }
+            let mut ax = theme.padding + 4;
+            let tag_str = format!("[{}] ", alt.tag);
+            ax += draw_text(hdc, theme.index_font, theme.fresh_color, ax, y, &tag_str);
+            draw_text(hdc, theme.annotation_font, theme.text_color, ax, y, &alt.text);
+            y += row_h;
+        }
+
+        if let Some(sel_idx) = card.selected_index {
+            if let Some(alt) = card.alternatives.get(sel_idx) {
+                let detail_lines = [
+                    format!("含义: {}", alt.meaning),
+                    format!("语气: {}", alt.tone),
+                    format!("场景: {}", alt.scenario),
+                    format!("频度: {}", alt.commonality),
+                    format!("为什么地道: {}", alt.why_natural),
+                ];
+                let small_h = line_height(hdc, theme.index_font);
+                for line in &detail_lines {
+                    draw_text(hdc, theme.index_font, theme.pos_color, theme.padding + 8, y, line);
+                    y += small_h + 2;
+                }
+            }
+        }
+    }
+}
+
+/// 学习卡片鼠标点击判定动作。
+pub(super) enum LearningHitAction {
+    /// 切换展开/收起「更多译法」
+    ToggleExpand,
+    /// 切换某一条备选表达的细览展示
+    ToggleAlternative(usize),
+}
+
+/// 命中测试：判断鼠标点击是否落在学习卡片及其内部交互控件上。
+pub(super) fn hit_test_learning_card(
+    hdc: HDC,
+    data: &RenderData,
+    _x: i32,
+    y: i32,
+) -> Option<LearningHitAction> {
+    let card = data.learning_card.as_ref()?;
+    let theme = &data.theme;
+    let top_h = top_line_size(hdc, data).1;
+    let notice_h = notice_line_size(hdc, data).1;
+    let body_h = match data.layout {
+        LayoutMode::Vertical => vertical_size(hdc, data).1,
+        LayoutMode::Horizontal => horizontal_size(hdc, data).1,
+    };
+    let card_top = theme.padding + top_h + notice_h + body_h;
+    if y < card_top {
+        return None;
+    }
+
+    let line_h = line_height(hdc, theme.annotation_font);
+    let row1_h = line_h + theme.row_padding * 2;
+
+    if y <= card_top + row1_h {
+        return Some(LearningHitAction::ToggleExpand);
+    }
+
+    if card.expanded && !card.alternatives.is_empty() {
+        let alt_start = card_top + row1_h;
+        let alt_row_h = line_h + theme.row_padding;
+        let alt_idx = (y - alt_start) / alt_row_h;
+        if alt_idx >= 0 && (alt_idx as usize) < card.alternatives.len() {
+            return Some(LearningHitAction::ToggleAlternative(alt_idx as usize));
+        }
+    }
+    None
 }

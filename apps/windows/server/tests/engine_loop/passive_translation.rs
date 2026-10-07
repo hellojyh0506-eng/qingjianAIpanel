@@ -135,6 +135,7 @@ fn test_cloud_passive_translation_when_no_local_gloss_displayed_and_space_commit
         sequence: last_req.sequence,
         words: Vec::new(),
         sentence: Some("previously".to_string()),
+        alternatives: Vec::new(),
     });
 
     // 触发 tick 轮询
@@ -171,6 +172,7 @@ fn test_ctrl_1_commits_passive_translation() {
         sequence: last_req.sequence,
         words: Vec::new(),
         sentence: Some("beforehand".to_string()),
+        alternatives: Vec::new(),
     });
     // 轮询收到被动翻译响应
     let _ = router.handle(ClientMessage::Poll { session: SESSION });
@@ -199,6 +201,7 @@ fn test_stale_response_discarded_on_new_typing() {
         sequence: old_req.sequence,
         words: Vec::new(),
         sentence: Some("stale translation".to_string()),
+        alternatives: Vec::new(),
     });
     router.tick();
 
@@ -231,6 +234,7 @@ fn test_candidate_shift_discards_stale_target_translation() {
         sequence: req1.sequence,
         words: Vec::new(),
         sentence: Some("first".to_string()),
+        alternatives: Vec::new(),
     });
     router.tick();
 
@@ -301,6 +305,7 @@ fn test_backspace_and_esc_clears_passive_translation() {
         sequence: req.sequence,
         words: Vec::new(),
         sentence: Some("previously".to_string()),
+        alternatives: Vec::new(),
     });
     router.tick();
 
@@ -387,6 +392,7 @@ fn test_chongddren_passive_translation_strictly_binds_to_candidate_text_never_su
         sequence: req.sequence,
         words: Vec::new(),
         sentence: Some("the person charging up".to_string()),
+        alternatives: Vec::new(),
     });
     router.tick();
 
@@ -414,6 +420,7 @@ fn test_chongddren_passive_translation_strictly_binds_to_candidate_text_never_su
         sequence: req.sequence,
         words: Vec::new(),
         sentence: Some(rogue_long_sentence.to_string()),
+        alternatives: Vec::new(),
     });
     router.tick();
     // 再次 Poll，验证候选框绝不会挂上该异常长句

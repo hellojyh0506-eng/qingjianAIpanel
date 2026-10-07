@@ -96,6 +96,13 @@ impl Router {
             && event.modifiers.chord() == qingjian_platform::protocol::KeyModifiers::from(combo.modifiers)
     }
 
+    /// 快捷键展开/收起候选卡片「更多译法」（默认 Ctrl+Alt+E）。
+    pub(super) fn matches_learning_expand_combo(&self, event: &qingjian_platform::protocol::KeyEvent) -> bool {
+        let combo = self.config.toggle_learning_expand;
+        event.character.map(|c| c.to_ascii_lowercase()) == Some(combo.key.to_ascii_lowercase())
+            && event.modifiers.chord() == qingjian_platform::protocol::KeyModifiers::from(combo.modifiers)
+    }
+
     /// 任务栏图标右键菜单：标点与悬浮条的开关写回配置文件（热加载会再读回来），设置程序交给 UI 起。
     pub(super) fn handle_indicator(&mut self, command: IndicatorCommand) {
         match command {

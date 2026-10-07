@@ -49,8 +49,8 @@ pub use learning::{Forgotten, Learner, NoLearner};
 pub use marked::{AuxSegment, MarkedKind, MarkedSegment};
 pub use mode_keys::{ModeKeys, QUESTION_PREFIX};
 pub use prediction::{
-    CloudWord, NoPredictor, Prediction, PredictionKind, PredictionPolicy, PredictionRequest,
-    Predictor, SurroundingText,
+    CloudWord, NoPredictor, Prediction, PredictionAlternative, PredictionKind, PredictionPolicy,
+    PredictionRequest, Predictor, SurroundingText,
 };
 
 pub use query::Query;

@@ -43,6 +43,9 @@ pub(crate) struct RenderData {
 
     /// 候选上是否显示辅码（随帧下发的 `[general] aux_code_show`）。
     pub(super) show_code: bool,
+
+    /// 候选窗口第三层：轻量英语学习卡片。
+    pub(super) learning_card: Option<qingjian_render::LearningCard>,
 }
 
 impl RenderData {
@@ -59,6 +62,7 @@ impl RenderData {
             layout: LayoutMode::default(),
             theme_mode: ThemeMode::default(),
             show_code: false,
+            learning_card: None,
         }
     }
 
@@ -80,6 +84,26 @@ impl RenderData {
             (frame.page_count > 1).then(|| format!("{}/{}", frame.page + 1, frame.page_count));
         self.sentence = frame.sentence.clone();
         self.notice = frame.notice.clone();
+        self.learning_card = frame.learning_card.as_ref().map(|card| {
+            qingjian_render::LearningCard {
+                target_text: card.target_text.clone(),
+                status: match card.state {
+                    qingjian_platform::protocol::LearningState::Loading => {
+                        qingjian_render::LearningStatus::Loading
+                    }
+                    qingjian_platform::protocol::LearningState::Ready => {
+                        qingjian_render::LearningStatus::Ready
+                    }
+                    qingjian_platform::protocol::LearningState::Failed => {
+                        qingjian_render::LearningStatus::Failed
+                    }
+                },
+                primary: card.primary.as_ref().map(convert_expr),
+                alternatives: card.alternatives.iter().map(convert_expr).collect(),
+                expanded: card.expanded,
+                selected_index: card.selected_index,
+            }
+        });
     }
 
     /// 渲染器要的帧。提示（删了什么词）在渲染器里画在拼音行右侧，与 macOS 一致。
@@ -110,7 +134,22 @@ impl RenderData {
             footer: self.footer.clone(),
             sentence: self.sentence.clone(),
             status: self.notice.clone(),
+            learning_card: self.learning_card.clone(),
         }
+    }
+}
+
+fn convert_expr(
+    expr: &qingjian_platform::protocol::LearningExpression,
+) -> qingjian_render::LearningExpression {
+    qingjian_render::LearningExpression {
+        text: expr.text.clone(),
+        tag: expr.tag.clone(),
+        meaning: expr.meaning.clone(),
+        tone: expr.tone.clone(),
+        scenario: expr.scenario.clone(),
+        commonality: expr.commonality.clone(),
+        why_natural: expr.why_natural.clone(),
     }
 }
 

@@ -24,7 +24,7 @@ pub use policy::PredictionPolicy;
 pub use predictor::{NoPredictor, Predictor};
 pub use question::restates_question;
 pub use request::PredictionRequest;
-pub use response::Prediction;
+pub use response::{Prediction, PredictionAlternative};
 pub use script::translation_target;
 pub use surrounding_text::SurroundingText;
 

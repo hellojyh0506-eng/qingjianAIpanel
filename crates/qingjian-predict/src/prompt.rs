@@ -1,6 +1,6 @@
 //! 提示词与回复解析。模型只输出约定的 JSON，其余一概不信；拼音校验在 Core 里再做一遍。
 
-use qingjian_core::{CloudWord, PredictionKind, PredictionRequest};
+use qingjian_core::{CloudWord, PredictionAlternative, PredictionKind, PredictionRequest};
 use serde::{Deserialize, Serialize};
 
 /// 系统提示。语言跟随上下文，不限定中文。
@@ -59,9 +59,11 @@ text（待翻译的原文）、target_language（目标语言代码：zh 中文�
    - 大量采用真实口语自然的缩写（I'm、you're、gonna、wanna、kinda、gotta）、地道口语动词短语与高频习惯搭配（例如「搞定了」译为「All set.」或「Got it covered.」；「累瘫了」译为「I'm beat.」或「I'm wiped out.」；「太逗了/笑死我了」译为「That's hilarious.」或「I'm dead.」；「你咋还不来？」译为「Where you at?」或「Why aren't you here yet?」；「别墨迹了」译为「Stop dragging your feet.」或「Quit stalling.」）；\
    - 原文含有方言、调侃或情绪（如「我日他哥」、「我嘞个豆」、「得劲」）时，自然捕捉对应语气的鲜活美式口语（如「No freaking way.」「Holy crap.」「That feels so good.」），神形兼备；\
    - 语调必须真实可信，严禁在没有语境的前提下强行尬塞网络烂梗；\
+   - 提供 1 个最佳表达 sentence，以及 2~4 个不同语境/语气/难度的替换表达 alternatives，每个包含 text、tag（Casual/Natural/Professional/Formal/Idiomatic）、meaning（中文含义）、tone（语气）、scenario（适用场景）、commonality（是否常见）、why_natural（更自然的原因）；\
 3. 保留原文的语气、标点与情感；原文已经是目标语言时：目标不是中文就改译成中文，目标是中文就原样返回；\
 4. 绝不解释、不加引号、不加「译文：」之类的前缀，严格只输出单一 JSON。\
-输出 JSON：{\"sentence\": \"译文\"}";
+输出 JSON 格式：\
+{\"sentence\": \"最佳口语译文\", \"alternatives\": [{\"text\": \"…\", \"tag\": \"Casual/Natural/Professional/Formal/Idiomatic\", \"meaning\": \"…\", \"tone\": \"…\", \"scenario\": \"…\", \"commonality\": \"…\", \"why_natural\": \"…\"}]}";
 
 pub fn system_prompt(request: &PredictionRequest) -> &'static str {
     match request.kind {
@@ -155,12 +157,15 @@ pub struct Reply {
 
     /// 整句补全。
     pub sentence: Option<String>,
+
+    /// 针对当前候选的翻译表达备选与细览。
+    pub alternatives: Vec<PredictionAlternative>,
 }
 
 impl Reply {
     /// 什么都没给：没有词也没有整句。
     pub fn is_empty(&self) -> bool {
-        self.words.is_empty() && self.sentence.is_none()
+        self.words.is_empty() && self.sentence.is_none() && self.alternatives.is_empty()
     }
 }
 
@@ -174,6 +179,21 @@ struct RawReply {
 
     /// 问字模式的答案。
     answers: Vec<RawWord>,
+
+    /// 翻译模式的多语域表达。
+    alternatives: Vec<RawAlternative>,
+}
+
+#[derive(Deserialize, Default, Clone)]
+#[serde(default)]
+struct RawAlternative {
+    text: String,
+    tag: String,
+    meaning: String,
+    tone: String,
+    scenario: String,
+    commonality: String,
+    why_natural: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -204,9 +224,40 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
             if request.target_language == "en" && !is_valid_english_translation(&clean_s) {
                 return Reply::default();
             }
+            let mut alternatives = Vec::new();
+            for alt in raw.alternatives {
+                let alt_text = strip_translation_prefix(alt.text.trim());
+                if alt_text.is_empty() {
+                    continue;
+                }
+                if request.target_language == "en" && !is_valid_english_translation(&alt_text) {
+                    continue;
+                }
+                alternatives.push(PredictionAlternative {
+                    text: alt_text,
+                    tag: if alt.tag.trim().is_empty() {
+                        "Natural".to_owned()
+                    } else {
+                        alt.tag.trim().to_owned()
+                    },
+                    meaning: if alt.meaning.trim().is_empty() {
+                        request.text.clone()
+                    } else {
+                        alt.meaning.trim().to_owned()
+                    },
+                    tone: alt.tone.trim().to_owned(),
+                    scenario: alt.scenario.trim().to_owned(),
+                    commonality: alt.commonality.trim().to_owned(),
+                    why_natural: alt.why_natural.trim().to_owned(),
+                });
+            }
+            if alternatives.is_empty() {
+                alternatives = synthesize_fallback_alternatives(&request.text, &clean_s);
+            }
             return Reply {
                 words: Vec::new(),
                 sentence: Some(clean_s),
+                alternatives,
             };
         }
         return Reply::default();
@@ -383,6 +434,74 @@ fn is_valid_english_translation(s: &str) -> bool {
         return false;
     }
     s.chars().any(|c| c.is_ascii_alphabetic())
+}
+
+/// 当模型未返回 alternatives 数组时，从主译文合成多语域口语备选与学习细览
+pub fn synthesize_fallback_alternatives(
+    source_zh: &str,
+    best_en: &str,
+) -> Vec<PredictionAlternative> {
+    let mut alts = Vec::new();
+    // 1. Natural: 主推地道表达
+    alts.push(PredictionAlternative {
+        text: best_en.to_owned(),
+        tag: "Natural".to_owned(),
+        meaning: source_zh.to_owned(),
+        tone: "自然生动 · 地道美式口语".to_owned(),
+        scenario: "日常交流 / 即时聊天".to_owned(),
+        commonality: "极高频 (Native 常用)".to_owned(),
+        why_natural: "表达符合母语青年当下交流习惯，地道且无机翻生硬感".to_owned(),
+    });
+    // 2. Casual: 随和口语缩写或口语版本
+    let mut casual_text = String::new();
+    for (orig, repl) in &[
+        ("cannot", "can't"),
+        ("do not", "don't"),
+        ("will not", "won't"),
+        ("is not", "isn't"),
+        ("are not", "aren't"),
+        ("I am", "I'm"),
+        ("You are", "You're"),
+        ("did not", "didn't"),
+        ("could not", "couldn't"),
+        ("would not", "wouldn't"),
+    ] {
+        if best_en.contains(orig) {
+            casual_text = best_en.replace(orig, repl);
+            break;
+        }
+    }
+    if !casual_text.is_empty() && casual_text != best_en {
+        alts.push(PredictionAlternative {
+            text: casual_text,
+            tag: "Casual".to_owned(),
+            meaning: source_zh.to_owned(),
+            tone: "随和亲切 · 熟人日常".to_owned(),
+            scenario: "朋友闲聊 / 微信发消息".to_owned(),
+            commonality: "高频口语".to_owned(),
+            why_natural: "使用口语自然缩写，更贴近美语日常聊天心流".to_owned(),
+        });
+    }
+    // 3. Professional: 得体职场变体
+    if best_en.contains("can't") || best_en.contains("don't") || best_en.contains("gonna") || best_en.contains("wanna") {
+        let prof_text = best_en
+            .replace("can't", "cannot")
+            .replace("don't", "do not")
+            .replace("gonna", "going to")
+            .replace("wanna", "want to");
+        if prof_text != best_en {
+            alts.push(PredictionAlternative {
+                text: prof_text,
+                tag: "Professional".to_owned(),
+                meaning: source_zh.to_owned(),
+                tone: "专业严谨 · 职场得体".to_owned(),
+                scenario: "工作沟通 / 商务邮件".to_owned(),
+                commonality: "职场常用".to_owned(),
+                why_natural: "完整语法结构，适合书面或跨部门工作汇报场景".to_owned(),
+            });
+        }
+    }
+    alts
 }
 
 #[cfg(test)]
@@ -576,5 +695,51 @@ mod tests {
             Some("我真的服了"),
             "Dialect exclamation '我嘞个豆' followed by '我真的服了' must be accepted"
         );
+    }
+
+    #[test]
+    fn test_p2_learning_alternatives_parsing_and_synthesis() {
+        let mut translate = request("", false);
+        translate.kind = PredictionKind::Translate;
+        translate.text = "他充电了吗".to_owned();
+        translate.target_language = "en".to_owned();
+
+        // 1. 测试模型同时返回 sentence + alternatives
+        let rich_reply = r#"{
+            "sentence": "Did he charge it?",
+            "alternatives": [
+                {
+                    "text": "Did he charge it?",
+                    "tag": "Natural",
+                    "meaning": "他充电了吗",
+                    "tone": "自然日常疑问",
+                    "scenario": "日常朋友闲聊",
+                    "commonality": "极高频",
+                    "why_natural": "标准地道口语疑问"
+                },
+                {
+                    "text": "Has it finished charging?",
+                    "tag": "Professional",
+                    "meaning": "电充满了没有？",
+                    "tone": "清晰完整",
+                    "scenario": "询问设备状态",
+                    "commonality": "高频",
+                    "why_natural": "强调充电完成状态"
+                }
+            ]
+        }"#;
+        let parsed = parse_reply(rich_reply, &translate);
+        assert_eq!(parsed.sentence.as_deref(), Some("Did he charge it?"));
+        assert_eq!(parsed.alternatives.len(), 2);
+        assert_eq!(parsed.alternatives[0].tag, "Natural");
+        assert_eq!(parsed.alternatives[1].tag, "Professional");
+
+        // 2. 测试模型只返回单个 sentence 时，自动合成多语域口语备选
+        let simple_reply = r#"{"sentence": "I cannot believe this."}"#;
+        let parsed_simple = parse_reply(simple_reply, &translate);
+        assert_eq!(parsed_simple.sentence.as_deref(), Some("I cannot believe this."));
+        assert!(!parsed_simple.alternatives.is_empty());
+        assert_eq!(parsed_simple.alternatives[0].tag, "Natural");
+        assert!(parsed_simple.alternatives.iter().any(|a| a.tag == "Casual" && a.text == "I can't believe this."));
     }
 }

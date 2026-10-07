@@ -34,7 +34,9 @@ pub mod key;
 
 pub use client::ClientMessage;
 pub use codec::{CodecError, DEFAULT_PIPE_NAME, read_message, write_message};
-pub use frame::{Frame, PreeditKind, PreeditSegment};
+pub use frame::{
+    Frame, LearningCardFrame, LearningExpression, LearningState, PreeditKind, PreeditSegment,
+};
 pub use indicator::{IndicatorCommand, IndicatorState};
 pub use key::{KeyEvent, KeyModifiers, KeyOutcome};
 pub use screen_rect::ScreenRect;

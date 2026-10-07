@@ -5,6 +5,7 @@
 mod columns;
 mod horizontal;
 mod item;
+mod learning;
 mod matrix;
 mod rendered;
 mod status;
@@ -161,17 +162,22 @@ impl Renderer {
         );
         let mut y = margin + metrics.padding();
         y += self.draw_top_line(&mut canvas, frame, &metrics, margin, y);
-        match layout {
+        let body_height = match layout {
             Layout::Vertical => {
                 self.draw_vertical(&mut canvas, frame, &metrics, margin, y, content_width);
+                self.vertical_size(frame, &metrics).1
             }
             Layout::Horizontal if frame.columns > 0 => {
                 self.draw_matrix(&mut canvas, frame, &metrics, margin, y, content_width);
+                self.matrix_size(frame, &metrics).1
             }
             Layout::Horizontal => {
                 self.draw_horizontal(&mut canvas, frame, &metrics, margin, y, content_width);
+                self.horizontal_size(frame, &metrics).1
             }
-        }
+        };
+        y += body_height;
+        self.draw_learning_card(&mut canvas, frame, &metrics, margin, y, content_width);
         Ok(Rendered {
             pixmap: canvas.into_pixmap(),
             content_x: margin as u32,
@@ -202,13 +208,14 @@ impl Renderer {
             Layout::Horizontal if frame.columns > 0 => self.matrix_size(frame, m),
             Layout::Horizontal => self.horizontal_size(frame, m),
         };
-        let width = top_width.max(body_width) + m.padding() * 2.0;
+        let (learning_width, learning_height) = self.learning_card_size(frame, m);
+        let width = top_width.max(body_width).max(learning_width) + m.padding() * 2.0;
         // 竖排时候选都很短（没有译词）窗口会窄得难看，给个下限
         let width = match layout {
             Layout::Vertical => width.max(m.px(MIN_VERTICAL_WIDTH)),
             Layout::Horizontal => width,
         };
-        (width, top_height + body_height + m.padding() * 2.0)
+        (width, top_height + body_height + learning_height + m.padding() * 2.0)
     }
 
     pub(super) fn measure(&mut self, text: &str, style: &TextStyle) -> TextSize {

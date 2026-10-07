@@ -1,7 +1,9 @@
 //! 一次要绘制的组句状态：preedit 行加候选页。
 
+pub mod learning;
 pub mod preedit;
 
+pub use learning::{LearningCardFrame, LearningExpression, LearningState};
 pub use preedit::{PreeditKind, PreeditSegment};
 
 use serde::{Deserialize, Serialize};
@@ -59,6 +61,10 @@ pub struct Frame {
     /// 当前英语学习模式（Daily / Learn / Drill）。
     #[serde(default)]
     pub learning_mode: crate::LearningMode,
+
+    /// 绑定的轻量英语学习卡片（仅在 Learn 模式或主动展开时存在）。
+    #[serde(default)]
+    pub learning_card: Option<LearningCardFrame>,
 }
 
 impl Frame {

@@ -28,6 +28,9 @@ pub struct ShortcutConfig {
     /// 循环切换英语学习模式（Daily / Learn / Drill，缺省 Ctrl+Alt+L）。
     pub toggle_learning_mode: KeyCombo,
 
+    /// 展开/收起候选卡片「更多译法」（缺省 Ctrl+Alt+E）。
+    pub toggle_learning_expand: KeyCombo,
+
     /// 数字键配这些修饰键：删掉候选（用户词整个删掉，词库词清掉对它的学习）。
     pub delete_candidate: Modifiers,
 }
@@ -46,6 +49,7 @@ impl Default for ShortcutConfig {
             translation_second,
             translate_selection: KeyCombo::TRANSLATE_DEFAULT,
             toggle_learning_mode: KeyCombo::LEARNING_MODE_DEFAULT,
+            toggle_learning_expand: KeyCombo::LEARNING_EXPAND_DEFAULT,
             delete_candidate: Modifiers::SHIFT,
         }
     }

@@ -113,6 +113,7 @@ impl Router {
             sentence: None,
             notice: None,
             learning_mode: self.learning_mode,
+            learning_card: None,
         }
     }
 }

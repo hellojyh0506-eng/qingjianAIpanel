@@ -239,6 +239,7 @@ impl Router {
             sentence: None,
             notice: Some(notice),
             learning_mode: self.learning_mode,
+            learning_card: None,
         }
     }
 }

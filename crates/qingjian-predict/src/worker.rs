@@ -107,6 +107,7 @@ impl Worker {
             sequence,
             words: reply.words,
             sentence: reply.sentence,
+            alternatives: reply.alternatives,
         });
     }
 }

@@ -1,9 +1,11 @@
 //! 一帧要画的全部内容：顶部拼音行、候选行、高亮、页脚、右侧整句补全。只是展示形态，不含排序或查词。
 
+mod learning;
 mod preedit;
 mod row;
 mod tone;
 
+pub use learning::{LearningCard, LearningExpression, LearningStatus};
 pub use preedit::{Preedit, PreeditSegment, PreeditStyle};
 pub use row::Row;
 pub use tone::Tone;
@@ -33,6 +35,9 @@ pub struct Frame {
 
     /// 拼音行右侧的一句临时状态（删了什么词），有它时不画整句补全。
     pub status: Option<String>,
+
+    /// 绑定的轻量英语学习卡片（仅在 Learn 模式或主动展开时存在）。
+    pub learning_card: Option<LearningCard>,
 }
 
 impl Frame {

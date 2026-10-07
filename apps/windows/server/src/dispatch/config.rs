@@ -97,6 +97,9 @@ pub struct RouterConfig {
 
     /// 切换学习模式快捷键（`[shortcut] toggle_learning_mode`）。
     pub toggle_learning_mode: KeyCombo,
+
+    /// 展开/收起候选卡片「更多译法」（`[shortcut] toggle_learning_expand`）。
+    pub toggle_learning_expand: KeyCombo,
 }
 
 impl RouterConfig {
@@ -149,6 +152,7 @@ impl From<&Config> for RouterConfig {
             learning_language_off: config.general.learning_language_off(),
             learning_mode: config.general.learning_mode,
             toggle_learning_mode: config.shortcut.toggle_learning_mode,
+            toggle_learning_expand: config.shortcut.toggle_learning_expand,
         }
     }
 }

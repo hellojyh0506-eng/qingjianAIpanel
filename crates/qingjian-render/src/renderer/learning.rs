@@ -1,0 +1,205 @@
+//! 轻量英语学习卡片（候选窗口第三层与渐进展开层）的尺寸计算与绘制。
+
+use super::Metrics;
+use super::Renderer;
+use crate::canvas::Canvas;
+use crate::color::Color;
+use crate::frame::{Frame, LearningStatus};
+
+impl Renderer {
+    /// 计算轻量英语学习卡片需要的尺寸（若不存在卡片返回 0, 0）。
+    pub(super) fn learning_card_size(&mut self, frame: &Frame, m: &Metrics) -> (f32, f32) {
+        let Some(card) = &frame.learning_card else {
+            return (0.0, 0.0);
+        };
+        let mut width: f32 = 0.0;
+        let mut height: f32 = 0.0;
+        let style = m.annotation_style(m.theme.colors.gloss);
+        let tag_style = m.style(m.theme.index_font, m.theme.colors.fresh);
+
+        // 1. Layer 3: 主条目 (Flag + 状态/主要文本 + 展开按钮)
+        let flag_prefix = "🇺🇸 ";
+        let flag_width = self.measure(flag_prefix, &style).width;
+        let main_text = match card.status {
+            LearningStatus::Loading => "正在推荐地道口语...",
+            LearningStatus::Failed => "暂无地道口语推荐",
+            LearningStatus::Ready => {
+                if let Some(prim) = &card.primary {
+                    &prim.text
+                } else if let Some(first) = card.alternatives.first() {
+                    &first.text
+                } else {
+                    ""
+                }
+            }
+        };
+        let main_width = self.measure(main_text, &style).width;
+        let btn_text = if card.expanded { "收起 ▴" } else { "更多译法 ▾" };
+        let btn_width = self.measure(btn_text, &m.index_style()).width;
+
+        let row1_width = flag_width + main_width + m.column_gap() * 2.0 + btn_width;
+        width = width.max(row1_width);
+        let line_height = style.line_height.max(m.px(m.theme.annotation_font.line_height));
+        height += line_height + m.row_padding() * 2.0;
+
+        // 2. Layer 4: 渐进展开列表 (2~5 个备选表达 + 标签)
+        if card.expanded && !card.alternatives.is_empty() {
+            height += m.px(4.0); // 分隔留白
+            for alt in &card.alternatives {
+                let tag_str = format!("[{}] ", alt.tag);
+                let tag_w = self.measure(&tag_str, &tag_style).width;
+                let text_w = self.measure(&alt.text, &style).width;
+                width = width.max(tag_w + text_w + m.column_gap());
+                height += line_height + m.row_padding();
+            }
+
+            // 3. 选中表达的详览卡片 (含义、语气、场景、频度、地道解析)
+            if let Some(sel_idx) = card.selected_index {
+                if let Some(alt) = card.alternatives.get(sel_idx) {
+                    let small_style = m.style(m.theme.index_font, m.theme.colors.pos);
+                    let detail_lines = [
+                        format!("含义: {}", alt.meaning),
+                        format!("语气: {}", alt.tone),
+                        format!("场景: {}", alt.scenario),
+                        format!("频度: {}", alt.commonality),
+                        format!("为什么地道: {}", alt.why_natural),
+                    ];
+                    height += m.px(6.0); // 详情卡片顶部间距
+                    for line in &detail_lines {
+                        let lw = self.measure(line, &small_style).width;
+                        width = width.max(lw + m.column_gap() * 2.0);
+                        height += small_style.line_height + m.px(2.0);
+                    }
+                    height += m.px(6.0); // 详情卡片底部留白
+                }
+            }
+        }
+
+        (width, height)
+    }
+
+    /// 绘制轻量英语学习卡片。
+    pub(super) fn draw_learning_card(
+        &mut self,
+        canvas: &mut Canvas,
+        frame: &Frame,
+        m: &Metrics,
+        left: f32,
+        mut y: f32,
+        content_width: f32,
+    ) {
+        let Some(card) = &frame.learning_card else {
+            return;
+        };
+        let style = m.annotation_style(m.theme.colors.gloss);
+        let tag_style = m.style(m.theme.index_font, m.theme.colors.fresh);
+        let active_text_style = m.annotation_style(m.theme.colors.text);
+
+        // 柔和顶部分隔细线，与第二层中文候选自然解耦
+        let sep_y = y + m.row_padding() / 2.0;
+        canvas.fill_rect(
+            left + m.padding(),
+            sep_y,
+            content_width - m.padding() * 2.0,
+            m.px(1.0).max(1.0),
+            Color::rgba(128, 128, 128, 38),
+        );
+        y += m.row_padding();
+
+        // 1. Layer 3: 主条目 (Flag + 最佳推荐 + 展开按钮)
+        let flag_prefix = "🇺🇸 ";
+        let flag_style = m.annotation_style(m.theme.colors.fresh);
+        let mut x = left + m.padding();
+        x += self.draw_text(canvas, flag_prefix, &flag_style, x, y);
+
+        let main_text = match card.status {
+            LearningStatus::Loading => "正在推荐地道口语...",
+            LearningStatus::Failed => "暂无地道口语推荐",
+            LearningStatus::Ready => {
+                if let Some(prim) = &card.primary {
+                    &prim.text
+                } else if let Some(first) = card.alternatives.first() {
+                    &first.text
+                } else {
+                    ""
+                }
+            }
+        };
+        let text_color_style = if card.status == LearningStatus::Ready {
+            &active_text_style
+        } else {
+            &style
+        };
+        self.draw_text(canvas, main_text, text_color_style, x, y);
+
+        // 右侧「更多译法 ▾ / 收起 ▴」
+        let btn_text = if card.expanded { "收起 ▴" } else { "更多译法 ▾" };
+        let btn_style = m.style(m.theme.index_font, m.theme.colors.cloud);
+        let btn_size = self.measure(btn_text, &btn_style);
+        let btn_x = left + content_width - m.padding() - btn_size.width;
+        self.draw_text(canvas, btn_text, &btn_style, btn_x, y);
+
+        let line_height = style.line_height.max(m.px(m.theme.annotation_font.line_height));
+        y += line_height + m.row_padding();
+
+        // 2. Layer 4: 备选列表
+        if card.expanded && !card.alternatives.is_empty() {
+            for (idx, alt) in card.alternatives.iter().enumerate() {
+                let is_selected = card.selected_index == Some(idx);
+                let alt_y = y;
+                let row_h = line_height + m.row_padding();
+
+                if is_selected {
+                    // 高亮选中条目底色（柔和浅色背景）
+                    canvas.fill_round_rect(
+                        left + m.padding() / 2.0,
+                        alt_y - m.row_padding() / 4.0,
+                        content_width - m.padding(),
+                        row_h,
+                        m.px(4.0),
+                        m.theme.colors.highlight,
+                    );
+                }
+
+                let mut ax = left + m.padding() + m.px(4.0);
+                let tag_str = format!("[{}] ", alt.tag);
+                ax += self.draw_text(canvas, &tag_str, &tag_style, ax, alt_y);
+                self.draw_text(canvas, &alt.text, &active_text_style, ax, alt_y);
+
+                y += row_h;
+            }
+
+            // 3. 选中表达的详览卡片
+            if let Some(sel_idx) = card.selected_index {
+                if let Some(alt) = card.alternatives.get(sel_idx) {
+                    let small_style = m.style(m.theme.index_font, m.theme.colors.pos);
+                    let card_box_y = y + m.px(2.0);
+                    let detail_lines = [
+                        format!("含义: {}", alt.meaning),
+                        format!("语气: {}", alt.tone),
+                        format!("场景: {}", alt.scenario),
+                        format!("频度: {}", alt.commonality),
+                        format!("为什么地道: {}", alt.why_natural),
+                    ];
+                    let card_h = (small_style.line_height + m.px(2.0)) * 5.0 + m.px(8.0);
+
+                    // 卡片背景底色
+                    canvas.fill_round_rect(
+                        left + m.padding() / 2.0,
+                        card_box_y,
+                        content_width - m.padding(),
+                        card_h,
+                        m.px(6.0),
+                        Color::rgba(128, 128, 128, 20),
+                    );
+
+                    let mut dy = card_box_y + m.px(4.0);
+                    for line in &detail_lines {
+                        self.draw_text(canvas, line, &small_style, left + m.padding() + m.px(6.0), dy);
+                        dy += small_style.line_height + m.px(2.0);
+                    }
+                }
+            }
+        }
+    }
+}

@@ -74,6 +74,9 @@ pub struct Router {
     /// 当前被动翻译请求对应的候选词；若当前首选词变更则作废旧译文，防止污染新候选。
     pub(crate) passive_translation_target: Option<String>,
 
+    /// 当前候选框第三层轻量英语学习卡片帧数据（Learn 模式或主动展开时呈现）。
+    pub(crate) passive_learning_card: Option<qingjian_platform::protocol::LearningCardFrame>,
+
     /// 已发出、等 DLL 回选区的请求号；对不上的 `Selection` 丢弃。
     pending_selection: Option<u64>,
 
@@ -148,6 +151,7 @@ impl Router {
             recall_session: None,
             passive_translation: None,
             passive_translation_target: None,
+            passive_learning_card: None,
             learning_mode: config.learning_mode,
             pending_selection: None,
             selection_seq: 0,
