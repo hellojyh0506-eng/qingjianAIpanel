@@ -23,8 +23,9 @@ use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, CoInit
 use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetFocus, MapVirtualKeyW, SendInput, SetFocus,
-    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, MAP_VIRTUAL_KEY_TYPE,
+    ActivateKeyboardLayout, GetFocus, LoadKeyboardLayoutW, MapVirtualKeyW, SendInput, SetFocus,
+    ACTIVATE_KEYBOARD_LAYOUT_FLAGS, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+    KLF_ACTIVATE, MAP_VIRTUAL_KEY_TYPE,
     VK_ESCAPE, VK_OEM_MINUS, VK_OEM_PERIOD, VK_OEM_PLUS, VK_SHIFT, VK_SPACE,
 };
 use windows::Win32::UI::TextServices::{
@@ -32,8 +33,9 @@ use windows::Win32::UI::TextServices::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, PeekMessageW, RegisterClassW,
-    SetForegroundWindow, ShowWindow, TranslateMessage, MSG, PM_REMOVE, SW_SHOWNORMAL,
+    GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+    PeekMessageW, RegisterClassW, SetForegroundWindow, ShowWindow, TranslateMessage,
+    MSG, PM_REMOVE, SW_SHOWNORMAL,
     WNDCLASSW, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
 };
 use windows::core::{GUID, PCWSTR, w};
@@ -156,6 +158,7 @@ unsafe extern "system" fn host_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 struct KeyMessageRecord {
     hwnd: HWND,
@@ -168,6 +171,9 @@ struct RealHostWindow {
     hwnd_edit: HWND,
     recorded_keys: Mutex<Vec<KeyMessageRecord>>,
 }
+
+// 同一 integration binary 中的实机测试共用唯一 installed Server / TSF / foreground desktop，必须串行。
+static REAL_HOST_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 impl RealHostWindow {
     fn new() -> Self {
@@ -383,6 +389,7 @@ fn type_system_string(host: &RealHostWindow, s: &str) {
 
 #[test]
 fn test_real_windows_host_keyboard_validation_end_to_end() {
+    let _test_lock = REAL_HOST_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     // 1. Loaded / Installed Validation
     let (installed_dll_path, dll_hash) = verify_loaded_installed_binaries();
 
@@ -427,7 +434,21 @@ fn test_real_windows_host_keyboard_validation_end_to_end() {
         );
         println!("[REAL-EMPIRICAL] Pre-activation Qingjian module state: NOT_LOADED");
 
-        // 4. 显式激活 Qingjian TSF Language Profile，严格验证返回值
+        // 4. 设置线程活动键盘布局为中文 (0x0804)，并激活 TSF ThreadMgr 连接宿主线程
+
+        let hkl = unsafe { LoadKeyboardLayoutW(w!("00000804"), KLF_ACTIVATE) }.expect("LoadKeyboardLayoutW(00000804) 必须成功");
+        unsafe { let _ = ActivateKeyboardLayout(hkl, ACTIVATE_KEYBOARD_LAYOUT_FLAGS(0)); }
+
+        let thread_mgr: ITfThreadMgr = unsafe {
+            CoCreateInstance(&CLSID_TF_ThreadMgr, None, CLSCTX_INPROC_SERVER)
+                .expect("CoCreateInstance(CLSID_TF_ThreadMgr) 必须成功")
+        };
+        let client_id = unsafe {
+            thread_mgr.Activate().expect("thread_mgr.Activate 成功")
+        };
+        println!("[REAL-EMPIRICAL] TSF ThreadMgr 已成功激活，client_id = {}", client_id);
+
+        // 5. 显式激活 Qingjian TSF Language Profile，严格验证返回值
         let profiles: ITfInputProcessorProfiles = unsafe {
             CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)
                 .expect("CoCreateInstance(CLSID_TF_InputProcessorProfiles) 必须成功")
@@ -439,7 +460,7 @@ fn test_real_windows_host_keyboard_validation_end_to_end() {
         }
         println!("[REAL-EMPIRICAL] ActivateLanguageProfile(&CLSID_QINGJIAN) 成功返回 S_OK");
 
-        // 5. 严格调用 GetActiveLanguageProfile 逐项验证当前激活 Profile
+        // 6. 严格调用 GetActiveLanguageProfile 逐项验证当前激活 Profile
         let mut active_langid: u16 = 0;
         let mut active_profile: GUID = GUID::zeroed();
         unsafe {
@@ -459,17 +480,6 @@ fn test_real_windows_host_keyboard_validation_end_to_end() {
             active_profile, GUID_PROFILE,
             "[REAL-EMPIRICAL] 当前激活的 Profile GUID 必须严格匹配 Qingjian Profile GUID"
         );
-
-        // 6. 初始化并激活 TSF ThreadMgr
-        let thread_mgr: ITfThreadMgr = unsafe {
-            CoCreateInstance(&CLSID_TF_ThreadMgr, None, CLSCTX_INPROC_SERVER)
-                .expect("CoCreateInstance(CLSID_TF_ThreadMgr) 必须成功")
-        };
-
-        let client_id = unsafe {
-            thread_mgr.Activate().expect("thread_mgr.Activate 成功")
-        };
-        println!("[REAL-EMPIRICAL] TSF ThreadMgr 已成功激活，client_id = {}", client_id);
 
         // 7. 创建真实 Host Application 窗口与 EDIT 控件，并确保窗口处于焦点状态
         let host = RealHostWindow::new();
@@ -504,9 +514,23 @@ fn test_real_windows_host_keyboard_validation_end_to_end() {
         println!("[REAL-EMPIRICAL] 正在对照验证中文模式下的按键行为 (预期被 TSF 拦截为 VK_PROCESSKEY)...");
         send_system_key(0x41, false); // 发送 'a'
         host.pump_messages(Duration::from_millis(300));
-        let zh_records = host.get_records();
+        let mut zh_records = host.get_records();
         println!("[REAL-EMPIRICAL] zh_records (count={}): {:?}", zh_records.len(), zh_records);
-        let has_processkey = zh_records.iter().any(|r| r.message == 0x0100 && r.wparam == 0xE5);
+        let mut has_processkey = zh_records.iter().any(|r| r.message == 0x0100 && r.wparam == 0xE5);
+        if !has_processkey {
+            println!("[REAL-EMPIRICAL] 检测到初始处于英文模式，模拟物理单击 Shift 切换至中文拼音模式");
+            send_raw_vk(VK_SHIFT.0, false);
+            host.pump_messages(Duration::from_millis(30));
+            send_raw_vk(VK_SHIFT.0, true);
+            host.pump_messages(Duration::from_millis(200));
+
+            host.clear_edit();
+            host.clear_records();
+            send_system_key(0x41, false); // 发送 'a'
+            host.pump_messages(Duration::from_millis(300));
+            zh_records = host.get_records();
+            has_processkey = zh_records.iter().any(|r| r.message == 0x0100 && r.wparam == 0xE5);
+        }
         println!("[REAL-EMPIRICAL] 中文模式下击键是否产生 VK_PROCESSKEY (0xE5): {}", has_processkey);
         assert!(
             has_processkey,
@@ -574,6 +598,10 @@ fn test_real_windows_host_keyboard_validation_end_to_end() {
             );
         }
 
+        unsafe {
+            let _ = thread_mgr.Deactivate();
+        }
+
         if !h_desk.is_invalid() {
             unsafe { let _ = CloseDesktop(h_desk); }
         }
@@ -584,5 +612,7 @@ fn test_real_windows_host_keyboard_validation_end_to_end() {
 
     if let Some(mut child) = server_child {
         let _ = child.kill();
+        let _ = child.wait();
     }
+    thread::sleep(Duration::from_millis(500));
 }
