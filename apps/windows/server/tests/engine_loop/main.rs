@@ -4,6 +4,7 @@ mod aux_code;
 mod composing;
 mod english;
 mod modes;
+mod passive_translation;
 mod rescoring;
 mod shortcuts;
 mod status;
