@@ -19,6 +19,7 @@ use crate::prompt::{self, Reply};
 const TRANSLATE_MAX_TOKENS: u32 = 1500;
 const COMPOSE_MAX_TOKENS: u32 = 300;
 const QUESTION_MAX_TOKENS: u32 = 200;
+const COMPARE_MAX_TOKENS: u32 = 600;
 
 /// 采样温度：联想要稳，不要花。
 const TEMPERATURE: f32 = 0.3;
@@ -69,6 +70,7 @@ impl ChatClient {
             qingjian_core::PredictionKind::Translate => TRANSLATE_MAX_TOKENS,
             qingjian_core::PredictionKind::Compose => COMPOSE_MAX_TOKENS,
             qingjian_core::PredictionKind::Question => QUESTION_MAX_TOKENS,
+            qingjian_core::PredictionKind::Compare => COMPARE_MAX_TOKENS,
         };
         let content = self
             .chat(prompt::system_prompt(request), &user, max_tokens)

@@ -219,6 +219,82 @@ impl CandidateWindowInner {
                                 card.selected_index = Some(idx);
                             }
                         }
+                        view::LearningHitAction::StartDrill => {
+                            card.drill_stage = Some(qingjian_render::DrillStage::Input);
+                            card.drill_input.clear();
+                            card.drill_attempt = None;
+                            card.drill_notice = None;
+                        }
+                        view::LearningHitAction::Reveal => {
+                            let ref_str = card
+                                .primary
+                                .as_ref()
+                                .map(|p| p.text.clone())
+                                .unwrap_or_default();
+                            card.drill_notice = Some(format!("参考表达: {}", ref_str));
+                        }
+                        view::LearningHitAction::Compare => {
+                            let input = card.drill_input.trim();
+                            if input.is_empty() {
+                                card.drill_notice = Some("请输入英文表达进行对比".to_string());
+                            } else {
+                                let ref_str = card
+                                    .primary
+                                    .as_ref()
+                                    .map(|p| p.text.as_str())
+                                    .unwrap_or("");
+                                let attempt = qingjian_learning::RecallBook::evaluate_attempt(
+                                    &card.target_text,
+                                    input,
+                                    ref_str,
+                                );
+                                card.drill_attempt = Some(qingjian_render::RecallAttempt {
+                                    prompt: attempt.prompt,
+                                    user_attempt: attempt.user_attempt,
+                                    reference_expression: attempt.reference_expression,
+                                    timestamp: attempt.timestamp,
+                                    comparison: qingjian_render::ComparisonResult {
+                                        status: attempt.comparison.status.map(|s| match s {
+                                            qingjian_core::ComparisonStatus::ExactMatch => {
+                                                qingjian_render::ComparisonStatus::ExactMatch
+                                            }
+                                            qingjian_core::ComparisonStatus::NaturalBetter => {
+                                                qingjian_render::ComparisonStatus::NaturalBetter
+                                            }
+                                            qingjian_core::ComparisonStatus::GrammarIssue => {
+                                                qingjian_render::ComparisonStatus::GrammarIssue
+                                            }
+                                            qingjian_core::ComparisonStatus::Chinglish => {
+                                                qingjian_render::ComparisonStatus::Chinglish
+                                            }
+                                            qingjian_core::ComparisonStatus::EmptyInput => {
+                                                qingjian_render::ComparisonStatus::EmptyInput
+                                            }
+                                        }),
+                                        key_advice: attempt.comparison.key_advice,
+                                        user_formatted: attempt.comparison.user_formatted,
+                                        natural_expression: attempt.comparison.natural_expression,
+                                    },
+                                    error_categories: attempt.error_categories,
+                                });
+                                card.drill_stage = Some(qingjian_render::DrillStage::Compared);
+                                card.drill_notice = None;
+                            }
+                        }
+                        view::LearningHitAction::Retry => {
+                            card.drill_stage = Some(qingjian_render::DrillStage::Input);
+                            card.drill_notice = None;
+                            card.drill_attempt = None;
+                        }
+                        view::LearningHitAction::Save => {
+                            card.drill_notice = Some("⭐ 已保存到生词本".to_string());
+                        }
+                        view::LearningHitAction::Finish => {
+                            card.drill_stage = None;
+                            card.drill_input.clear();
+                            card.drill_attempt = None;
+                            card.drill_notice = None;
+                        }
                     }
                 }
             }

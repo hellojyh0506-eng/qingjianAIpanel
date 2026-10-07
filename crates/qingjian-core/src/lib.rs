@@ -38,7 +38,8 @@ pub use engine::{
     ModeKeys, NEURAL_MARGIN, NEURAL_WEIGHT, NoGlossFiller, NoInputLogger, NoLearner, NoPredictor,
     NoTranslator, NoUsageMeter, NoVocabularyTracker, Prediction, PredictionAlternative, PredictionKind, PredictionPolicy,
     PredictionRequest, Predictor, QUESTION_PREFIX, Query, RESCORE_CONTEXT_CHARS, RawPreedit,
-    RecallItem, RecallOutcome, RecallTracker, NoRecallTracker,
+    RecallAttempt, RecallItem, RecallOutcome, RecallTracker, NoRecallTracker,
+    ComparisonResult, ComparisonStatus,
     SurroundingText, Timings, Translator, Usage, UsageMeter, UsageSummary, VocabularySummary,
     VocabularyTracker, book_scale, is_valid_aux_code_key,
 };

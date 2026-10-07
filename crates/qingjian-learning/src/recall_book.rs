@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 
 use jiff::civil::Date;
 use qingjian_core::storage::{read_text_lossy, write_atomic_str};
-use qingjian_core::{Language, RecallItem, RecallOutcome, RecallTracker};
+use qingjian_core::{
+    ComparisonResult, ComparisonStatus, Language, RecallAttempt, RecallItem, RecallOutcome,
+    RecallTracker,
+};
 
 use crate::error::LearningError;
 
@@ -175,6 +178,41 @@ impl RecallBook {
         }
     }
 
+    /// 记一次主动回忆 Attempt 尝试
+    pub fn record_attempt_on(
+        &mut self,
+        language: Language,
+        attempt: &RecallAttempt,
+        date: Date,
+    ) {
+        let input = attempt.user_attempt.trim();
+        if input.is_empty() {
+            return;
+        }
+        let outcome = match attempt.comparison.status {
+            Some(ComparisonStatus::ExactMatch) => RecallOutcome::Success,
+            Some(ComparisonStatus::NaturalBetter) => {
+                if Self::evaluate_with_prompt(input, &attempt.reference_expression, Some(&attempt.prompt)) {
+                    RecallOutcome::Success
+                } else {
+                    RecallOutcome::Failure
+                }
+            }
+            Some(ComparisonStatus::GrammarIssue) | Some(ComparisonStatus::Chinglish) => {
+                RecallOutcome::Failure
+            }
+            _ => return,
+        };
+        self.record_recall_with_input_on(
+            language,
+            &attempt.prompt,
+            &attempt.reference_expression,
+            outcome,
+            input,
+            date,
+        );
+    }
+
     /// 查询该词条的首选自然替代表达（仅在达到 Learned 状态时生效）
     pub fn preferred_alternative_for(
         &self,
@@ -315,6 +353,97 @@ impl RecallBook {
     /// 向后兼容的单目标回忆判定
     pub fn evaluate(input: &str, target: &str) -> bool {
         Self::evaluate_with_prompt(input, target, None)
+    }
+
+    /// 评估用户的主动回忆尝试并生成结构化的 Attempt 与对比结果
+    pub fn evaluate_attempt(prompt: &str, user_attempt: &str, reference: &str) -> RecallAttempt {
+        let trimmed = user_attempt.trim();
+        let timestamp = jiff::Zoned::now().timestamp().as_second();
+
+        if trimmed.is_empty() {
+            return RecallAttempt {
+                prompt: prompt.to_string(),
+                user_attempt: String::new(),
+                reference_expression: reference.to_string(),
+                timestamp,
+                comparison: ComparisonResult {
+                    status: Some(ComparisonStatus::EmptyInput),
+                    key_advice: "请输入英文尝试进行对比".to_string(),
+                    user_formatted: String::new(),
+                    natural_expression: reference.to_string(),
+                },
+                error_categories: Vec::new(),
+            };
+        }
+
+        // 1. Exact match / colloquial cluster match
+        if Self::evaluate_with_prompt(trimmed, reference, Some(prompt)) {
+            return RecallAttempt {
+                prompt: prompt.to_string(),
+                user_attempt: trimmed.to_string(),
+                reference_expression: reference.to_string(),
+                timestamp,
+                comparison: ComparisonResult {
+                    status: Some(ComparisonStatus::ExactMatch),
+                    key_advice: "表达非常地道准确，完全符合母语者习惯！".to_string(),
+                    user_formatted: trimmed.to_string(),
+                    natural_expression: reference.to_string(),
+                },
+                error_categories: Vec::new(),
+            };
+        }
+
+        // 2. Grammar error detection
+        if let Some(advice) = detect_grammar_error(trimmed) {
+            return RecallAttempt {
+                prompt: prompt.to_string(),
+                user_attempt: trimmed.to_string(),
+                reference_expression: reference.to_string(),
+                timestamp,
+                comparison: ComparisonResult {
+                    status: Some(ComparisonStatus::GrammarIssue),
+                    key_advice: advice,
+                    user_formatted: trimmed.to_string(),
+                    natural_expression: reference.to_string(),
+                },
+                error_categories: vec!["grammar".to_string()],
+            };
+        }
+
+        // 3. Chinglish detection
+        if let Some(advice) = detect_chinglish(trimmed) {
+            return RecallAttempt {
+                prompt: prompt.to_string(),
+                user_attempt: trimmed.to_string(),
+                reference_expression: reference.to_string(),
+                timestamp,
+                comparison: ComparisonResult {
+                    status: Some(ComparisonStatus::Chinglish),
+                    key_advice: advice,
+                    user_formatted: trimmed.to_string(),
+                    natural_expression: reference.to_string(),
+                },
+                error_categories: vec!["chinglish".to_string()],
+            };
+        }
+
+        // 4. Meaning correct but less natural
+        let advice = generate_natural_advice(trimmed, reference)
+            .unwrap_or_else(|| "语义基本正确，但母语者在日常口语中更倾向于使用该地道表达。".to_string());
+
+        RecallAttempt {
+            prompt: prompt.to_string(),
+            user_attempt: trimmed.to_string(),
+            reference_expression: reference.to_string(),
+            timestamp,
+            comparison: ComparisonResult {
+                status: Some(ComparisonStatus::NaturalBetter),
+                key_advice: advice,
+                user_formatted: trimmed.to_string(),
+                natural_expression: reference.to_string(),
+            },
+            error_categories: vec!["naturalness".to_string()],
+        }
     }
 
     /// 获取下一条待复习条目：
@@ -574,6 +703,104 @@ fn matches_intent_cluster(input: &str, prompt: &str) -> bool {
     false
 }
 
+pub fn detect_grammar_error(input: &str) -> Option<String> {
+    let lower = input.to_ascii_lowercase();
+
+    // 1. "very like"
+    if lower.contains("very like") {
+        return Some("B2语法建议：'very like' 不符合英语搭配习惯，修饰动词应用 'really like' 或在句末用 'like it very much'。".to_string());
+    }
+
+    // 2. "discuss about"
+    if lower.contains("discuss about")
+        || lower.contains("discusses about")
+        || lower.contains("discussed about")
+        || lower.contains("discussing about")
+    {
+        return Some("动词搭配冗余：'discuss' 为及物动词，应直接接宾语，不加介词 'about'。".to_string());
+    }
+
+    // 3. "depend of"
+    if lower.contains("depend of")
+        || lower.contains("depends of")
+        || lower.contains("depended of")
+    {
+        return Some("介词错误：应为 'depend on / upon' 而非 'depend of'。".to_string());
+    }
+
+    // 4. "according to me"
+    if lower.contains("according to me") {
+        return Some("语用视角建议：'according to' 用于引述他人或第三方资料，表达个人看法请用 'in my opinion' 或 'from my perspective'。".to_string());
+    }
+
+    // 5. 时态冲突 (yesterday with present tense)
+    if lower.contains("yesterday") {
+        if lower.contains("i'm")
+            || lower.contains("i am")
+            || lower.contains(" is ")
+            || lower.contains(" are ")
+            || lower.contains(" am ")
+        {
+            return Some("时态冲突：时间状语 'yesterday' 表示过去，谓语动词应使用过去时（如 was / were）。".to_string());
+        }
+    }
+
+    // 6. "make a photo"
+    if lower.contains("make a photo")
+        || lower.contains("make a picture")
+        || lower.contains("make photos")
+    {
+        return Some("动词搭配错误：拍照应使用 'take a picture/photo'，而不是 'make'。".to_string());
+    }
+
+    None
+}
+
+pub fn detect_chinglish(input: &str) -> Option<String> {
+    let lower = input.to_ascii_lowercase();
+
+    // 1. "give you some color to see see"
+    if lower.contains("color to see") || lower.contains("give you some color") {
+        return Some("字面直译中式表达：'give you some color to see see' 属于字面直译，地道英文可使用 'teach you a lesson' 或 'show you what I'm made of'。".to_string());
+    }
+
+    // 2. "head is burning" / "head burning"
+    if lower.contains("head is burning") || lower.contains("head burning") {
+        return Some("中式直译：形容忙得焦头烂额不要字面直译 'head is burning'，地道美式口语常用 'swamped'、'slammed' 或 'snowed under'。".to_string());
+    }
+
+    // 3. "busy like dog" / "busy like a dog"
+    if lower.contains("busy like dog") || lower.contains("busy like a dog") {
+        return Some("中式直译：'忙成狗'字面直译为 'busy like dog' 不符合习惯，美式口语推荐 'I've been swamped' 或 'working around the clock'。".to_string());
+    }
+
+    // 4. "people mountain people sea"
+    if lower.contains("people mountain") {
+        return Some("字面直译中式表达：'people mountain people sea' 为直译，地道表达应为 'packed'、'jam-packed' 或 'extremely crowded'。".to_string());
+    }
+
+    None
+}
+
+pub fn generate_natural_advice(input: &str, reference: &str) -> Option<String> {
+    let lower_in = input.to_ascii_lowercase();
+    let lower_ref = reference.to_ascii_lowercase();
+
+    if lower_ref.contains("swamped") && (lower_in.contains("busy") || lower_in.contains("very busy")) {
+        return Some("表达进阶：'swamped' 比 'very busy' 更符合这种“忙到被事情淹没”的自然口语表达。".to_string());
+    }
+
+    if lower_ref.contains("regular") && (lower_in.contains("often") || lower_in.contains("customer")) {
+        return Some("表达进阶：'regular' 是地道的'常客'名词表达，比说明性词汇更简练地道。".to_string());
+    }
+
+    if lower_ref.contains("we're good") && lower_in.contains("it is done") {
+        return Some("口语建议：母语者日常确认事情办妥时，常使用轻快自然的 'We're good'。".to_string());
+    }
+
+    None
+}
+
 fn normalize(s: &str) -> String {
     let replaced_quotes = s
         .replace('’', "'")
@@ -661,6 +888,10 @@ fn today() -> Date {
 }
 
 impl RecallTracker for RecallBook {
+    fn record_attempt(&mut self, language: Language, attempt: &RecallAttempt) {
+        self.record_attempt_on(language, attempt, today());
+    }
+
     fn record_exposure(&mut self, language: Language, prompt: &str, target: &str) {
         self.record_exposure_on(language, prompt, target, today());
     }
@@ -988,6 +1219,48 @@ mod tests {
         assert_eq!(reloaded.frequently_revealed_items(en, 2).len(), 1);
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_evaluate_attempt_matrix() {
+        // 1. 空输入被拒绝，绝不伪造对比
+        let empty = RecallBook::evaluate_attempt("我最近忙得焦头烂额", "", "I've been swamped lately.");
+        assert_eq!(empty.comparison.status, Some(ComparisonStatus::EmptyInput));
+        assert!(empty.user_attempt.is_empty());
+
+        // 2. 精确匹配
+        let exact = RecallBook::evaluate_attempt("我最近忙得焦头烂额", "I've been swamped lately.", "I've been swamped lately.");
+        assert_eq!(exact.comparison.status, Some(ComparisonStatus::ExactMatch));
+
+        // 3. 语法错误 (B2 典型语法错)
+        let grammar1 = RecallBook::evaluate_attempt("我很喜欢", "I very like it.", "I really like it.");
+        assert_eq!(grammar1.comparison.status, Some(ComparisonStatus::GrammarIssue));
+        assert!(grammar1.error_categories.contains(&"grammar".to_string()));
+
+        let grammar2 = RecallBook::evaluate_attempt("我昨天很忙", "I'm very busy yesterday.", "I was very busy yesterday.");
+        assert_eq!(grammar2.comparison.status, Some(ComparisonStatus::GrammarIssue));
+
+        // 4. 中式英语直译 (Chinglish)
+        let chinglish1 = RecallBook::evaluate_attempt("给你点颜色看看", "give you some color to see see", "teach you a lesson");
+        assert_eq!(chinglish1.comparison.status, Some(ComparisonStatus::Chinglish));
+        assert!(chinglish1.error_categories.contains(&"chinglish".to_string()));
+
+        let chinglish2 = RecallBook::evaluate_attempt("忙得焦头烂额", "my head is burning", "I've been swamped lately.");
+        assert_eq!(chinglish2.comparison.status, Some(ComparisonStatus::Chinglish));
+
+        // 5. 语义正确但表达不够地道 (Meaning Correct But Less Natural)
+        let natural = RecallBook::evaluate_attempt("我最近忙得焦头烂额", "I've been very busy recently.", "I've been swamped lately.");
+        assert_eq!(natural.comparison.status, Some(ComparisonStatus::NaturalBetter));
+        assert!(natural.comparison.key_advice.contains("swamped"));
+
+        // 6. 持久化防护：空尝试绝不写入 RecallBook
+        let mut book = RecallBook::default();
+        book.record_attempt_on(Language::English, &empty, date("2026-10-08"));
+        assert_eq!(book.len(), 0);
+
+        // 有效尝试正常记录
+        book.record_attempt_on(Language::English, &exact, date("2026-10-08"));
+        assert_eq!(book.len(), 1);
     }
 }
 

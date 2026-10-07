@@ -19,6 +19,7 @@ pub use corrections::{
 pub use error::LearningError;
 pub use frequency_learner::FrequencyLearner;
 pub use input_log::InputLog;
+pub use qingjian_core::{ComparisonResult, ComparisonStatus, RecallAttempt};
 pub use recall_book::RecallBook;
 pub use usage_stats::UsageStats;
 pub use vocabulary_book::VocabularyBook;

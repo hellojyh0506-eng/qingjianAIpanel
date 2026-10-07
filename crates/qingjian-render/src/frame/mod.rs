@@ -5,7 +5,10 @@ mod preedit;
 mod row;
 mod tone;
 
-pub use learning::{LearningCard, LearningExpression, LearningStatus};
+pub use learning::{
+    ComparisonResult, ComparisonStatus, DrillStage, LearningCard, LearningExpression,
+    LearningStatus, RecallAttempt,
+};
 pub use preedit::{Preedit, PreeditSegment, PreeditStyle};
 pub use row::Row;
 pub use tone::Tone;

@@ -190,6 +190,194 @@ impl Router {
                 frame: self.current_frame(),
             };
         }
+        if self.composing() && self.matches_learning_drill_combo(&event) {
+            if let Some(card) = self.passive_learning_card.as_mut() {
+                card.drill_stage = Some(qingjian_platform::protocol::DrillStage::Input);
+                card.drill_input.clear();
+                card.drill_attempt = None;
+                card.drill_notice = None;
+            }
+            let shown = self.self_drawn_frame();
+            self.reconcile_candidates(&shown);
+            return ServerMessage::KeyResult {
+                session,
+                outcome: KeyOutcome::Consumed,
+                commit: None,
+                frame: self.current_frame(),
+            };
+        }
+        // Active Recall: 若候选卡片处于 Drill 输入或对比展示交互态，拦截按键并隔离到卡片本身，绝不污染中文组句
+        if self.composing() {
+            if let Some(card) = self.passive_learning_card.as_mut() {
+                if let Some(stage) = card.drill_stage {
+                    match stage {
+                        qingjian_platform::protocol::DrillStage::Input => {
+                            if event.virtual_key == super::key::ESCAPE {
+                                card.drill_stage = None;
+                                card.drill_input.clear();
+                                card.drill_attempt = None;
+                                card.drill_notice = None;
+                                let shown = self.self_drawn_frame();
+                                self.reconcile_candidates(&shown);
+                                return ServerMessage::KeyResult {
+                                    session,
+                                    outcome: KeyOutcome::Consumed,
+                                    commit: None,
+                                    frame: self.current_frame(),
+                                };
+                            }
+                            if event.virtual_key == super::key::RETURN {
+                                let input = card.drill_input.trim();
+                                if input.is_empty() {
+                                    card.drill_notice = Some("请输入英文表达进行对比".to_string());
+                                } else {
+                                    let reference = card
+                                        .primary
+                                        .as_ref()
+                                        .map(|p| p.text.as_str())
+                                        .unwrap_or("");
+                                    let attempt = qingjian_learning::RecallBook::evaluate_attempt(
+                                        &card.target_text,
+                                        input,
+                                        reference,
+                                    );
+                                    card.drill_attempt = Some(attempt);
+                                    card.drill_stage =
+                                        Some(qingjian_platform::protocol::DrillStage::Compared);
+                                    card.drill_notice = None;
+                                }
+                                let shown = self.self_drawn_frame();
+                                self.reconcile_candidates(&shown);
+                                return ServerMessage::KeyResult {
+                                    session,
+                                    outcome: KeyOutcome::Consumed,
+                                    commit: None,
+                                    frame: self.current_frame(),
+                                };
+                            }
+                            if event.virtual_key == super::key::TAB {
+                                let reference = card
+                                    .primary
+                                    .as_ref()
+                                    .map(|p| p.text.as_str())
+                                    .unwrap_or("");
+                                card.drill_notice = Some(format!("参考答案: {}", reference));
+                                let shown = self.self_drawn_frame();
+                                self.reconcile_candidates(&shown);
+                                return ServerMessage::KeyResult {
+                                    session,
+                                    outcome: KeyOutcome::Consumed,
+                                    commit: None,
+                                    frame: self.current_frame(),
+                                };
+                            }
+                            if event.virtual_key == super::key::BACK {
+                                card.drill_input.pop();
+                                let shown = self.self_drawn_frame();
+                                self.reconcile_candidates(&shown);
+                                return ServerMessage::KeyResult {
+                                    session,
+                                    outcome: KeyOutcome::Consumed,
+                                    commit: None,
+                                    frame: self.current_frame(),
+                                };
+                            }
+                            if let Some(c) = event.character {
+                                if !c.is_control() {
+                                    card.drill_input.push(c);
+                                    card.drill_notice = None;
+                                    let shown = self.self_drawn_frame();
+                                    self.reconcile_candidates(&shown);
+                                    return ServerMessage::KeyResult {
+                                        session,
+                                        outcome: KeyOutcome::Consumed,
+                                        commit: None,
+                                        frame: self.current_frame(),
+                                    };
+                                }
+                            }
+                            return ServerMessage::KeyResult {
+                                session,
+                                outcome: KeyOutcome::Consumed,
+                                commit: None,
+                                frame: self.current_frame(),
+                            };
+                        }
+                        qingjian_platform::protocol::DrillStage::Comparing => {
+                            if event.virtual_key == super::key::ESCAPE {
+                                card.drill_stage = None;
+                            }
+                            let shown = self.self_drawn_frame();
+                            self.reconcile_candidates(&shown);
+                            return ServerMessage::KeyResult {
+                                session,
+                                outcome: KeyOutcome::Consumed,
+                                commit: None,
+                                frame: self.current_frame(),
+                            };
+                        }
+                        qingjian_platform::protocol::DrillStage::Compared => {
+                            if event.virtual_key == super::key::TAB {
+                                card.drill_stage =
+                                    Some(qingjian_platform::protocol::DrillStage::Input);
+                                card.drill_notice = None;
+                                card.drill_attempt = None;
+                                let shown = self.self_drawn_frame();
+                                self.reconcile_candidates(&shown);
+                                return ServerMessage::KeyResult {
+                                    session,
+                                    outcome: KeyOutcome::Consumed,
+                                    commit: None,
+                                    frame: self.current_frame(),
+                                };
+                            }
+                            let is_save = (event.modifiers.ctrl
+                                && event.character.map(|c| c.to_ascii_lowercase()) == Some('s'))
+                                || event.character.map(|c| c.to_ascii_lowercase()) == Some('s');
+                            if is_save {
+                                if let Some(attempt) = &card.drill_attempt {
+                                    self.engine.record_recall_attempt(
+                                        self.engine.learning_language(),
+                                        attempt,
+                                    );
+                                    card.drill_notice = Some("⭐ 已保存到生词本".to_string());
+                                }
+                                let shown = self.self_drawn_frame();
+                                self.reconcile_candidates(&shown);
+                                return ServerMessage::KeyResult {
+                                    session,
+                                    outcome: KeyOutcome::Consumed,
+                                    commit: None,
+                                    frame: self.current_frame(),
+                                };
+                            }
+                            if event.virtual_key == super::key::ESCAPE
+                                || event.virtual_key == super::key::RETURN
+                            {
+                                card.drill_stage = None;
+                                card.drill_input.clear();
+                                card.drill_attempt = None;
+                                card.drill_notice = None;
+                                let shown = self.self_drawn_frame();
+                                self.reconcile_candidates(&shown);
+                                return ServerMessage::KeyResult {
+                                    session,
+                                    outcome: KeyOutcome::Consumed,
+                                    commit: None,
+                                    frame: self.current_frame(),
+                                };
+                            }
+                            return ServerMessage::KeyResult {
+                                session,
+                                outcome: KeyOutcome::Consumed,
+                                commit: None,
+                                frame: self.current_frame(),
+                            };
+                        }
+                    }
+                }
+            }
+        }
         let (commit, outcome) = match self.apply_key(&event) {
             Effect::Changed(commit) => {
                 self.recompose();

@@ -65,11 +65,24 @@ text（待翻译的原文）、target_language（目标语言代码：zh 中文�
 输出 JSON 格式：\
 {\"sentence\": \"最佳口语译文\", \"alternatives\": [{\"text\": \"…\", \"tag\": \"Casual/Natural/Professional/Formal/Idiomatic\", \"meaning\": \"…\", \"tone\": \"…\", \"scenario\": \"…\", \"commonality\": \"…\", \"why_natural\": \"…\"}]}";
 
+/// 主动回忆对比的系统提示：为口语学习者提供对比与反馈。
+pub const COMPARE_SYSTEM_PROMPT: &str = "\
+你是一个专为英语口语学习者提供对比与反馈的 AI 助教。你会收到一段 JSON：\
+prompt（中文原文/提示）、user_attempt（用户的英文表达尝试）、reference（更地道的母语口语参考表达）。\
+你的任务是评估用户的表达，并提供专业、鼓励、精炼的反馈：\
+1. status: \"ExactMatch\"（表达地道准确）/ \"NaturalBetter\"（能理解但参考表达更自然地道）/ \"GrammarIssue\"（有明显语法时态搭配错误）/ \"Chinglish\"（中式直译）；\
+2. key_advice: 简短的一两句话解释原因（例如指出为何参考词汇如 swamped 比用户的 very busy 更地道生动，或指出具体语法搭配问题）；\
+3. error_categories: 错误或提升维度列表，如 [\"Collocation\"], [\"Grammar\"], [\"Chinglish\"], [\"Naturalness\"] 等（完全正确时为空列表）；\
+4. natural_expression: 最推荐的地道美式口语表达。\
+输出 JSON 格式：\
+{\"status\": \"…\", \"key_advice\": \"…\", \"error_categories\": [\"…\"], \"natural_expression\": \"…\"}";
+
 pub fn system_prompt(request: &PredictionRequest) -> &'static str {
     match request.kind {
         PredictionKind::Compose => SYSTEM_PROMPT,
         PredictionKind::Question => QUESTION_SYSTEM_PROMPT,
         PredictionKind::Translate => TRANSLATE_SYSTEM_PROMPT,
+        PredictionKind::Compare => COMPARE_SYSTEM_PROMPT,
     }
 }
 
@@ -117,7 +130,23 @@ struct TranslateMessage<'a> {
     target_language: &'a str,
 }
 
+/// 主动回忆对比发给模型的用户消息。
+#[derive(Serialize)]
+struct CompareMessage<'a> {
+    prompt: &'a str,
+    user_attempt: &'a str,
+    reference: &'a str,
+}
+
 pub fn user_prompt(request: &PredictionRequest) -> String {
+    if request.kind == PredictionKind::Compare {
+        return serde_json::to_string(&CompareMessage {
+            prompt: &request.text,
+            user_attempt: &request.user_attempt,
+            reference: &request.reference,
+        })
+        .unwrap_or_default();
+    }
     if request.kind == PredictionKind::Translate {
         return serde_json::to_string(&TranslateMessage {
             text: &request.text,
@@ -182,6 +211,18 @@ struct RawReply {
 
     /// 翻译模式的多语域表达。
     alternatives: Vec<RawAlternative>,
+
+    /// 主动回忆对比模式：评估状态
+    status: Option<String>,
+
+    /// 主动回忆对比模式：核心建议
+    key_advice: Option<String>,
+
+    /// 主动回忆对比模式：提升/错误维度
+    error_categories: Vec<String>,
+
+    /// 主动回忆对比模式：推荐的自然口语表达
+    natural_expression: Option<String>,
 }
 
 #[derive(Deserialize, Default, Clone)]
@@ -212,6 +253,41 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
     };
     if request.kind == PredictionKind::Question {
         return parse_answers(raw.answers, request.max_items);
+    }
+    if request.kind == PredictionKind::Compare {
+        let key_advice = raw
+            .key_advice
+            .or(raw.sentence)
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty());
+        let nat_expr = raw
+            .natural_expression
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| request.reference.clone());
+        let status_str = raw.status.unwrap_or_else(|| "NaturalBetter".to_string());
+        let cat_str = if raw.error_categories.is_empty() {
+            "Collocation".to_string()
+        } else {
+            raw.error_categories.join(", ")
+        };
+
+        let mut alternatives = Vec::new();
+        alternatives.push(PredictionAlternative {
+            text: nat_expr,
+            tag: status_str,
+            meaning: request.text.clone(),
+            tone: cat_str,
+            scenario: String::new(),
+            commonality: String::new(),
+            why_natural: key_advice.clone().unwrap_or_default(),
+        });
+
+        return Reply {
+            words: Vec::new(),
+            sentence: key_advice,
+            alternatives,
+        };
     }
     if request.kind == PredictionKind::Translate {
         let sentence = raw
@@ -524,6 +600,8 @@ mod tests {
             want_sentence,
             text: String::new(),
             target_language: String::new(),
+            user_attempt: String::new(),
+            reference: String::new(),
         }
     }
 
@@ -742,4 +820,32 @@ mod tests {
         assert_eq!(parsed_simple.alternatives[0].tag, "Natural");
         assert!(parsed_simple.alternatives.iter().any(|a| a.tag == "Casual" && a.text == "I can't believe this."));
     }
+
+    #[test]
+    fn test_compare_parsing_and_prompts() {
+        let mut comp = request("", false);
+        comp.kind = PredictionKind::Compare;
+        comp.text = "我最近忙得焦头烂额。".to_owned();
+        comp.user_attempt = "I've been very busy recently.".to_owned();
+        comp.reference = "I've been swamped lately.".to_owned();
+
+        assert_eq!(system_prompt(&comp), COMPARE_SYSTEM_PROMPT);
+        let user_p = user_prompt(&comp);
+        assert!(user_p.contains("\"user_attempt\":\"I've been very busy recently.\""));
+        assert!(user_p.contains("\"reference\":\"I've been swamped lately.\""));
+
+        let reply_json = r#"{
+            "status": "NaturalBetter",
+            "key_advice": "swamped 比 very busy 更生动形象",
+            "user_formatted": "I've been very busy recently.",
+            "natural_expression": "I've been swamped lately."
+        }"#;
+        let parsed = parse_reply(reply_json, &comp);
+        assert_eq!(parsed.sentence.as_deref(), Some("swamped 比 very busy 更生动形象"));
+        assert_eq!(parsed.alternatives.len(), 1);
+        assert_eq!(parsed.alternatives[0].tag, "NaturalBetter");
+        assert_eq!(parsed.alternatives[0].text, "I've been swamped lately.");
+        assert_eq!(parsed.alternatives[0].why_natural, "swamped 比 very busy 更生动形象");
+    }
 }
+

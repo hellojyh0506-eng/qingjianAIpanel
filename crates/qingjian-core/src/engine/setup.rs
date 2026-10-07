@@ -494,6 +494,12 @@ impl Engine {
         }
     }
 
+    pub fn record_recall_attempt(&mut self, language: Language, attempt: &RecallAttempt) {
+        if !self.private {
+            self.recall.record_attempt(language, attempt);
+        }
+    }
+
     pub fn preferred_recall_alternative(
         &self,
         language: Language,

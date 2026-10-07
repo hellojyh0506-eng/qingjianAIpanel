@@ -36,6 +36,19 @@ pub struct LearningExpression {
     pub why_natural: String,
 }
 
+/// Active Recall 交互阶段。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DrillStage {
+    /// 英文输入/训练阶段
+    Input,
+    /// 正在对比阶段
+    Comparing,
+    /// 对比完成展示阶段
+    Compared,
+}
+
+pub use qingjian_core::{ComparisonResult, ComparisonStatus, RecallAttempt};
+
 /// 候选窗口第三层：轻量英语学习卡片帧数据。
 /// 严格绑定当前高亮候选词，在 Learn 模式或主动展开时呈现。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,4 +65,12 @@ pub struct LearningCardFrame {
     pub expanded: bool,
     /// 当前展开查看详情的表达下标（None 表示未展开详情）
     pub selected_index: Option<usize>,
+    /// Active Recall 交互阶段（None 为普通学习/答案隐藏状态）
+    pub drill_stage: Option<DrillStage>,
+    /// 用户在 Drill Input 阶段输入的英文内容
+    pub drill_input: String,
+    /// 用户完成对比后的 Attempt 结果
+    pub drill_attempt: Option<RecallAttempt>,
+    /// 提示信息（例如 "⭐ 已保存到生词本"）
+    pub drill_notice: Option<String>,
 }

@@ -3,7 +3,10 @@
 pub mod learning;
 pub mod preedit;
 
-pub use learning::{LearningCardFrame, LearningExpression, LearningState};
+pub use learning::{
+    ComparisonResult, ComparisonStatus, DrillStage, LearningCardFrame, LearningExpression,
+    LearningState, RecallAttempt,
+};
 pub use preedit::{PreeditKind, PreeditSegment};
 
 use serde::{Deserialize, Serialize};

@@ -103,6 +103,16 @@ impl Router {
             && event.modifiers.chord() == qingjian_platform::protocol::KeyModifiers::from(combo.modifiers)
     }
 
+    /// 快捷键触发当前高亮候选的 Active Recall 练习（默认 Ctrl+Alt+D）。
+    pub(super) fn matches_learning_drill_combo(&self, event: &qingjian_platform::protocol::KeyEvent) -> bool {
+        let chord = event.modifiers.chord();
+        event.character.map(|c| c.to_ascii_lowercase()) == Some('d')
+            && chord.ctrl
+            && chord.alt
+            && !chord.shift
+            && !chord.win
+    }
+
     /// 任务栏图标右键菜单：标点与悬浮条的开关写回配置文件（热加载会再读回来），设置程序交给 UI 起。
     pub(super) fn handle_indicator(&mut self, command: IndicatorCommand) {
         match command {

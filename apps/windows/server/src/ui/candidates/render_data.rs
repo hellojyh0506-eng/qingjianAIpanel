@@ -102,6 +102,20 @@ impl RenderData {
                 alternatives: card.alternatives.iter().map(convert_expr).collect(),
                 expanded: card.expanded,
                 selected_index: card.selected_index,
+                drill_stage: card.drill_stage.map(|s| match s {
+                    qingjian_platform::protocol::DrillStage::Input => {
+                        qingjian_render::DrillStage::Input
+                    }
+                    qingjian_platform::protocol::DrillStage::Comparing => {
+                        qingjian_render::DrillStage::Comparing
+                    }
+                    qingjian_platform::protocol::DrillStage::Compared => {
+                        qingjian_render::DrillStage::Compared
+                    }
+                }),
+                drill_input: card.drill_input.clone(),
+                drill_attempt: card.drill_attempt.as_ref().map(convert_attempt),
+                drill_notice: card.drill_notice.clone(),
             }
         });
     }
@@ -150,6 +164,40 @@ fn convert_expr(
         scenario: expr.scenario.clone(),
         commonality: expr.commonality.clone(),
         why_natural: expr.why_natural.clone(),
+    }
+}
+
+fn convert_attempt(
+    attempt: &qingjian_platform::protocol::RecallAttempt,
+) -> qingjian_render::RecallAttempt {
+    qingjian_render::RecallAttempt {
+        prompt: attempt.prompt.clone(),
+        user_attempt: attempt.user_attempt.clone(),
+        reference_expression: attempt.reference_expression.clone(),
+        timestamp: attempt.timestamp,
+        comparison: qingjian_render::ComparisonResult {
+            status: attempt.comparison.status.map(|s| match s {
+                qingjian_platform::protocol::ComparisonStatus::ExactMatch => {
+                    qingjian_render::ComparisonStatus::ExactMatch
+                }
+                qingjian_platform::protocol::ComparisonStatus::NaturalBetter => {
+                    qingjian_render::ComparisonStatus::NaturalBetter
+                }
+                qingjian_platform::protocol::ComparisonStatus::GrammarIssue => {
+                    qingjian_render::ComparisonStatus::GrammarIssue
+                }
+                qingjian_platform::protocol::ComparisonStatus::Chinglish => {
+                    qingjian_render::ComparisonStatus::Chinglish
+                }
+                qingjian_platform::protocol::ComparisonStatus::EmptyInput => {
+                    qingjian_render::ComparisonStatus::EmptyInput
+                }
+            }),
+            key_advice: attempt.comparison.key_advice.clone(),
+            user_formatted: attempt.comparison.user_formatted.clone(),
+            natural_expression: attempt.comparison.natural_expression.clone(),
+        },
+        error_categories: attempt.error_categories.clone(),
     }
 }
 

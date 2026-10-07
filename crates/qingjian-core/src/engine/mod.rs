@@ -55,7 +55,10 @@ pub use prediction::{
 
 pub use query::Query;
 pub use raw::RawPreedit;
-pub use recall::{NoRecallTracker, RecallItem, RecallOutcome, RecallTracker};
+pub use recall::{
+    ComparisonResult, ComparisonStatus, NoRecallTracker, RecallAttempt, RecallItem, RecallOutcome,
+    RecallTracker,
+};
 pub use session::EngineSession;
 pub use statistics::{BOOKS, Book, NoUsageMeter, Usage, UsageMeter, UsageSummary, book_scale};
 pub use timings::Timings;

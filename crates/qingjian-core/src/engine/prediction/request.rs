@@ -46,4 +46,10 @@ pub struct PredictionRequest {
 
     /// 翻译请求的目标语言代码（`en` / `ja`，学习语言）；其他种类为空。
     pub target_language: String,
+
+    /// 主动回忆对比：用户的英文尝试表达。
+    pub user_attempt: String,
+
+    /// 主动回忆对比：参考地道口语表达。
+    pub reference: String,
 }

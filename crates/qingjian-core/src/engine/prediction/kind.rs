@@ -10,4 +10,7 @@ pub enum PredictionKind {
 
     /// 翻译：把应用里选中的一段文字译成学习语言（壳里快捷键触发），译文放在结果的 `sentence` 里。
     Translate,
+
+    /// 主动回忆对比：对比用户的英文表达尝试与地道参考口语，给出评价与建议。
+    Compare,
 }

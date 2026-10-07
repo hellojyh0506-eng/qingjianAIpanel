@@ -16,6 +16,68 @@ impl Renderer {
         let mut height: f32 = 0.0;
         let style = m.annotation_style(m.theme.colors.gloss);
         let tag_style = m.style(m.theme.index_font, m.theme.colors.fresh);
+        let small_style = m.style(m.theme.index_font, m.theme.colors.pos);
+        let line_height = style.line_height.max(m.px(m.theme.annotation_font.line_height));
+
+        // Active Recall 特殊阶段尺寸计算
+        if let Some(stage) = card.drill_stage {
+            match stage {
+                crate::frame::DrillStage::Input => {
+                    let title = format!("🎯 英文回忆练习 (中文: {})", card.target_text);
+                    let title_w = self.measure(&title, &style).width;
+                    let input_str = format!("你的尝试: {}|", card.drill_input);
+                    let input_w = self.measure(&input_str, &m.annotation_style(m.theme.colors.text)).width;
+                    let btns = "[对比 (Enter)]   [看答案 (Tab)]   [退出 (Esc)]";
+                    let btns_w = self.measure(btns, &m.index_style()).width;
+
+                    width = width.max(title_w).max(input_w).max(btns_w) + m.column_gap() * 2.0;
+                    height += (line_height + m.row_padding()) * 3.0;
+                    if card.drill_notice.is_some() {
+                        height += small_style.line_height + m.row_padding();
+                    }
+                    return (width, height);
+                }
+                crate::frame::DrillStage::Comparing => {
+                    let text = "⏳ 正在分析对比表达中...";
+                    let w = self.measure(text, &style).width;
+                    return (w + m.column_gap() * 2.0, line_height + m.row_padding() * 2.0);
+                }
+                crate::frame::DrillStage::Compared => {
+                    let user_expr = card
+                        .drill_attempt
+                        .as_ref()
+                        .map(|a| a.user_attempt.as_str())
+                        .unwrap_or(card.drill_input.as_str());
+                    let natural_expr = card
+                        .drill_attempt
+                        .as_ref()
+                        .map(|a| a.comparison.natural_expression.as_str())
+                        .unwrap_or("");
+                    let advice = card
+                        .drill_attempt
+                        .as_ref()
+                        .map(|a| a.comparison.key_advice.as_str())
+                        .unwrap_or("");
+
+                    let row1 = format!("🔴 你的表达: {}", user_expr);
+                    let row2 = format!("🟢 地道表达: {}", natural_expr);
+                    let row3 = format!("💡 关键建议: {}", advice);
+                    let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [完成 (Esc)]";
+
+                    let r1_w = self.measure(&row1, &style).width;
+                    let r2_w = self.measure(&row2, &style).width;
+                    let r3_w = self.measure(&row3, &small_style).width;
+                    let btns_w = self.measure(btns, &m.index_style()).width;
+
+                    width = width.max(r1_w).max(r2_w).max(r3_w).max(btns_w) + m.column_gap() * 2.0;
+                    height += (line_height + m.row_padding()) * 3.0 + small_style.line_height + m.row_padding() * 2.0;
+                    if card.drill_notice.is_some() {
+                        height += small_style.line_height + m.row_padding();
+                    }
+                    return (width, height);
+                }
+            }
+        }
 
         // 1. Layer 3: 主条目 (Flag + 状态/主要文本 + 展开按钮)
         let flag_prefix = "🇺🇸 ";
@@ -34,12 +96,13 @@ impl Renderer {
             }
         };
         let main_width = self.measure(main_text, &style).width;
+        let drill_btn = "[Try English]";
+        let drill_width = self.measure(drill_btn, &m.index_style()).width;
         let btn_text = if card.expanded { "收起 ▴" } else { "更多译法 ▾" };
         let btn_width = self.measure(btn_text, &m.index_style()).width;
 
-        let row1_width = flag_width + main_width + m.column_gap() * 2.0 + btn_width;
+        let row1_width = flag_width + main_width + m.column_gap() * 2.0 + drill_width + m.column_gap() + btn_width;
         width = width.max(row1_width);
-        let line_height = style.line_height.max(m.px(m.theme.annotation_font.line_height));
         height += line_height + m.row_padding() * 2.0;
 
         // 2. Layer 4: 渐进展开列表 (2~5 个备选表达 + 标签)
@@ -94,6 +157,8 @@ impl Renderer {
         let style = m.annotation_style(m.theme.colors.gloss);
         let tag_style = m.style(m.theme.index_font, m.theme.colors.fresh);
         let active_text_style = m.annotation_style(m.theme.colors.text);
+        let small_style = m.style(m.theme.index_font, m.theme.colors.pos);
+        let line_height = style.line_height.max(m.px(m.theme.annotation_font.line_height));
 
         // 柔和顶部分隔细线，与第二层中文候选自然解耦
         let sep_y = y + m.row_padding() / 2.0;
@@ -105,6 +170,98 @@ impl Renderer {
             Color::rgba(128, 128, 128, 38),
         );
         y += m.row_padding();
+
+        // Active Recall 特殊阶段绘制
+        if let Some(stage) = card.drill_stage {
+            match stage {
+                crate::frame::DrillStage::Input => {
+                    let title = format!("🎯 英文回忆练习 (中文: {})", card.target_text);
+                    self.draw_text(canvas, &title, &tag_style, left + m.padding(), y);
+                    y += line_height + m.row_padding() / 2.0;
+
+                    if let Some(notice) = &card.drill_notice {
+                        let notice_style = m.style(m.theme.index_font, m.theme.colors.cloud);
+                        self.draw_text(canvas, notice, &notice_style, left + m.padding(), y);
+                        y += small_style.line_height + m.row_padding() / 2.0;
+                    }
+
+                    // 输入框背景
+                    canvas.fill_round_rect(
+                        left + m.padding(),
+                        y,
+                        content_width - m.padding() * 2.0,
+                        line_height + m.px(6.0),
+                        m.px(4.0),
+                        m.theme.colors.highlight,
+                    );
+                    let input_text = format!("你的尝试: {}|", card.drill_input);
+                    self.draw_text(
+                        canvas,
+                        &input_text,
+                        &active_text_style,
+                        left + m.padding() + m.px(4.0),
+                        y + m.px(2.0),
+                    );
+                    y += line_height + m.px(8.0) + m.row_padding() / 2.0;
+
+                    // 底部按钮
+                    let btns = "[对比 (Enter)]   [看答案 (Tab)]   [退出 (Esc)]";
+                    let btn_style = m.style(m.theme.index_font, m.theme.colors.cloud);
+                    self.draw_text(canvas, btns, &btn_style, left + m.padding(), y);
+                    return;
+                }
+                crate::frame::DrillStage::Comparing => {
+                    self.draw_text(
+                        canvas,
+                        "⏳ 正在分析对比表达中...",
+                        &tag_style,
+                        left + m.padding(),
+                        y,
+                    );
+                    return;
+                }
+                crate::frame::DrillStage::Compared => {
+                    if let Some(notice) = &card.drill_notice {
+                        let notice_style = m.style(m.theme.index_font, m.theme.colors.cloud);
+                        self.draw_text(canvas, notice, &notice_style, left + m.padding(), y);
+                        y += small_style.line_height + m.row_padding() / 2.0;
+                    }
+
+                    let user_expr = card
+                        .drill_attempt
+                        .as_ref()
+                        .map(|a| a.user_attempt.as_str())
+                        .unwrap_or(card.drill_input.as_str());
+                    let natural_expr = card
+                        .drill_attempt
+                        .as_ref()
+                        .map(|a| a.comparison.natural_expression.as_str())
+                        .unwrap_or("");
+                    let advice = card
+                        .drill_attempt
+                        .as_ref()
+                        .map(|a| a.comparison.key_advice.as_str())
+                        .unwrap_or("");
+
+                    let r1 = format!("🔴 你的表达: {}", user_expr);
+                    self.draw_text(canvas, &r1, &active_text_style, left + m.padding(), y);
+                    y += line_height + m.row_padding() / 2.0;
+
+                    let r2 = format!("🟢 地道表达: {}", natural_expr);
+                    self.draw_text(canvas, &r2, &tag_style, left + m.padding(), y);
+                    y += line_height + m.row_padding() / 2.0;
+
+                    let r3 = format!("💡 关键建议: {}", advice);
+                    self.draw_text(canvas, &r3, &small_style, left + m.padding(), y);
+                    y += small_style.line_height + m.row_padding();
+
+                    let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [完成 (Esc)]";
+                    let btn_style = m.style(m.theme.index_font, m.theme.colors.cloud);
+                    self.draw_text(canvas, btns, &btn_style, left + m.padding(), y);
+                    return;
+                }
+            }
+        }
 
         // 1. Layer 3: 主条目 (Flag + 最佳推荐 + 展开按钮)
         let flag_prefix = "🇺🇸 ";
@@ -132,11 +289,19 @@ impl Renderer {
         };
         self.draw_text(canvas, main_text, text_color_style, x, y);
 
-        // 右侧「更多译法 ▾ / 收起 ▴」
+        // [Try English] 与「更多译法 ▾ / 收起 ▴」
+        let drill_btn = "[Try English]";
+        let drill_style = m.style(m.theme.index_font, m.theme.colors.fresh);
+        let drill_size = self.measure(drill_btn, &drill_style);
+
         let btn_text = if card.expanded { "收起 ▴" } else { "更多译法 ▾" };
         let btn_style = m.style(m.theme.index_font, m.theme.colors.cloud);
         let btn_size = self.measure(btn_text, &btn_style);
+
         let btn_x = left + content_width - m.padding() - btn_size.width;
+        let drill_x = btn_x - m.column_gap() - drill_size.width;
+
+        self.draw_text(canvas, drill_btn, &drill_style, drill_x, y);
         self.draw_text(canvas, btn_text, &btn_style, btn_x, y);
 
         let line_height = style.line_height.max(m.px(m.theme.annotation_font.line_height));

@@ -8,6 +8,36 @@ pub enum RecallOutcome {
     Revealed,
 }
 
+/// 主动回忆对比状态
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ComparisonStatus {
+    ExactMatch,
+    NaturalBetter,
+    GrammarIssue,
+    Chinglish,
+    EmptyInput,
+}
+
+/// 主动回忆对比结果
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ComparisonResult {
+    pub status: Option<ComparisonStatus>,
+    pub key_advice: String,
+    pub user_formatted: String,
+    pub natural_expression: String,
+}
+
+/// 用户的一次主动回忆练习记录 (Attempt)
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RecallAttempt {
+    pub prompt: String,
+    pub user_attempt: String,
+    pub reference_expression: String,
+    pub timestamp: i64,
+    pub comparison: ComparisonResult,
+    pub error_categories: Vec<String>,
+}
+
 /// 主动回忆条目
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecallItem {
@@ -22,6 +52,8 @@ pub struct RecallItem {
 
 /// 主动回忆追踪器抽象。实现放 qingjian-learning，Core 只负责记录与调用。
 pub trait RecallTracker: Send {
+    /// 记一次主动回忆练习记录 (Attempt)
+    fn record_attempt(&mut self, _language: Language, _attempt: &RecallAttempt) {}
     /// 记一次被动曝光 (用户输入中文并上屏带翻译的候选词时)
     fn record_exposure(&mut self, language: Language, prompt: &str, target: &str);
 

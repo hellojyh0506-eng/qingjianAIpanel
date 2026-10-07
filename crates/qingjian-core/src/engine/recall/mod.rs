@@ -1,3 +1,6 @@
 mod tracker;
 
-pub use self::tracker::{NoRecallTracker, RecallItem, RecallOutcome, RecallTracker};
+pub use self::tracker::{
+    ComparisonResult, ComparisonStatus, NoRecallTracker, RecallAttempt, RecallItem, RecallOutcome,
+    RecallTracker,
+};

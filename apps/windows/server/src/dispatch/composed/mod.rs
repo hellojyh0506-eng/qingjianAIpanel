@@ -61,6 +61,10 @@ impl Router {
                                 alternatives: vec![expr],
                                 expanded: false,
                                 selected_index: None,
+                                drill_stage: None,
+                                drill_input: String::new(),
+                                drill_attempt: None,
+                                drill_notice: None,
                             });
                             if self.engine.prediction_enabled() {
                                 self.engine.request_prediction(None, layout.local());
@@ -73,6 +77,10 @@ impl Router {
                                 alternatives: Vec::new(),
                                 expanded: false,
                                 selected_index: None,
+                                drill_stage: None,
+                                drill_input: String::new(),
+                                drill_attempt: None,
+                                drill_notice: None,
                             });
                             self.engine.request_translation(&target);
                         }
@@ -184,6 +192,10 @@ impl Router {
 
                     let preserve_expanded = self.passive_learning_card.as_ref().map(|c| c.expanded).unwrap_or(false);
                     let preserve_selected = self.passive_learning_card.as_ref().and_then(|c| c.selected_index);
+                    let preserve_drill = self.passive_learning_card.as_ref().and_then(|c| c.drill_stage);
+                    let preserve_input = self.passive_learning_card.as_ref().map(|c| c.drill_input.clone()).unwrap_or_default();
+                    let preserve_attempt = self.passive_learning_card.as_ref().and_then(|c| c.drill_attempt.clone());
+                    let preserve_notice = self.passive_learning_card.as_ref().and_then(|c| c.drill_notice.clone());
 
                     self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
                         target_text: target.clone(),
@@ -196,6 +208,10 @@ impl Router {
                         alternatives,
                         expanded: preserve_expanded,
                         selected_index: preserve_selected,
+                        drill_stage: preserve_drill,
+                        drill_input: preserve_input,
+                        drill_attempt: preserve_attempt,
+                        drill_notice: preserve_notice,
                     });
 
                     let shown = self.self_drawn_frame();
@@ -304,6 +320,10 @@ impl Router {
                 alternatives: vec![expr],
                 expanded: preserve_expanded,
                 selected_index: None,
+                drill_stage: None,
+                drill_input: String::new(),
+                drill_attempt: None,
+                drill_notice: None,
             });
         } else if self.engine.prediction_enabled() {
             self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
@@ -313,6 +333,10 @@ impl Router {
                 alternatives: Vec::new(),
                 expanded: preserve_expanded,
                 selected_index: None,
+                drill_stage: None,
+                drill_input: String::new(),
+                drill_attempt: None,
+                drill_notice: None,
             });
             self.engine.request_translation(&target);
         } else {

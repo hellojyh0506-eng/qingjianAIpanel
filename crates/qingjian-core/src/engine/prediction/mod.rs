@@ -147,6 +147,8 @@ impl Engine {
             want_sentence: policy.sentence && !question,
             text: String::new(),
             target_language: String::new(),
+            user_attempt: String::new(),
+            reference: String::new(),
         };
         self.last_prediction_kind = kind;
         self.last_prediction_scope = scope.to_owned();
@@ -181,8 +183,45 @@ impl Engine {
             target_language: translation_target(text, self.translator.language())
                 .code()
                 .to_owned(),
+            user_attempt: String::new(),
+            reference: String::new(),
         };
         self.last_prediction_kind = PredictionKind::Translate;
+        self.predictor.submit(request);
+        Some(self.prediction_sequence)
+    }
+
+    /// 主动回忆对比请求：将用户输入的英文与标准参考表达提交给云端对比评估。
+    pub fn request_compare(
+        &mut self,
+        prompt: &str,
+        user_attempt: &str,
+        reference: &str,
+    ) -> Option<u64> {
+        let user_attempt = user_attempt.trim();
+        if !self.predictor.is_enabled() || self.private || user_attempt.is_empty() {
+            return None;
+        }
+        self.prediction_sequence += 1;
+        let request = PredictionRequest {
+            sequence: self.prediction_sequence,
+            kind: PredictionKind::Compare,
+            before: String::new(),
+            after: String::new(),
+            pinyin: String::new(),
+            letters: String::new(),
+            syllables: 0,
+            candidates: Vec::new(),
+            guess: String::new(),
+            current_expression: reference.to_owned(),
+            max_items: 1,
+            want_sentence: true,
+            text: prompt.to_owned(),
+            target_language: "en".to_owned(),
+            user_attempt: user_attempt.to_owned(),
+            reference: reference.to_owned(),
+        };
+        self.last_prediction_kind = PredictionKind::Compare;
         self.predictor.submit(request);
         Some(self.prediction_sequence)
     }
