@@ -293,7 +293,7 @@ impl LearningVault {
         let now = attempt.timestamp;
         let is_success = matches!(
             attempt.comparison.status,
-            Some(ComparisonStatus::ExactMatch)
+            Some(ComparisonStatus::ExactMatch) | Some(ComparisonStatus::ValidB2Upgrade)
         );
 
         // 1. 追加训练尝试记录
@@ -475,6 +475,12 @@ impl LearningVault {
             .take(2)
             .map(|(name, _, _)| name.to_string())
             .collect();
+
+        profile.c1_upgrades_count = self
+            .attempts
+            .iter()
+            .filter(|a| a.error_categories.contains(&"b2_upgrade".to_string()))
+            .count() as u32;
 
         profile
     }
@@ -820,6 +826,8 @@ mod tests {
                     explanation: "修饰动词应用 really like".to_string(),
                     suggestion: Some("really like".to_string()),
                 }],
+                upgrade: None,
+                dimensions: None,
             },
             error_categories: vec!["collocation".to_string()],
         };

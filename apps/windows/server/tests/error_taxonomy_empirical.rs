@@ -257,6 +257,7 @@ fn test_pipeline_protocol_conversion_preserves_feedback_items() {
                 ComparisonStatus::GrammarIssue => qingjian_platform::protocol::ComparisonStatus::GrammarIssue,
                 ComparisonStatus::Chinglish => qingjian_platform::protocol::ComparisonStatus::Chinglish,
                 ComparisonStatus::EmptyInput => qingjian_platform::protocol::ComparisonStatus::EmptyInput,
+                ComparisonStatus::ValidB2Upgrade => qingjian_platform::protocol::ComparisonStatus::ValidB2Upgrade,
             }),
             key_advice: attempt.comparison.key_advice.clone(),
             user_formatted: attempt.comparison.user_formatted.clone(),
@@ -300,6 +301,8 @@ fn test_pipeline_protocol_conversion_preserves_feedback_items() {
                     suggestion: item.suggestion.clone(),
                 }
             }).collect(),
+            upgrade: None,
+            dimensions: None,
         },
         error_categories: attempt.error_categories.clone(),
     };

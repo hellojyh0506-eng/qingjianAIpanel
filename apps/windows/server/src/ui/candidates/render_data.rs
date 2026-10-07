@@ -125,6 +125,7 @@ impl RenderData {
                 today_due_count: card.today_due_count,
                 review_current_index: card.review_current_index,
                 review_total_count: card.review_total_count,
+                upgrade: card.upgrade.as_ref().map(convert_upgrade),
             }
         });
     }
@@ -192,6 +193,9 @@ pub(crate) fn convert_attempt(
                 qingjian_platform::protocol::ComparisonStatus::NaturalBetter => {
                     qingjian_render::ComparisonStatus::NaturalBetter
                 }
+                qingjian_platform::protocol::ComparisonStatus::ValidB2Upgrade => {
+                    qingjian_render::ComparisonStatus::ValidB2Upgrade
+                }
                 qingjian_platform::protocol::ComparisonStatus::GrammarIssue => {
                     qingjian_render::ComparisonStatus::GrammarIssue
                 }
@@ -218,6 +222,8 @@ pub(crate) fn convert_attempt(
                     suggestion: item.suggestion.clone(),
                 })
                 .collect(),
+            upgrade: attempt.comparison.upgrade.as_ref().map(convert_upgrade),
+            dimensions: attempt.comparison.dimensions.as_ref().map(convert_dimensions),
         },
         error_categories: attempt.error_categories.clone(),
     }
@@ -329,6 +335,70 @@ fn convert_subcategory(
         }
     }
 }
+
+fn convert_register(r: qingjian_platform::protocol::Register) -> qingjian_render::Register {
+    match r {
+        qingjian_platform::protocol::Register::Casual => qingjian_render::Register::Casual,
+        qingjian_platform::protocol::Register::Natural => qingjian_render::Register::Natural,
+        qingjian_platform::protocol::Register::Professional => {
+            qingjian_render::Register::Professional
+        }
+        qingjian_platform::protocol::Register::Formal => qingjian_render::Register::Formal,
+        qingjian_platform::protocol::Register::Diplomatic => {
+            qingjian_render::Register::Diplomatic
+        }
+        qingjian_platform::protocol::Register::Playful => qingjian_render::Register::Playful,
+        qingjian_platform::protocol::Register::Direct => qingjian_render::Register::Direct,
+        qingjian_platform::protocol::Register::Soft => qingjian_render::Register::Soft,
+    }
+}
+
+fn convert_sophistication(
+    s: qingjian_platform::protocol::Sophistication,
+) -> qingjian_render::Sophistication {
+    match s {
+        qingjian_platform::protocol::Sophistication::B1 => qingjian_render::Sophistication::B1,
+        qingjian_platform::protocol::Sophistication::B2 => qingjian_render::Sophistication::B2,
+        qingjian_platform::protocol::Sophistication::C1 => qingjian_render::Sophistication::C1,
+        qingjian_platform::protocol::Sophistication::C2 => qingjian_render::Sophistication::C2,
+    }
+}
+
+fn convert_upgrade(
+    u: &qingjian_platform::protocol::ExpressionUpgradeRecord,
+) -> qingjian_render::ExpressionUpgradeRecord {
+    qingjian_render::ExpressionUpgradeRecord {
+        prompt: u.prompt.clone(),
+        b2_baseline: u.b2_baseline.clone(),
+        natural_expression: u.natural_expression.clone(),
+        c1_expression: u.c1_expression.clone(),
+        register_variants: u
+            .register_variants
+            .iter()
+            .map(|v| qingjian_render::PragmaticNuance {
+                register: convert_register(v.register),
+                expression: v.expression.clone(),
+                scenario: v.scenario.clone(),
+                feeling: v.feeling.clone(),
+            })
+            .collect(),
+        why_better: u.why_better.clone(),
+        nuance_explanation: u.nuance_explanation.clone(),
+    }
+}
+
+fn convert_dimensions(
+    d: &qingjian_platform::protocol::EvaluationFourDimensions,
+) -> qingjian_render::EvaluationFourDimensions {
+    qingjian_render::EvaluationFourDimensions {
+        correctness: d.correctness,
+        naturalness_score: d.naturalness_score,
+        sophistication: convert_sophistication(d.sophistication),
+        detected_register: convert_register(d.detected_register),
+        upgrade_advice: d.upgrade_advice.clone(),
+    }
+}
+
 
 /// 窗口顶部要画的拼音行：`[general] preedit` 配成「只在行内」时为空（拼音已经在应用里）；
 /// 整句补全仍画在这一行上，所以空行时窗口仍可能留出这条线。

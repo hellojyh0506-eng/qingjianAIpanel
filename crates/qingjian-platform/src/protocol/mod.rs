@@ -36,8 +36,9 @@ pub use client::ClientMessage;
 pub use codec::{CodecError, DEFAULT_PIPE_NAME, read_message, write_message};
 pub use frame::{
     ComparisonResult, ComparisonStatus, DrillStage, ErrorMajorCategory, ErrorSubcategory,
-    FeedbackItem, Frame, LearningCardFrame, LearningExpression, LearningState, PreeditKind,
-    PreeditSegment, RecallAttempt,
+    EvaluationFourDimensions, ExpressionUpgradeRecord, FeedbackItem, Frame, LearningCardFrame,
+    LearningExpression, LearningState, PragmaticNuance, PreeditKind, PreeditSegment, RecallAttempt,
+    Register, Sophistication,
 };
 pub use indicator::{IndicatorCommand, IndicatorState};
 pub use key::{KeyEvent, KeyModifiers, KeyOutcome};

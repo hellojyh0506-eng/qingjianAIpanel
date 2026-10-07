@@ -39,9 +39,10 @@ pub use engine::{
     NoTranslator, NoUsageMeter, NoVocabularyTracker, Prediction, PredictionAlternative, PredictionKind, PredictionPolicy,
     PredictionRequest, Predictor, QUESTION_PREFIX, Query, RESCORE_CONTEXT_CHARS, RawPreedit,
     RecallAttempt, RecallItem, RecallOutcome, RecallTracker, NoRecallTracker,
-    ComparisonResult, ComparisonStatus, ErrorMajorCategory, ErrorSubcategory, FeedbackItem,
+    ComparisonResult, ComparisonStatus, ErrorMajorCategory, ErrorSubcategory,
+    EvaluationFourDimensions, ExpressionUpgradeRecord, FeedbackItem,
     MasteryLevel, SavedExpression, ReviewItem, ReviewLogEntry, ReviewRating, UserAttempt, ErrorRecord, MasteryRecord,
-    ProfileDimension, DimensionStat, UserEnglishProfile,
+    PragmaticNuance, ProfileDimension, DimensionStat, Register, Sophistication, UserEnglishProfile,
     SurroundingText, Timings, Translator, Usage, UsageMeter, UsageSummary, VocabularySummary,
     VocabularyTracker, book_scale, is_valid_aux_code_key,
 };

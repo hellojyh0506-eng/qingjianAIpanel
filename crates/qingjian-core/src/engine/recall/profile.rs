@@ -250,6 +250,7 @@ pub struct UserEnglishProfile {
     pub total_saved: u32,
     pub total_reviews: u32,
     pub total_attempts: u32,
+    pub c1_upgrades_count: u32,
     pub top_weaknesses: Vec<String>,
 }
 
@@ -272,6 +273,10 @@ impl UserEnglishProfile {
         lines.push(dim_line("Phrasal Verbs", self.phrasal_verbs.score));
         lines.push(dim_line("Pragmatics", self.pragmatics.score));
         lines.push(dim_line("Register", self.register.score));
+
+        if self.c1_upgrades_count > 0 {
+            lines.push(format!("\n✨ 已解锁 B2→C1 地道表达升级: {} 处", self.c1_upgrades_count));
+        }
 
         if !self.top_weaknesses.is_empty() {
             lines.push(format!("\n你的主要提升机会：{}", self.top_weaknesses.join(" / ")));

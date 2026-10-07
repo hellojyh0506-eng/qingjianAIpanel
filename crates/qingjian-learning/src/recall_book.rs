@@ -190,7 +190,9 @@ impl RecallBook {
             return;
         }
         let outcome = match attempt.comparison.status {
-            Some(ComparisonStatus::ExactMatch) => RecallOutcome::Success,
+            Some(ComparisonStatus::ExactMatch) | Some(ComparisonStatus::ValidB2Upgrade) => {
+                RecallOutcome::Success
+            }
             Some(ComparisonStatus::NaturalBetter) => {
                 if Self::evaluate_with_prompt(input, &attempt.reference_expression, Some(&attempt.prompt)) {
                     RecallOutcome::Success
@@ -373,6 +375,8 @@ impl RecallBook {
                     natural_expression: reference.to_string(),
                     primary_category: None,
                     feedback_items: Vec::new(),
+                    upgrade: None,
+                    dimensions: None,
                 },
                 error_categories: Vec::new(),
             };
@@ -380,6 +384,7 @@ impl RecallBook {
 
         // 1. Exact match / colloquial cluster match (Zero Error, Anti-Overcorrection)
         if Self::evaluate_with_prompt(trimmed, reference, Some(prompt)) {
+            let upgrade = crate::upgrade::find_upgrade(prompt, reference);
             return RecallAttempt {
                 prompt: prompt.to_string(),
                 user_attempt: trimmed.to_string(),
@@ -392,12 +397,40 @@ impl RecallBook {
                     natural_expression: reference.to_string(),
                     primary_category: None,
                     feedback_items: Vec::new(),
+                    upgrade,
+                    dimensions: None,
                 },
                 error_categories: Vec::new(),
             };
         }
 
+        // 2. 预先执行错误分类诊断，甄别语法硬伤与严重中式英语 (Error Taxonomy)
         let feedback_items = analyze_feedback_items(trimmed, reference);
+        let has_fatal_issue = feedback_items.iter().any(|f| {
+            f.major_category == ErrorMajorCategory::Grammar
+                || f.subcategory == ErrorSubcategory::Chinglish
+        });
+
+        // 3. B2 → C1 Expression Upgrade 认知辨识与语域识别 (仅在无语法硬伤时生效)
+        // 若用户输入属于语法正确的 B2 表达或某一合法语域变体，提供升级建议，严禁判为错误
+        if !has_fatal_issue {
+            if let Some(upgrade_comp) = crate::upgrade::evaluate_b2_upgrade(prompt, trimmed, reference) {
+                let error_categories = if upgrade_comp.status == Some(ComparisonStatus::ValidB2Upgrade) {
+                    vec!["b2_upgrade".to_string(), "naturalness".to_string()]
+                } else {
+                    Vec::new()
+                };
+                return RecallAttempt {
+                    prompt: prompt.to_string(),
+                    user_attempt: trimmed.to_string(),
+                    reference_expression: reference.to_string(),
+                    timestamp,
+                    comparison: upgrade_comp,
+                    error_categories,
+                };
+            }
+        }
+
         let primary_category = feedback_items.first().map(|f| f.major_category);
 
         let (status, key_advice) = if let Some(first) = feedback_items.first() {
@@ -440,6 +473,8 @@ impl RecallBook {
             error_categories.push("naturalness".to_string());
         }
 
+        let upgrade = crate::upgrade::find_upgrade(prompt, reference);
+
         RecallAttempt {
             prompt: prompt.to_string(),
             user_attempt: trimmed.to_string(),
@@ -452,6 +487,8 @@ impl RecallBook {
                 natural_expression: reference.to_string(),
                 primary_category,
                 feedback_items,
+                upgrade,
+                dimensions: None,
             },
             error_categories,
         }

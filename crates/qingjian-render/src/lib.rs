@@ -27,8 +27,9 @@ pub use fonts::directwrite as system_fonts;
 pub use fonts::{FontLibrary, UiFont};
 pub use frame::{
     ComparisonResult, ComparisonStatus, DrillStage, ErrorMajorCategory, ErrorSubcategory,
-    FeedbackItem, Frame, LearningCard, LearningExpression, LearningStatus, Preedit, PreeditSegment,
-    PreeditStyle, RecallAttempt, Row, Tone,
+    EvaluationFourDimensions, ExpressionUpgradeRecord, FeedbackItem, Frame, LearningCard,
+    LearningExpression, LearningStatus, PragmaticNuance, Preedit, PreeditSegment, PreeditStyle,
+    RecallAttempt, Register, Row, Sophistication, Tone,
 };
 pub use layout::Layout;
 pub use renderer::{Rendered, RenderedStatus, Renderer, StatusCell};

@@ -7,7 +7,8 @@ mod tone;
 
 pub use learning::{
     ComparisonResult, ComparisonStatus, DrillStage, ErrorMajorCategory, ErrorSubcategory,
-    FeedbackItem, LearningCard, LearningExpression, LearningStatus, RecallAttempt,
+    EvaluationFourDimensions, ExpressionUpgradeRecord, FeedbackItem, LearningCard,
+    LearningExpression, LearningStatus, PragmaticNuance, RecallAttempt, Register, Sophistication,
 };
 pub use preedit::{Preedit, PreeditSegment, PreeditStyle};
 pub use row::Row;

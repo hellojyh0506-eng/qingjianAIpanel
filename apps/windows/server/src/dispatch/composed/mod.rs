@@ -54,6 +54,7 @@ impl Router {
                                 commonality: "Common".to_string(),
                                 why_natural: "Natural spoken expression".to_string(),
                             };
+                            let upgrade = qingjian_learning::find_upgrade(&target, &expr.text);
                             let due = self.today_due_count();
                             self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
                                 target_text: target.clone(),
@@ -69,6 +70,7 @@ impl Router {
                                 today_due_count: due,
                                 review_current_index: 0,
                                 review_total_count: due,
+                                upgrade,
                             });
                             if self.engine.prediction_enabled() {
                                 self.engine.request_prediction(None, layout.local());
@@ -89,6 +91,7 @@ impl Router {
                                 today_due_count: due,
                                 review_current_index: 0,
                                 review_total_count: due,
+                                upgrade: None,
                             });
                             self.engine.request_translation(&target);
                         }
@@ -206,6 +209,9 @@ impl Router {
                     let preserve_notice = self.passive_learning_card.as_ref().and_then(|c| c.drill_notice.clone());
 
                     let due = self.today_due_count();
+                    let upgrade = primary_expr
+                        .as_ref()
+                        .and_then(|p| qingjian_learning::find_upgrade(&target, &p.text));
                     self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
                         target_text: target.clone(),
                         state: if primary_expr.is_some() || !alternatives.is_empty() {
@@ -224,6 +230,7 @@ impl Router {
                         today_due_count: due,
                         review_current_index: 0,
                         review_total_count: due,
+                        upgrade,
                     });
 
                     let shown = self.self_drawn_frame();
@@ -325,6 +332,7 @@ impl Router {
                 commonality: "Common".to_string(),
                 why_natural: "Natural spoken expression".to_string(),
             };
+            let upgrade = qingjian_learning::find_upgrade(&target, &expr.text);
             let due = self.today_due_count();
             self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
                 target_text: target.clone(),
@@ -340,6 +348,7 @@ impl Router {
                 today_due_count: due,
                 review_current_index: 0,
                 review_total_count: due,
+                upgrade,
             });
         } else if self.engine.prediction_enabled() {
             let due = self.today_due_count();
@@ -357,6 +366,7 @@ impl Router {
                 today_due_count: due,
                 review_current_index: 0,
                 review_total_count: due,
+                upgrade: None,
             });
             self.engine.request_translation(&target);
         } else {

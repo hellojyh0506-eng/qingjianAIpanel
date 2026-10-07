@@ -57,9 +57,10 @@ pub use query::Query;
 pub use raw::RawPreedit;
 pub use recall::{
     ComparisonResult, ComparisonStatus, DimensionStat, ErrorMajorCategory, ErrorRecord,
-    ErrorSubcategory, FeedbackItem, MasteryLevel, MasteryRecord, NoRecallTracker,
-    ProfileDimension, RecallAttempt, RecallItem, RecallOutcome, RecallTracker, ReviewItem,
-    ReviewLogEntry, ReviewRating, SavedExpression, UserAttempt, UserEnglishProfile,
+    ErrorSubcategory, EvaluationFourDimensions, ExpressionUpgradeRecord, FeedbackItem,
+    MasteryLevel, MasteryRecord, NoRecallTracker, PragmaticNuance, ProfileDimension,
+    RecallAttempt, RecallItem, RecallOutcome, RecallTracker, Register, ReviewItem,
+    ReviewLogEntry, ReviewRating, SavedExpression, Sophistication, UserAttempt, UserEnglishProfile,
 };
 pub use session::EngineSession;
 pub use statistics::{BOOKS, Book, NoUsageMeter, Usage, UsageMeter, UsageSummary, book_scale};

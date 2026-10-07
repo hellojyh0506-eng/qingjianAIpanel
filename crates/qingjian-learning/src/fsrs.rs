@@ -151,7 +151,9 @@ impl FsrsScheduler {
     /// 从 Active Recall 对比结果自动推断推荐评级
     pub fn infer_rating(status: Option<ComparisonStatus>, error_count: usize) -> ReviewRating {
         match status {
-            Some(ComparisonStatus::ExactMatch) => ReviewRating::Good,
+            Some(ComparisonStatus::ExactMatch) | Some(ComparisonStatus::ValidB2Upgrade) => {
+                ReviewRating::Good
+            }
             Some(ComparisonStatus::NaturalBetter) if error_count == 0 => ReviewRating::Good,
             Some(ComparisonStatus::NaturalBetter) => ReviewRating::Hard,
             Some(ComparisonStatus::GrammarIssue) | Some(ComparisonStatus::Chinglish) => {

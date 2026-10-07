@@ -5,6 +5,7 @@
 //! [`VocabularyBook`] 记学习语言的译词看过 / 上屏过几次（`user-vocab.tsv`，候选里标生词的依据）。
 
 pub mod fsrs;
+pub mod upgrade;
 mod corrections;
 mod error;
 mod frequency_learner;
@@ -24,11 +25,13 @@ pub use fsrs::FsrsScheduler;
 pub use input_log::InputLog;
 pub use qingjian_core::{
     ComparisonResult, ComparisonStatus, DimensionStat, ErrorMajorCategory, ErrorRecord,
-    ErrorSubcategory, FeedbackItem, MasteryLevel, MasteryRecord, ProfileDimension, RecallAttempt,
-    RecallItem, RecallOutcome, ReviewItem, ReviewLogEntry, ReviewRating, SavedExpression,
-    UserAttempt, UserEnglishProfile,
+    ErrorSubcategory, EvaluationFourDimensions, ExpressionUpgradeRecord, FeedbackItem,
+    MasteryLevel, MasteryRecord, PragmaticNuance, ProfileDimension, RecallAttempt, RecallItem,
+    RecallOutcome, Register, ReviewItem, ReviewLogEntry, ReviewRating, SavedExpression,
+    Sophistication, UserAttempt, UserEnglishProfile,
 };
 pub use recall_book::{RecallBook, analyze_feedback_items};
+pub use upgrade::{evaluate_b2_upgrade, find_upgrade, get_upgrade_database};
 pub use usage_stats::UsageStats;
 pub use vault::LearningVault;
 pub use vocabulary_book::VocabularyBook;

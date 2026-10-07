@@ -13,9 +13,144 @@ pub enum RecallOutcome {
 pub enum ComparisonStatus {
     ExactMatch,
     NaturalBetter,
+    /// 用户语法与语义正确（B2层级），但母语者习惯更地道C1或有更佳语域升级选择
+    ValidB2Upgrade,
     GrammarIssue,
     Chinglish,
     EmptyInput,
+}
+
+/// 语域风格分类 (Register)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+pub enum Register {
+    /// 轻松日常口语 (Casual / Everyday Chatting)
+    Casual,
+    /// 自然通用美语 (Natural / Spoken English)
+    Natural,
+    /// 职场商务专业 (Professional / Workplace)
+    Professional,
+    /// 正式规范书面 (Formal / Academic Writing)
+    Formal,
+    /// 委婉得体/外交辞令 (Diplomatic / Tactful Disagreement)
+    Diplomatic,
+    /// 幽默俏皮/调侃 (Playful / Humorous)
+    Playful,
+    /// 直接明确/强调 (Direct / Assertive)
+    Direct,
+    /// 柔和缓和/亲切 (Soft / Gentle)
+    Soft,
+}
+
+impl Default for Register {
+    fn default() -> Self {
+        Self::Natural
+    }
+}
+
+impl Register {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Casual => "casual",
+            Self::Natural => "natural",
+            Self::Professional => "professional",
+            Self::Formal => "formal",
+            Self::Diplomatic => "diplomatic",
+            Self::Playful => "playful",
+            Self::Direct => "direct",
+            Self::Soft => "soft",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Casual => "轻松口语",
+            Self::Natural => "自然地道",
+            Self::Professional => "职场专业",
+            Self::Formal => "正式书面",
+            Self::Diplomatic => "委婉得体",
+            Self::Playful => "幽默调侃",
+            Self::Direct => "直接明确",
+            Self::Soft => "柔和缓和",
+        }
+    }
+}
+
+/// 表达进阶水平 (Sophistication / CEFR)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+pub enum Sophistication {
+    B1,
+    B2,
+    C1,
+    C2,
+}
+
+impl Default for Sophistication {
+    fn default() -> Self {
+        Self::B2
+    }
+}
+
+impl Sophistication {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::B1 => "B1",
+            Self::B2 => "B2",
+            Self::C1 => "C1",
+            Self::C2 => "C2",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::B1 => "基础通用 (B1)",
+            Self::B2 => "中阶正确 (B2)",
+            Self::C1 => "高阶地道 (C1)",
+            Self::C2 => "母语级精妙 (C2)",
+        }
+    }
+}
+
+/// 语用学与社交场景感觉差异 (Pragmatic Nuance)
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PragmaticNuance {
+    pub register: Register,
+    pub expression: String,
+    pub scenario: String,
+    pub feeling: String,
+}
+
+/// B2 → C1 表达升级结构化结果
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExpressionUpgradeRecord {
+    pub prompt: String,
+    pub b2_baseline: String,
+    pub natural_expression: String,
+    pub c1_expression: String,
+    pub register_variants: Vec<PragmaticNuance>,
+    pub why_better: String,
+    pub nuance_explanation: String,
+}
+
+/// 评价四维拆解 (Four-dimensional Evaluation)
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EvaluationFourDimensions {
+    pub correctness: bool,
+    pub naturalness_score: u8,
+    pub sophistication: Sophistication,
+    pub detected_register: Register,
+    pub upgrade_advice: Option<String>,
+}
+
+impl Default for EvaluationFourDimensions {
+    fn default() -> Self {
+        Self {
+            correctness: true,
+            naturalness_score: 5,
+            sophistication: Sophistication::C1,
+            detected_register: Register::Natural,
+            upgrade_advice: None,
+        }
+    }
 }
 
 /// 顶级错误类别 (Major Category)
@@ -142,6 +277,8 @@ pub struct ComparisonResult {
     pub natural_expression: String,
     pub primary_category: Option<ErrorMajorCategory>,
     pub feedback_items: Vec<FeedbackItem>,
+    pub upgrade: Option<ExpressionUpgradeRecord>,
+    pub dimensions: Option<EvaluationFourDimensions>,
 }
 
 /// 用户的一次主动回忆练习记录 (Attempt)

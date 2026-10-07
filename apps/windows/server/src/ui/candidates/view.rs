@@ -593,9 +593,24 @@ fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
                     .as_ref()
                     .map(|a| a.comparison.feedback_items.as_slice())
                     .unwrap_or(&[]);
+                let status = card.drill_attempt.as_ref().and_then(|a| a.comparison.status);
+                let upgrade = card.drill_attempt.as_ref().and_then(|a| a.comparison.upgrade.as_ref());
+                let is_b2_upgrade = status == Some(qingjian_render::ComparisonStatus::ValidB2Upgrade);
 
-                let row1 = format!("🔴 你的表达: {}", user_expr);
-                let row2 = format!("🟢 地道表达: {}", natural_expr);
+                let row1 = if is_b2_upgrade {
+                    format!("🔵 你的表达: {} (语法正确 · B2)", user_expr)
+                } else {
+                    format!("🔴 你的表达: {}", user_expr)
+                };
+                let row2 = if is_b2_upgrade {
+                    if let Some(up) = upgrade {
+                        format!("✨ 高阶表达 (C1): {}", up.c1_expression)
+                    } else {
+                        format!("🟢 地道表达: {}", natural_expr)
+                    }
+                } else {
+                    format!("🟢 地道表达: {}", natural_expr)
+                };
                 let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [📊 画像]   [完成 (Esc)]";
 
                 let r1_w = measure(hdc, theme.annotation_font, &row1).cx;
@@ -604,6 +619,36 @@ fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
 
                 width = width.max(r1_w).max(r2_w).max(btns_w);
                 height += (line_h + theme.row_padding) * 2;
+
+                if let Some(up) = upgrade {
+                    if is_b2_upgrade {
+                        let r_why = format!("💡 升级理由: {}", up.why_better);
+                        let rw = measure(hdc, theme.index_font, &r_why).cx;
+                        width = width.max(rw);
+                        height += small_h + theme.row_padding / 2;
+
+                        if !up.nuance_explanation.is_empty() {
+                            let r_nuance = format!("🌿 语用感知: {}", up.nuance_explanation);
+                            let rnw = measure(hdc, theme.index_font, &r_nuance).cx;
+                            width = width.max(rnw);
+                            height += small_h + theme.row_padding / 2;
+                        }
+
+                        if !up.register_variants.is_empty() {
+                            let r_reg = format!(
+                                "🎭 语域风格: {}",
+                                up.register_variants
+                                    .iter()
+                                    .map(|v| format!("[{}: {}]", v.register.label(), v.expression))
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            );
+                            let rgw = measure(hdc, theme.index_font, &r_reg).cx;
+                            width = width.max(rgw);
+                            height += small_h + theme.row_padding / 2;
+                        }
+                    }
+                }
 
                 if feedback_items.is_empty() {
                     let row3 = format!("💡 关键建议: {}", advice);
@@ -740,6 +785,14 @@ fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
                 height += theme.row_padding;
             }
         }
+        if let Some(up) = &card.upgrade {
+            let u1 = format!("✨ 进阶升级 (C1): {}", up.c1_expression);
+            let u2 = format!("💡 升级理由: {}", up.why_better);
+            let u1_w = measure(hdc, theme.index_font, &u1).cx;
+            let u2_w = measure(hdc, theme.index_font, &u2).cx;
+            width = width.max(u1_w + theme.column_gap * 2).max(u2_w + theme.column_gap * 2);
+            height += (small_h + 2) * 2 + theme.row_padding;
+        }
     }
     (width, height)
 }
@@ -843,18 +896,61 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
                     .as_ref()
                     .map(|a| a.comparison.feedback_items.as_slice())
                     .unwrap_or(&[]);
+                let status = card.drill_attempt.as_ref().and_then(|a| a.comparison.status);
+                let upgrade = card.drill_attempt.as_ref().and_then(|a| a.comparison.upgrade.as_ref());
+                let is_b2_upgrade = status == Some(qingjian_render::ComparisonStatus::ValidB2Upgrade);
 
                 // 1. 你的表达
-                let r1 = format!("🔴 你的表达: {}", user_expr);
-                draw_text(hdc, theme.annotation_font, theme.text_color, theme.padding, y, &r1);
+                let (r1, r1_color) = if is_b2_upgrade {
+                    (format!("🔵 你的表达: {} (语法正确 · B2)", user_expr), theme.fresh_color)
+                } else {
+                    (format!("🔴 你的表达: {}", user_expr), theme.text_color)
+                };
+                draw_text(hdc, theme.annotation_font, r1_color, theme.padding, y, &r1);
                 y += line_h + theme.row_padding / 2;
 
-                // 2. 更地道表达
-                let r2 = format!("🟢 地道表达: {}", natural_expr);
+                // 2. 更地道表达 / 高阶表达
+                let r2 = if is_b2_upgrade {
+                    if let Some(up) = upgrade {
+                        format!("✨ 高阶表达 (C1): {}", up.c1_expression)
+                    } else {
+                        format!("🟢 地道表达: {}", natural_expr)
+                    }
+                } else {
+                    format!("🟢 地道表达: {}", natural_expr)
+                };
                 draw_text(hdc, theme.annotation_font, theme.fresh_color, theme.padding, y, &r2);
                 y += line_h + theme.row_padding / 2;
 
-                // 3. 结构化错误诊断 / 关键建议 (1~3条)
+                // 3. 升级理由与语用差异
+                if let Some(up) = upgrade {
+                    if is_b2_upgrade {
+                        let r_why = format!("💡 升级理由: {}", up.why_better);
+                        draw_text(hdc, theme.index_font, theme.pos_color, theme.padding, y, &r_why);
+                        y += small_h + theme.row_padding / 2;
+
+                        if !up.nuance_explanation.is_empty() {
+                            let r_nuance = format!("🌿 语用感知: {}", up.nuance_explanation);
+                            draw_text(hdc, theme.index_font, theme.pos_color, theme.padding, y, &r_nuance);
+                            y += small_h + theme.row_padding / 2;
+                        }
+
+                        if !up.register_variants.is_empty() {
+                            let r_reg = format!(
+                                "🎭 语域风格: {}",
+                                up.register_variants
+                                    .iter()
+                                    .map(|v| format!("[{}: {}]", v.register.label(), v.expression))
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            );
+                            draw_text(hdc, theme.index_font, theme.fresh_color, theme.padding, y, &r_reg);
+                            y += small_h + theme.row_padding / 2;
+                        }
+                    }
+                }
+
+                // 4. 结构化错误诊断 / 关键建议 (1~3条)
                 if feedback_items.is_empty() {
                     let r3 = format!("💡 关键建议: {}", advice);
                     draw_text(hdc, theme.index_font, theme.pos_color, theme.padding, y, &r3);
@@ -868,7 +964,7 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
                     y += theme.row_padding / 2;
                 }
 
-                // 4. 底部按钮
+                // 5. 底部按钮
                 let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [📊 画像]   [完成 (Esc)]";
                 draw_text(hdc, theme.index_font, theme.cloud_color, theme.padding, y, btns);
                 return;
@@ -1016,6 +1112,14 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
                     y += small_h + 2;
                 }
             }
+        }
+
+        if let Some(up) = &card.upgrade {
+            let u1 = format!("✨ 进阶升级 (C1): {}", up.c1_expression);
+            let u2 = format!("💡 升级理由: {}", up.why_better);
+            draw_text(hdc, theme.index_font, theme.fresh_color, theme.padding + 4, y, &u1);
+            y += small_h + 2;
+            draw_text(hdc, theme.index_font, theme.pos_color, theme.padding + 4, y, &u2);
         }
     }
 }

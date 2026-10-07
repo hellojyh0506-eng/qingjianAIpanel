@@ -53,8 +53,10 @@ pub enum DrillStage {
 
 pub use qingjian_core::{
     ComparisonResult, ComparisonStatus, DimensionStat, ErrorMajorCategory, ErrorRecord,
-    ErrorSubcategory, FeedbackItem, MasteryLevel, MasteryRecord, ProfileDimension, RecallAttempt,
-    ReviewItem, ReviewLogEntry, ReviewRating, SavedExpression, UserAttempt, UserEnglishProfile,
+    ErrorSubcategory, EvaluationFourDimensions, ExpressionUpgradeRecord, FeedbackItem,
+    MasteryLevel, MasteryRecord, PragmaticNuance, ProfileDimension, RecallAttempt, Register,
+    ReviewItem, ReviewLogEntry, ReviewRating, SavedExpression, Sophistication, UserAttempt,
+    UserEnglishProfile,
 };
 
 /// 候选窗口第三层：轻量英语学习卡片帧数据。
@@ -87,4 +89,7 @@ pub struct LearningCardFrame {
     pub review_current_index: usize,
     /// 当前待复习队列总数
     pub review_total_count: usize,
+    /// B2 → C1 表达升级与语用分析记录（若当前句存在升级对照或语用方案）
+    pub upgrade: Option<ExpressionUpgradeRecord>,
 }
+

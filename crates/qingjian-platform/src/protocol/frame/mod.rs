@@ -5,7 +5,8 @@ pub mod preedit;
 
 pub use learning::{
     ComparisonResult, ComparisonStatus, DrillStage, ErrorMajorCategory, ErrorSubcategory,
-    FeedbackItem, LearningCardFrame, LearningExpression, LearningState, RecallAttempt,
+    EvaluationFourDimensions, ExpressionUpgradeRecord, FeedbackItem, LearningCardFrame,
+    LearningExpression, LearningState, PragmaticNuance, RecallAttempt, Register, Sophistication,
 };
 pub use preedit::{PreeditKind, PreeditSegment};
 

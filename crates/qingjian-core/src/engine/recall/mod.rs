@@ -6,6 +6,8 @@ pub use self::profile::{
     ReviewLogEntry, ReviewRating, SavedExpression, UserAttempt, UserEnglishProfile,
 };
 pub use self::tracker::{
-    ComparisonResult, ComparisonStatus, ErrorMajorCategory, ErrorSubcategory, FeedbackItem,
-    NoRecallTracker, RecallAttempt, RecallItem, RecallOutcome, RecallTracker,
+    ComparisonResult, ComparisonStatus, ErrorMajorCategory, ErrorSubcategory,
+    EvaluationFourDimensions, ExpressionUpgradeRecord, FeedbackItem, NoRecallTracker,
+    PragmaticNuance, RecallAttempt, RecallItem, RecallOutcome, RecallTracker, Register,
+    Sophistication,
 };

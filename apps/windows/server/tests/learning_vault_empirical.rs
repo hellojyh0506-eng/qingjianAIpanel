@@ -264,6 +264,8 @@ fn test_drill_mode_compare_attempt_and_error_aggregation() {
                 explanation: "very 不可直接修饰动词 like，应使用 really like".to_string(),
                 suggestion: Some("really like".to_string()),
             }],
+            upgrade: None,
+            dimensions: None,
         },
         error_categories: vec!["collocation:unnatural".to_string()],
     };
@@ -286,6 +288,8 @@ fn test_drill_mode_compare_attempt_and_error_aggregation() {
                 explanation: "discuss 后面直接接宾语，不可接 about".to_string(),
                 suggestion: Some("discuss this issue".to_string()),
             }],
+            upgrade: None,
+            dimensions: None,
         },
         error_categories: vec!["grammar:preposition".to_string()],
     };
