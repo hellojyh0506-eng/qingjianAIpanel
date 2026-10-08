@@ -107,36 +107,37 @@ impl Router {
         self.reconcile_status();
     }
 
-    /// 快捷键切换学习模式比对（默认 Ctrl+Alt+L 或 Ctrl+Shift+E）。
+    /// 快捷键切换学习模式比对（默认 Ctrl+Alt+L 或 Ctrl+Shift+L）。
     pub(super) fn matches_learning_mode_combo(&self, event: &qingjian_platform::protocol::KeyEvent) -> bool {
         let chord = event.modifiers.chord();
         let combo = self.config.toggle_learning_mode;
         let is_configured = (event.character.map(|c| c.to_ascii_lowercase()) == Some(combo.key.to_ascii_lowercase())
             || event.virtual_key == combo.key.to_ascii_uppercase() as u32)
             && chord == qingjian_platform::protocol::KeyModifiers::from(combo.modifiers);
-        let is_e = event.character.map(|c| c.to_ascii_lowercase()) == Some('e') || event.virtual_key == 0x45;
         let is_l = event.character.map(|c| c.to_ascii_lowercase()) == Some('l') || event.virtual_key == 0x4C;
-        let is_ctrl_shift_e = is_e
-            && chord.ctrl
-            && chord.shift
-            && !chord.alt
-            && !chord.win;
         let is_ctrl_shift_l = is_l
             && chord.ctrl
             && chord.shift
             && !chord.alt
             && !chord.win;
-        is_configured || is_ctrl_shift_e || is_ctrl_shift_l
+        is_configured || is_ctrl_shift_l
     }
 
-    /// 快捷键展开/收起候选卡片「更多译法」（默认 Ctrl+Alt+E）。
+    /// 快捷键展开/收起候选卡片「更多译法」或日常模式查看英文（默认 Ctrl+Alt+E 或 Ctrl+Shift+E）。
     pub(super) fn matches_learning_expand_combo(&self, event: &qingjian_platform::protocol::KeyEvent) -> bool {
+        let chord = event.modifiers.chord();
         let combo = self.config.toggle_learning_expand;
         let is_key = event.character.map(|c| c.to_ascii_lowercase()) == Some(combo.key.to_ascii_lowercase())
             || event.virtual_key == combo.key.to_ascii_uppercase() as u32;
         let is_configured = is_key
-            && event.modifiers.chord() == qingjian_platform::protocol::KeyModifiers::from(combo.modifiers);
-        is_configured
+            && chord == qingjian_platform::protocol::KeyModifiers::from(combo.modifiers);
+        let is_e = event.character.map(|c| c.to_ascii_lowercase()) == Some('e') || event.virtual_key == 0x45;
+        let is_ctrl_shift_e = is_e
+            && chord.ctrl
+            && chord.shift
+            && !chord.alt
+            && !chord.win;
+        is_configured || is_ctrl_shift_e
     }
 
     /// 快捷键触发当前高亮候选的 Active Recall 练习（默认 Ctrl+Alt+D 或 Ctrl+Shift+T）。

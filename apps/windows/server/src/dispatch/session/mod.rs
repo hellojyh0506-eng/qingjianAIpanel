@@ -73,6 +73,8 @@ impl Router {
         self.notice = None;
         self.highlight = 0;
         self.navigated = false;
+        self.passive_learning_card = None;
+        self.passive_translation_target = None;
         self.hide_candidate_window();
     }
 }

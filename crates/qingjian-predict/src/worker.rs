@@ -70,19 +70,27 @@ impl Worker {
             };
 
             // 防抖窗口：在 debounce 期间持续收新请求，仅保留最新
+            // 对比请求（主动提交）零延迟；候选翻译请求采用紧凑防抖 (50ms)，常规拼音联想保留标准防抖
             let mut req = request;
-            let debounce_deadline = tokio::time::Instant::now() + self.debounce;
-            while tokio::time::Instant::now() < debounce_deadline {
-                let remaining =
-                    debounce_deadline.saturating_duration_since(tokio::time::Instant::now());
-                tokio::select! {
-                    newer = self.requests.recv() => {
-                        match newer {
-                            Some(n) => req = n,
-                            None => return Ok(()),
+            let effective_debounce = match req.kind {
+                qingjian_core::PredictionKind::Compare => Duration::from_millis(0),
+                qingjian_core::PredictionKind::Translate => Duration::from_millis(50).min(self.debounce),
+                _ => self.debounce,
+            };
+            if !effective_debounce.is_zero() {
+                let debounce_deadline = tokio::time::Instant::now() + effective_debounce;
+                while tokio::time::Instant::now() < debounce_deadline {
+                    let remaining =
+                        debounce_deadline.saturating_duration_since(tokio::time::Instant::now());
+                    tokio::select! {
+                        newer = self.requests.recv() => {
+                            match newer {
+                                Some(n) => req = n,
+                                None => return Ok(()),
+                            }
                         }
+                        _ = tokio::time::sleep(remaining) => break,
                     }
-                    _ = tokio::time::sleep(remaining) => break,
                 }
             }
 

@@ -1,9 +1,8 @@
 use std::sync::LazyLock;
 use std::time::Duration;
 
-use async_openai::Client;
-use async_openai::config::OpenAIConfig;
 use async_openai::types::chat::{
+
     ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage,
     ChatCompletionRequestUserMessage, CreateChatCompletionRequestArgs,
     CreateChatCompletionResponse, FinishReason, ReasoningEffort, ResponseFormat,
@@ -15,11 +14,11 @@ use crate::config::PredictConfig;
 use crate::error::PredictError;
 use crate::prompt::{self, Reply};
 
-/// 联想与翻译回复的 token 上限：整句口语翻译 120（紧凑且快速返回），组句 300，问字 200。
-const TRANSLATE_MAX_TOKENS: u32 = 120;
+/// 联想与翻译回复的 token 上限：整句口语翻译 220（容纳 2~4 条备选），组句 300，问字 200，对比评测 450。
+const TRANSLATE_MAX_TOKENS: u32 = 220;
 const COMPOSE_MAX_TOKENS: u32 = 300;
 const QUESTION_MAX_TOKENS: u32 = 200;
-const COMPARE_MAX_TOKENS: u32 = 600;
+const COMPARE_MAX_TOKENS: u32 = 450;
 
 /// 采样温度：联想要稳，不要花。
 const TEMPERATURE: f32 = 0.3;
@@ -33,8 +32,14 @@ static SESSION_ID: LazyLock<String> = LazyLock::new(|| uuid::Uuid::new_v4().to_s
 
 /// OpenAI 兼容聊天接口的封装：一个请求进、若干联想条目出。
 pub struct ChatClient {
-    /// 底层客户端。
-    client: Client<OpenAIConfig>,
+    /// 底层 HTTP 客户端。
+    http: reqwest::Client,
+
+    /// 接口基础地址。
+    base_url: String,
+
+    /// API 密钥（绝不输出到日志）。
+    api_key: String,
 
     /// 模型名。
     model: String,
@@ -51,11 +56,10 @@ pub struct ChatClient {
 
 impl ChatClient {
     pub fn new(config: &PredictConfig, api_key: String) -> Self {
-        let openai = OpenAIConfig::new()
-            .with_api_base(config.base_url.trim_end_matches('/'))
-            .with_api_key(api_key);
         Self {
-            client: Client::with_config(openai).with_http_client(http_client(&config.base_url)),
+            http: http_client(&config.base_url),
+            base_url: config.base_url.clone(),
+            api_key,
             model: config.model.clone(),
             timeout: Duration::from_millis(config.timeout_ms),
             reasoning_effort: parse_reasoning_effort(&config.reasoning_effort),
@@ -107,13 +111,22 @@ impl ChatClient {
         if matches!(self.reasoning_effort, Some(ReasoningEffort::None)) {
             self.thinking_switch.disable(&mut body);
         }
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         let t_http_start = std::time::Instant::now();
-        let raw: serde_json::Value =
-            tokio::time::timeout(self.timeout, self.client.chat().create_byot(body))
-                .await
-                .map_err(|_| PredictError::Timeout(self.timeout.as_millis() as u64))??;
+        let req = self
+            .http
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&body);
+        let resp = tokio::time::timeout(self.timeout, req.send())
+            .await
+            .map_err(|_| PredictError::Timeout(self.timeout.as_millis() as u64))??;
+        let first_byte_ms = t_http_start.elapsed().as_millis();
+        let status = resp.status();
+        let raw_text = resp.text().await?;
         let http_ms = t_http_start.elapsed().as_millis();
         let t_parse_start = std::time::Instant::now();
+        let raw: serde_json::Value = serde_json::from_str(&raw_text)?;
         let response: CreateChatCompletionResponse = serde_json::from_value(raw.clone())?;
         let parse_ms = t_parse_start.elapsed().as_millis();
         let cut_off = response
@@ -136,12 +149,31 @@ impl ChatClient {
                     PredictError::EmptyReply
                 }
             })?;
+        let request_id = raw
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let provider = if self.base_url.contains("siliconflow") {
+            "SiliconFlow"
+        } else if self.base_url.contains("deepseek") {
+            "DeepSeek"
+        } else if self.base_url.contains("openai") {
+            "OpenAI"
+        } else {
+            "OpenAI Compatible"
+        };
         let total_ms = t_start.elapsed().as_millis();
         tracing::info!(
+            provider = %provider,
+            endpoint = %self.base_url,
+            model = %self.model,
+            request_id = %request_id,
+            first_byte_ms = first_byte_ms,
             http_ms = http_ms,
             parse_ms = parse_ms,
             total_ms = total_ms,
-            model = %self.model,
+            status = %status,
             content_chars = content.len(),
             "HTTP完成与耗时分解"
         );

@@ -176,14 +176,77 @@ impl Router {
                 request: self.selection_seq,
             };
         }
-        if self.composing()
-            && self.learning_mode == qingjian_platform::LearningMode::Learn
-            && self.matches_learning_expand_combo(&event)
-        {
-            if let Some(card) = self.passive_learning_card.as_mut() {
-                card.expanded = !card.expanded;
-                if !card.expanded {
-                    card.selected_index = None;
+        if self.matches_learning_expand_combo(&event) {
+            if self.composing() {
+                match self.learning_mode {
+                    qingjian_platform::LearningMode::Daily => {
+                        self.daily_show_english = !self.daily_show_english;
+                        if self.daily_show_english {
+                            let target = self
+                                .layout_candidate(self.highlight)
+                                .map(|c| c.text)
+                                .or_else(|| self.layout_candidate(0).map(|c| c.text));
+                            if let Some(target) = target {
+                                self.passive_translation_target = Some(target.clone());
+                                if self.engine.prediction_enabled() {
+                                    let due = self.today_due_count();
+                                    self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
+                                        target_text: target.clone(),
+                                        state: qingjian_platform::protocol::LearningState::Loading,
+                                        primary: None,
+                                        alternatives: Vec::new(),
+                                        expanded: false,
+                                        selected_index: None,
+                                        drill_stage: None,
+                                        drill_input: String::new(),
+                                        drill_attempt: None,
+                                        drill_notice: None,
+                                        today_due_count: due,
+                                        review_current_index: 0,
+                                        review_total_count: due,
+                                        upgrade: None,
+                                    });
+                                    self.translation_start_time = Some(std::time::Instant::now());
+                                    if let Some(seq) = self.engine.request_translation(&target) {
+                                        self.generation_id = seq;
+                                    }
+                                }
+                            }
+                        } else {
+                            self.generation_id += 1;
+                            self.passive_learning_card = None;
+                            self.passive_translation = None;
+                            self.passive_translation_target = None;
+                        }
+                    }
+                    qingjian_platform::LearningMode::Learn => {
+                        if let Some(card) = self.passive_learning_card.as_mut() {
+                            card.expanded = !card.expanded;
+                            if !card.expanded {
+                                card.selected_index = None;
+                            }
+                        }
+                    }
+                    qingjian_platform::LearningMode::Drill => {
+                        if let Some(card) = self.passive_learning_card.as_mut() {
+                            let reference = card
+                                .primary
+                                .as_ref()
+                                .map(|p| p.text.as_str())
+                                .unwrap_or("");
+                            card.drill_notice = Some(format!("参考答案: {}", reference));
+                        }
+                    }
+                }
+            } else {
+                if self.learning_mode == qingjian_platform::LearningMode::Daily {
+                    self.daily_show_english = !self.daily_show_english;
+                    self.notice = Some(if self.daily_show_english {
+                        "已开启日常英文辅助 (Ctrl+Shift+E)".to_string()
+                    } else {
+                        "已关闭日常英文辅助 (Ctrl+Shift+E)".to_string()
+                    });
+                    self.reconcile_status();
                 }
             }
             let shown = self.self_drawn_frame();
@@ -276,20 +339,15 @@ impl Router {
                                         .as_ref()
                                         .map(|p| p.text.as_str())
                                         .unwrap_or("");
-                                    let attempt = qingjian_learning::RecallBook::evaluate_attempt(
+                                    card.drill_stage =
+                                        Some(qingjian_platform::protocol::DrillStage::Comparing);
+                                    card.drill_notice = None;
+                                    self.compare_start_time = Some(std::time::Instant::now());
+                                    self.engine.request_compare(
                                         &card.target_text,
                                         input,
                                         reference,
                                     );
-                                    if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
-                                        let mut vault = qingjian_learning::LearningVault::open(&user_dir);
-                                        vault.record_attempt(&attempt);
-                                        let _ = vault.flush();
-                                    }
-                                    card.drill_attempt = Some(attempt);
-                                    card.drill_stage =
-                                        Some(qingjian_platform::protocol::DrillStage::Compared);
-                                    card.drill_notice = None;
                                 }
                                 let shown = self.self_drawn_frame();
                                 self.reconcile_candidates(&shown);

@@ -11,6 +11,9 @@ pub enum PredictError {
     #[error("API request failed: {0}")]
     Api(#[from] async_openai::error::OpenAIError),
 
+    #[error("HTTP request failed: {0}")]
+    Http(#[from] reqwest::Error),
+
     #[error("API request timed out after {0} ms")]
     Timeout(u64),
 
@@ -23,4 +26,5 @@ pub enum PredictError {
 
     #[error("failed to encode request: {0}")]
     Encode(#[from] serde_json::Error),
+
 }

@@ -1,9 +1,9 @@
 {
   "Task A: Normal Pinyin (日常通用拼音)": {
-    "p50_ms": 1398.9487999933772,
-    "p95_ms": 1457.6358000049368,
-    "min_ms": 717.0068999985233,
-    "max_ms": 1457.6358000049368,
+    "p50_ms": 815.0507999998808,
+    "p95_ms": 950.3277000003436,
+    "min_ms": 585.7949999990524,
+    "max_ms": 950.3277000003436,
     "timeout_rate": 0.0,
     "fallback_rate": 0.0,
     "avg_prompt_tokens": 215.66666666666666,
@@ -25,7 +25,7 @@
           "max_items": 3,
           "want_sentence": false
         },
-        "latency_ms": 1398.9487999933772,
+        "latency_ms": 815.0507999998808,
         "output": "{\"words\": [{\"text\": \"你好\", \"pinyin\": \"nihao\"}], \"sentence\": null}"
       },
       {
@@ -43,7 +43,7 @@
           "max_items": 3,
           "want_sentence": false
         },
-        "latency_ms": 1457.6358000049368,
+        "latency_ms": 585.7949999990524,
         "output": "{\"words\": [{\"text\": \"开发\", \"pinyin\": \"kai'fa\"}], \"sentence\": null}"
       },
       {
@@ -61,16 +61,16 @@
           "max_items": 3,
           "want_sentence": false
         },
-        "latency_ms": 717.0068999985233,
+        "latency_ms": 950.3277000003436,
         "output": "{\"words\": [{\"text\": \"工作\", \"pinyin\": \"gong'zuo\"}], \"sentence\": null}"
       }
     ]
   },
   "Task B: Typo Correction (敲错轻微纠正)": {
-    "p50_ms": 1273.7830999976723,
-    "p95_ms": 1507.4517000030028,
-    "min_ms": 1040.1144999923417,
-    "max_ms": 1507.4517000030028,
+    "p50_ms": 603.7841999986995,
+    "p95_ms": 654.3515999983356,
+    "min_ms": 553.2167999990634,
+    "max_ms": 654.3515999983356,
     "timeout_rate": 0.0,
     "fallback_rate": 0.0,
     "avg_prompt_tokens": 215.5,
@@ -90,7 +90,7 @@
           "max_items": 3,
           "want_sentence": false
         },
-        "latency_ms": 1507.4517000030028,
+        "latency_ms": 654.3515999983356,
         "output": "{\"words\": [{\"text\": \"输入法\", \"pinyin\": \"shu'ru'fa\"}], \"sentence\": null}"
       },
       {
@@ -107,20 +107,20 @@
           "max_items": 3,
           "want_sentence": false
         },
-        "latency_ms": 1040.1144999923417,
+        "latency_ms": 553.2167999990634,
         "output": "{\"words\": [{\"text\": \"中国\", \"pinyin\": \"zhong'guo\"}], \"sentence\": null}"
       }
     ]
   },
   "Task C: High Ambiguity & Semantic Disambiguation (高歧义/语境消歧)": {
-    "p50_ms": 983.2609000004595,
-    "p95_ms": 4082.617300009588,
-    "min_ms": 678.4020999912173,
-    "max_ms": 4082.617300009588,
-    "timeout_rate": 0.2,
-    "fallback_rate": 0.2,
-    "avg_prompt_tokens": 218,
-    "avg_completion_tokens": 24.25,
+    "p50_ms": 656.1800999988918,
+    "p95_ms": 731.9690000003902,
+    "min_ms": 606.6186999996717,
+    "max_ms": 731.9690000003902,
+    "timeout_rate": 0.0,
+    "fallback_rate": 0.0,
+    "avg_prompt_tokens": 217.4,
+    "avg_completion_tokens": 23.8,
     "details": [
       {
         "sample": {
@@ -137,7 +137,7 @@
           "max_items": 3,
           "want_sentence": false
         },
-        "latency_ms": 1157.0375000010245,
+        "latency_ms": 709.0184000007866,
         "output": "{\"words\": [{\"text\": \"纸张\", \"pinyin\": \"zhi'zhang\"}], \"sentence\": null}"
       },
       {
@@ -156,7 +156,7 @@
           "max_items": 3,
           "want_sentence": false
         },
-        "latency_ms": 983.2609000004595,
+        "latency_ms": 645.0138000000152,
         "output": "{\"words\": [{\"text\": \"沙\", \"pinyin\": \"sha\"}], \"sentence\": null}"
       },
       {
@@ -175,7 +175,7 @@
           "max_items": 3,
           "want_sentence": false
         },
-        "latency_ms": 693.9912999951048,
+        "latency_ms": 606.6186999996717,
         "output": "{\"words\": [{\"text\": \"他\", \"pinyin\": \"tā\"}], \"sentence\": null}"
       },
       {
@@ -194,7 +194,7 @@
           "max_items": 3,
           "want_sentence": false
         },
-        "latency_ms": 678.4020999912173,
+        "latency_ms": 731.9690000003902,
         "output": "{\"words\": [{\"text\": \"沙子\", \"pinyin\": \"sha'zi\"}], \"sentence\": null}"
       },
       {
@@ -213,16 +213,16 @@
           "max_items": 3,
           "want_sentence": false
         },
-        "latency_ms": 4082.617300009588,
-        "error": "The read operation timed out"
+        "latency_ms": 656.1800999988918,
+        "output": "{\"words\": [{\"text\": \"得\", \"pinyin\": \"de\"}], \"sentence\": null}"
       }
     ]
   },
   "Task D: Natural Spoken English Translation (地道美式口语重写)": {
-    "p50_ms": 585.2737999957753,
-    "p95_ms": 1349.801699994714,
-    "min_ms": 367.8953000053298,
-    "max_ms": 1349.801699994714,
+    "p50_ms": 341.2421000030008,
+    "p95_ms": 390.9739999980957,
+    "min_ms": 261.1314999994647,
+    "max_ms": 390.9739999980957,
     "timeout_rate": 0.0,
     "fallback_rate": 0.0,
     "avg_prompt_tokens": 196.71428571428572,
@@ -234,7 +234,7 @@
           "target_language": "en",
           "context": ""
         },
-        "latency_ms": 585.2737999957753,
+        "latency_ms": 301.0692000025301,
         "output": "{\"sentence\": \"Got it\"}"
       },
       {
@@ -243,7 +243,7 @@
           "target_language": "en",
           "context": ""
         },
-        "latency_ms": 1260.0433000043267,
+        "latency_ms": 341.2421000030008,
         "output": "{\"sentence\": \"Why are you still not here?\"}"
       },
       {
@@ -252,7 +252,7 @@
           "target_language": "en",
           "context": ""
         },
-        "latency_ms": 402.4263000028441,
+        "latency_ms": 261.1314999994647,
         "output": "{\"sentence\": \"whatever\"}"
       },
       {
@@ -261,8 +261,8 @@
           "target_language": "en",
           "context": ""
         },
-        "latency_ms": 393.5769999952754,
-        "output": "{\"sentence\": \"It's okay\"}"
+        "latency_ms": 364.73089999708463,
+        "output": "{\"sentence\": \"It's cool\"}"
       },
       {
         "sample": {
@@ -270,8 +270,8 @@
           "target_language": "en",
           "context": ""
         },
-        "latency_ms": 727.0053999964148,
-        "output": "{\"sentence\": \"I am impressed.\"}"
+        "latency_ms": 370.0319999989006,
+        "output": "{\"sentence\": \"I'm impressed.\"}"
       },
       {
         "sample": {
@@ -279,7 +279,7 @@
           "target_language": "en",
           "context": ""
         },
-        "latency_ms": 367.8953000053298,
+        "latency_ms": 333.7898999998288,
         "output": "{\"sentence\": \"For real?\"}"
       },
       {
@@ -288,16 +288,16 @@
           "target_language": "en",
           "context": ""
         },
-        "latency_ms": 1349.801699994714,
+        "latency_ms": 390.9739999980957,
         "output": "{\"sentence\": \"That's crazy\"}"
       }
     ]
   },
   "Task E: Cloud Sentence Completion (云端整句联想)": {
-    "p50_ms": 1766.639050001686,
-    "p95_ms": 2844.1967999970075,
-    "min_ms": 689.0813000063645,
-    "max_ms": 2844.1967999970075,
+    "p50_ms": 620.1789000006102,
+    "p95_ms": 668.7568000015744,
+    "min_ms": 571.6009999996459,
+    "max_ms": 668.7568000015744,
     "timeout_rate": 0.0,
     "fallback_rate": 0.0,
     "avg_prompt_tokens": 214,
@@ -317,7 +317,7 @@
           "max_items": 2,
           "want_sentence": true
         },
-        "latency_ms": 2844.1967999970075,
+        "latency_ms": 571.6009999996459,
         "output": "{\"words\": [{\"text\": \"所以\", \"pinyin\": \"suoyi\"}], \"sentence\": null}"
       },
       {
@@ -334,7 +334,7 @@
           "max_items": 2,
           "want_sentence": true
         },
-        "latency_ms": 689.0813000063645,
+        "latency_ms": 668.7568000015744,
         "output": "{\"words\": [{\"text\": \"今天\", \"pinyin\": \"jin'tian\"}], \"sentence\": \"今天\"}"
       }
     ]

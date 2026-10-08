@@ -86,6 +86,21 @@ pub(crate) fn view(settings: &Settings, context: &mut ViewContext<Settings>) -> 
                 .on_text_changed(context.callback(Message::CloudModel)),
         ),
         field(
+            "当前口语翻译与练习模型",
+            "口语翻译与主动回忆练习使用的 AI 服务通道及模型（透明显示）。",
+            TextBlock::new().text(format!(
+                "{} / {}",
+                if p.base_url.contains("siliconflow") {
+                    "SiliconFlow"
+                } else if p.base_url.contains("deepseek") {
+                    "DeepSeek"
+                } else {
+                    "Custom Endpoint"
+                },
+                p.model
+            )),
+        ),
+        field(
             "API 密钥",
             "只保存在这台电脑上，不会随配置文件导出，也不显示已填的值。留空则读环境变量 QINGJIAN_API_KEY。",
             PasswordBox::new()

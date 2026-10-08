@@ -145,8 +145,12 @@ impl Renderer {
         }
 
         // 1. Layer 3: 主条目 (Flag + 状态/主要文本 + 展开按钮)
-        let flag_prefix = "🇺🇸 ";
-        let flag_width = self.measure(flag_prefix, &style).width;
+        let is_daily = frame.learning_mode == crate::frame::LearningMode::Daily;
+        let flag_width = if is_daily {
+            m.px(16.0) + m.px(8.0)
+        } else {
+            self.measure("🇺🇸 ", &style).width
+        };
         let (main_text, has_audio) = match card.status {
             LearningStatus::Loading => ("正在推荐地道口语……", false),
             LearningStatus::Failed => ("暂时没有译文", false),
@@ -166,17 +170,25 @@ impl Renderer {
             0.0
         };
         let main_width = self.measure(main_text, &style).width + audio_width;
-        let drill_btn = "Try English";
-        let drill_width = self.measure(drill_btn, &m.index_style()).width + m.px(16.0);
+        let drill_width = if is_daily {
+            0.0
+        } else {
+            let drill_btn = "Try English";
+            self.measure(drill_btn, &m.index_style()).width + m.px(16.0)
+        };
         let btn_text = if card.expanded { "收起 ∧" } else { "更多译法 ∨" };
         let btn_width = self.measure(btn_text, &m.index_style()).width + m.px(16.0);
 
-        let row1_width = flag_width
-            + main_width
-            + m.column_gap() * 3.0
-            + drill_width
-            + m.column_gap()
-            + btn_width;
+        let row1_width = if is_daily {
+            flag_width + main_width + m.column_gap() * 2.0 + btn_width
+        } else {
+            flag_width
+                + main_width
+                + m.column_gap() * 3.0
+                + drill_width
+                + m.column_gap()
+                + btn_width
+        };
         width = width.max(row1_width);
         height += line_height + m.row_padding() * 2.0;
 
@@ -227,17 +239,19 @@ impl Renderer {
         mut y: f32,
         content_width: f32,
     ) {
-        if frame.learning_mode == crate::frame::LearningMode::Daily {
-            if !frame.rows.is_empty() {
-                let badge_style = m.style(m.theme.index_font, Color::rgb(255, 255, 255));
-                let prompt_style = m.style(m.theme.index_font, m.theme.colors.gloss);
-                let bx = left + m.padding();
-                let by = y + m.row_padding() / 2.0;
-                let badge_w = m.px(20.0);
-                let badge_h = m.px(13.0);
-                canvas.fill_round_rect(bx, by + m.px(1.0), badge_w, badge_h, m.px(3.0), Color::rgb(249, 115, 22));
-                self.draw_text(canvas, "us", &badge_style, bx + m.px(4.0), by);
-                self.draw_text(canvas, "按 Ctrl+Shift+E 查看英文", &prompt_style, bx + badge_w + m.px(6.0), by);
+        if frame.learning_card.is_none() {
+            if frame.learning_mode == crate::frame::LearningMode::Daily {
+                if !frame.rows.is_empty() {
+                    let badge_style = m.style(m.theme.index_font, Color::rgb(255, 255, 255));
+                    let prompt_style = m.style(m.theme.index_font, m.theme.colors.gloss);
+                    let bx = left + m.padding();
+                    let by = y + m.row_padding() / 2.0;
+                    let badge_w = m.px(20.0);
+                    let badge_h = m.px(13.0);
+                    canvas.fill_round_rect(bx, by + m.px(1.0), badge_w, badge_h, m.px(3.0), Color::rgb(249, 115, 22));
+                    self.draw_text(canvas, "us", &badge_style, bx + m.px(4.0), by);
+                    self.draw_text(canvas, "按 Ctrl+Shift+E 查看英文", &prompt_style, bx + badge_w + m.px(6.0), by);
+                }
             }
             return;
         }
@@ -357,11 +371,22 @@ impl Renderer {
                     let left_card_x = left + m.padding();
                     let right_card_x = left_card_x + card_w + card_gap;
 
-                    // 1. 左卡片：你的表达 (淡红底 #FFF1F0 + 浅红边 #FFCCC7)
-                    canvas.fill_round_rect(left_card_x, y, card_w, card_h, m.px(4.0), Color::rgb(255, 204, 199));
-                    canvas.fill_round_rect(left_card_x + 1.0, y + 1.0, card_w - 2.0, card_h - 2.0, m.px(3.5), Color::rgb(255, 241, 240));
-                    let red_title_style = m.style(m.theme.index_font, Color::rgb(207, 19, 34));
-                    self.draw_text(canvas, "❌ 你的表达", &red_title_style, left_card_x + m.px(8.0), y + m.px(4.0));
+                    let is_correct = card.drill_attempt.as_ref().map(|a| {
+                        matches!(a.comparison.status, Some(crate::ComparisonStatus::ExactMatch) | Some(crate::ComparisonStatus::ValidB2Upgrade))
+                    }).unwrap_or(false);
+
+                    // 1. 左卡片：你的表达
+                    if is_correct {
+                        canvas.fill_round_rect(left_card_x, y, card_w, card_h, m.px(4.0), Color::rgb(183, 235, 143));
+                        canvas.fill_round_rect(left_card_x + 1.0, y + 1.0, card_w - 2.0, card_h - 2.0, m.px(3.5), Color::rgb(246, 255, 237));
+                        let ok_title_style = m.style(m.theme.index_font, Color::rgb(56, 158, 13));
+                        self.draw_text(canvas, "✅ 你的表达", &ok_title_style, left_card_x + m.px(8.0), y + m.px(4.0));
+                    } else {
+                        canvas.fill_round_rect(left_card_x, y, card_w, card_h, m.px(4.0), Color::rgb(255, 204, 199));
+                        canvas.fill_round_rect(left_card_x + 1.0, y + 1.0, card_w - 2.0, card_h - 2.0, m.px(3.5), Color::rgb(255, 241, 240));
+                        let red_title_style = m.style(m.theme.index_font, Color::rgb(207, 19, 34));
+                        self.draw_text(canvas, "❌ 你的表达", &red_title_style, left_card_x + m.px(8.0), y + m.px(4.0));
+                    }
                     self.draw_text(canvas, user_expr, &active_text_style, left_card_x + m.px(8.0), y + line_height + m.px(4.0));
 
                     // 2. 右卡片：更自然的表达 (淡绿底 #F6FFED + 浅绿边 #B7EB8F)
@@ -374,9 +399,20 @@ impl Renderer {
 
                     y += card_h + m.row_padding();
 
-                    // 3. 关键建议
+                    // 3. 关键建议 & 错误标签
                     let tip_title_style = m.style(m.theme.index_font, Color::rgb(24, 144, 255));
                     self.draw_text(canvas, "ⓘ 关键建议", &tip_title_style, left_card_x, y);
+                    if let Some(attempt) = &card.drill_attempt {
+                        if !attempt.comparison.feedback_items.is_empty() {
+                            let mut tag_x = left_card_x + self.measure("ⓘ 关键建议", &tip_title_style).width + m.px(8.0);
+                            for item in attempt.comparison.feedback_items.iter().take(3) {
+                                let badge_text = format!("[{}]", item.label);
+                                let badge_style = m.style(m.theme.index_font, Color::rgb(245, 34, 45));
+                                self.draw_text(canvas, &badge_text, &badge_style, tag_x, y);
+                                tag_x += self.measure(&badge_text, &badge_style).width + m.px(4.0);
+                            }
+                        }
+                    }
                     y += small_style.line_height + m.px(2.0);
 
                     let advice_text = if !advice.is_empty() {
@@ -493,10 +529,20 @@ impl Renderer {
         }
 
         // 1. Layer 3: 主条目 (Flag + 最佳推荐 + 展开按钮)
-        let flag_prefix = "🇺🇸 ";
-        let flag_style = m.annotation_style(m.theme.colors.fresh);
+        let is_daily = frame.learning_mode == crate::frame::LearningMode::Daily;
         let mut x = left + m.padding();
-        x += self.draw_text(canvas, flag_prefix, &flag_style, x, y);
+        if is_daily {
+            let badge_style = m.style(m.theme.index_font, Color::rgb(255, 255, 255));
+            let badge_w = m.px(16.0);
+            let badge_h = m.px(14.0);
+            canvas.fill_round_rect(x, y + m.px(1.0), badge_w, badge_h, m.px(3.0), Color::rgb(128, 128, 128));
+            self.draw_text(canvas, "A", &badge_style, x + m.px(3.0), y - m.px(1.0));
+            x += badge_w + m.px(8.0);
+        } else {
+            let flag_prefix = "🇺🇸 ";
+            let flag_style = m.annotation_style(m.theme.colors.fresh);
+            x += self.draw_text(canvas, flag_prefix, &flag_style, x, y);
+        }
 
         let (main_text, has_audio) = match card.status {
             LearningStatus::Loading => ("正在推荐地道口语……", false),
@@ -523,26 +569,31 @@ impl Renderer {
             self.draw_text(canvas, " 🔊", &audio_style, x, y);
         }
 
-        // 右侧仅保留两个按钮：[Try English] 与「更多译法 ∨ / 收起 ∧」
-        let drill_text = "Try English";
-        let drill_style = m.style(m.theme.index_font, Color::rgb(0, 166, 153));
-        let drill_w = self.measure(drill_text, &drill_style).width + m.px(12.0);
-        let btn_h = line_height;
-
         let btn_text = if card.expanded { "收起 ∧" } else { "更多译法 ∨" };
         let btn_style = m.style(m.theme.index_font, m.theme.colors.cloud);
         let btn_w = self.measure(btn_text, &btn_style).width + m.px(12.0);
+        let btn_h = line_height;
 
-        let drill_x = left + content_width - m.padding() - drill_w;
-        let btn_x = drill_x - m.column_gap() - btn_w;
+        if !is_daily {
+            let drill_text = "Try English";
+            let drill_style = m.style(m.theme.index_font, Color::rgb(0, 166, 153));
+            let drill_w = self.measure(drill_text, &drill_style).width + m.px(12.0);
 
-        // 更多译法 / 收起 button
-        canvas.fill_round_rect(btn_x, y - m.px(1.0), btn_w, btn_h, m.px(4.0), Color::rgba(128, 128, 128, 20));
-        self.draw_text(canvas, btn_text, &btn_style, btn_x + m.px(6.0), y);
+            let drill_x = left + content_width - m.padding() - drill_w;
+            let btn_x = drill_x - m.column_gap() - btn_w;
 
-        // Try English button
-        canvas.fill_round_rect(drill_x, y - m.px(1.0), drill_w, btn_h, m.px(4.0), Color::rgba(0, 166, 153, 30));
-        self.draw_text(canvas, drill_text, &drill_style, drill_x + m.px(6.0), y);
+            // 更多译法 / 收起 button
+            canvas.fill_round_rect(btn_x, y - m.px(1.0), btn_w, btn_h, m.px(4.0), Color::rgba(128, 128, 128, 20));
+            self.draw_text(canvas, btn_text, &btn_style, btn_x + m.px(6.0), y);
+
+            // Try English button
+            canvas.fill_round_rect(drill_x, y - m.px(1.0), drill_w, btn_h, m.px(4.0), Color::rgba(0, 166, 153, 30));
+            self.draw_text(canvas, drill_text, &drill_style, drill_x + m.px(6.0), y);
+        } else {
+            let btn_x = left + content_width - m.padding() - btn_w;
+            canvas.fill_round_rect(btn_x, y - m.px(1.0), btn_w, btn_h, m.px(4.0), Color::rgba(128, 128, 128, 20));
+            self.draw_text(canvas, btn_text, &btn_style, btn_x + m.px(6.0), y);
+        }
 
         let line_height = style.line_height.max(m.px(m.theme.annotation_font.line_height));
         y += line_height + m.row_padding();

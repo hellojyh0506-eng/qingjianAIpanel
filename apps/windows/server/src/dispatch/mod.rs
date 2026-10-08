@@ -78,6 +78,9 @@ pub struct Router {
 
     /// 记录当前被动翻译触发时刻（T0），用于端到端延迟诊断。
     pub(crate) translation_start_time: Option<Instant>,
+    pub(crate) compare_start_time: Option<Instant>,
+    pub(crate) daily_show_english: bool,
+    pub(crate) generation_id: u64,
 
     /// 当前被动翻译请求对应的候选词；若当前首选词变更则作废旧译文，防止污染新候选。
     pub(crate) passive_translation_target: Option<String>,
@@ -163,6 +166,9 @@ impl Router {
             learning_mode: config.learning_mode,
             previous_learning_mode: config.learning_mode,
             translation_start_time: None,
+            compare_start_time: None,
+            daily_show_english: false,
+            generation_id: 0,
             pending_selection: None,
             selection_seq: 0,
             sentence: None,
@@ -233,6 +239,14 @@ impl Router {
             .passive_learning_card
             .as_ref()
             .and_then(|c| c.upgrade.clone());
+
+        self.passive_translation_target = Some(target_text.clone());
+        if primary.is_none() && self.engine.prediction_enabled() {
+            self.translation_start_time = Some(Instant::now());
+            if let Some(seq) = self.engine.request_translation(&target_text) {
+                self.generation_id = seq;
+            }
+        }
 
         self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
             target_text,
@@ -325,12 +339,41 @@ impl Router {
         match action {
             CandidateAction::ToggleExpand => {
                 if self.learning_mode == qingjian_platform::LearningMode::Daily {
-                    self.learning_mode = qingjian_platform::LearningMode::Learn;
-                    self.config.learning_mode = qingjian_platform::LearningMode::Learn;
-                    self.persist("general", "learning_mode", qingjian_platform::LearningMode::Learn.key());
-                    self.notice = Some("已切换至【学习模式】".to_string());
-                    if self.composing() {
-                        self.on_candidate_selection_changed();
+                    if !self.daily_show_english {
+                        self.daily_show_english = true;
+                        let target = self
+                            .layout_candidate(self.highlight)
+                            .map(|c| c.text)
+                            .or_else(|| self.layout_candidate(0).map(|c| c.text));
+                        if let Some(target) = target {
+                            self.passive_translation_target = Some(target.clone());
+                            let due = self.today_due_count();
+                            self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
+                                target_text: target.clone(),
+                                state: qingjian_platform::protocol::LearningState::Loading,
+                                primary: None,
+                                alternatives: Vec::new(),
+                                expanded: false,
+                                selected_index: None,
+                                drill_stage: None,
+                                drill_input: String::new(),
+                                drill_attempt: None,
+                                drill_notice: None,
+                                today_due_count: due,
+                                review_current_index: 0,
+                                review_total_count: due,
+                                upgrade: None,
+                            });
+                            self.translation_start_time = Some(Instant::now());
+                            if let Some(seq) = self.engine.request_translation(&target) {
+                                self.generation_id = seq;
+                            }
+                        }
+                    } else if let Some(card) = self.passive_learning_card.as_mut() {
+                        card.expanded = !card.expanded;
+                        if !card.expanded {
+                            card.selected_index = None;
+                        }
                     }
                 } else if let Some(card) = self.passive_learning_card.as_mut() {
                     card.expanded = !card.expanded;
@@ -372,19 +415,14 @@ impl Router {
                             .as_ref()
                             .map(|p| p.text.as_str())
                             .unwrap_or("");
-                        let attempt = qingjian_learning::RecallBook::evaluate_attempt(
+                        card.drill_stage = Some(qingjian_platform::protocol::DrillStage::Comparing);
+                        card.drill_notice = None;
+                        self.compare_start_time = Some(Instant::now());
+                        self.engine.request_compare(
                             &card.target_text,
                             input,
                             reference,
                         );
-                        if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
-                            let mut vault = qingjian_learning::LearningVault::open(&user_dir);
-                            vault.record_attempt(&attempt);
-                            let _ = vault.flush();
-                        }
-                        card.drill_attempt = Some(attempt);
-                        card.drill_stage = Some(qingjian_platform::protocol::DrillStage::Compared);
-                        card.drill_notice = None;
                     }
                 }
             }
