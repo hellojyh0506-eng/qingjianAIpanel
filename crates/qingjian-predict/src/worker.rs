@@ -1,22 +1,22 @@
 //! 后台线程：收请求、防抖、查缓存、发网络请求、回结果。
 
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use qingjian_core::{Prediction, PredictionRequest};
-
-use crate::prompt::Reply;
 
 use crate::cache::PredictionCache;
 use crate::chat_client::ChatClient;
 use crate::error::PredictError;
+use crate::prompt::Reply;
 
 /// 缓存条数。
 const CACHE_CAPACITY: usize = 64;
 
 pub struct Worker {
-    /// 请求入口。主线程 drop 掉发送端后线程自然退出。
-    requests: Receiver<PredictionRequest>,
+    /// 请求入口。主线程 drop 掉发送端后通道自然关闭。
+    requests: UnboundedReceiver<PredictionRequest>,
 
     /// 结果出口。
     responses: Sender<Prediction>,
@@ -36,7 +36,7 @@ type Cached = Reply;
 
 impl Worker {
     pub fn new(
-        requests: Receiver<PredictionRequest>,
+        requests: UnboundedReceiver<PredictionRequest>,
         responses: Sender<Prediction>,
         client: ChatClient,
         debounce: Duration,
@@ -51,66 +51,94 @@ impl Worker {
     }
 
     /// 阻塞运行直到发送端全部关闭。
-    pub fn run(mut self) -> Result<(), PredictError> {
+    pub fn run(self) -> Result<(), PredictError> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        while let Ok(mut latest) = self.requests.recv() {
-            // 立即排空积压的过期请求，直接跳到最新请求，防止多请求串行阻塞
-            while let Ok(newer) = self.requests.try_recv() {
-                latest = newer;
-            }
-            let Some(request) = self.debounce(latest) else {
-                return Ok(());
+        runtime.block_on(self.run_async())
+    }
+
+    async fn run_async(mut self) -> Result<(), PredictError> {
+        let mut latest_request: Option<PredictionRequest> = None;
+        loop {
+            let request = match latest_request.take() {
+                Some(req) => req,
+                None => match self.requests.recv().await {
+                    Some(req) => req,
+                    None => break,
+                },
             };
-            let key = PredictionCache::key(&request);
+
+            // 防抖窗口：在 debounce 期间持续收新请求，仅保留最新
+            let mut req = request;
+            let debounce_deadline = tokio::time::Instant::now() + self.debounce;
+            while tokio::time::Instant::now() < debounce_deadline {
+                let remaining =
+                    debounce_deadline.saturating_duration_since(tokio::time::Instant::now());
+                tokio::select! {
+                    newer = self.requests.recv() => {
+                        match newer {
+                            Some(n) => req = n,
+                            None => return Ok(()),
+                        }
+                    }
+                    _ = tokio::time::sleep(remaining) => break,
+                }
+            }
+
+            // 查缓存
+            let key = PredictionCache::key(&req);
             if let Some(reply) = self.cache.get(&key) {
-                tracing::debug!(sequence = request.sequence, kind = ?request.kind, "联想命中缓存");
-                self.reply(request.sequence, reply.clone());
+                tracing::debug!(sequence = req.sequence, kind = ?req.kind, "联想命中缓存");
+                self.reply(req.sequence, reply.clone());
                 continue;
             }
+
             let start = Instant::now();
-            match runtime.block_on(self.client.complete(&request)) {
-                Ok(reply) => {
-                    tracing::info!(
-                        sequence = request.sequence,
-                        elapsed_ms = start.elapsed().as_millis(),
-                        words = reply.words.len(),
-                        sentence = reply.sentence.is_some(),
-                        "联想完成"
-                    );
-                    // 空回复不进缓存：模型偶尔什么都不给（问字尤其），缓存住就等于这个问题以后永远没答案，
-                    // 用户重打一遍也只会命中缓存（2026-09-07 `?mumumu` 就是这么卡住的）
-                    if !reply.is_empty() {
-                        self.cache.insert(key, reply.clone());
+            tokio::select! {
+                newer = self.requests.recv() => {
+                    match newer {
+                        Some(n) => {
+                            tracing::info!(
+                                interrupted_seq = req.sequence,
+                                new_seq = n.sequence,
+                                "新按键/候选到达，立刻打断在途网络请求"
+                            );
+                            latest_request = Some(n);
+                            continue;
+                        }
+                        None => return Ok(()),
                     }
-                    self.reply(request.sequence, reply);
                 }
-                Err(error) => {
-                    tracing::warn!(
-                        sequence = request.sequence,
-                        elapsed_ms = start.elapsed().as_millis(),
-                        %error,
-                        "联想失败，下发空兜底通知"
-                    );
-                    // 关键修复：发生网络超时或模型拒绝时，绝不可静默吞掉请求导致 UI 陷入永久 loading！
-                    // 必须下发带 sequence 的空回复，通知上层转入 Failed / 暂无译文 状态
-                    self.reply(request.sequence, Reply::default());
+                res = self.client.complete(&req) => {
+                    match res {
+                        Ok(reply) => {
+                            tracing::info!(
+                                sequence = req.sequence,
+                                elapsed_ms = start.elapsed().as_millis(),
+                                words = reply.words.len(),
+                                sentence = reply.sentence.is_some(),
+                                "联想完成"
+                            );
+                            if !reply.is_empty() {
+                                self.cache.insert(key, reply.clone());
+                            }
+                            self.reply(req.sequence, reply);
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                sequence = req.sequence,
+                                elapsed_ms = start.elapsed().as_millis(),
+                                %error,
+                                "联想失败，下发空兜底通知"
+                            );
+                            self.reply(req.sequence, Reply::default());
+                        }
+                    }
                 }
             }
         }
         Ok(())
-    }
-
-    /// 防抖：在窗口内持续收到新请求就一直等，只保留最后一个。发送端关闭返回 `None`。
-    fn debounce(&self, mut latest: PredictionRequest) -> Option<PredictionRequest> {
-        loop {
-            match self.requests.recv_timeout(self.debounce) {
-                Ok(newer) => latest = newer,
-                Err(RecvTimeoutError::Timeout) => return Some(latest),
-                Err(RecvTimeoutError::Disconnected) => return None,
-            }
-        }
     }
 
     fn reply(&self, sequence: u64, reply: Cached) {

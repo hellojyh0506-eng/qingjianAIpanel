@@ -8,6 +8,8 @@ use qingjian_core::{
 };
 use qingjian_platform::protocol::{Frame, PROTOCOL_VERSION, PreeditKind, PreeditSegment};
 
+use std::time::Instant;
+
 pub(super) use self::state::{Composed, TypedKeys};
 use super::Router;
 
@@ -94,6 +96,7 @@ impl Router {
                                 review_total_count: due,
                                 upgrade: None,
                             });
+                            self.translation_start_time = Some(Instant::now());
                             self.engine.request_translation(&target);
                         }
                     } else if self.engine.prediction_enabled() {
@@ -149,8 +152,9 @@ impl Router {
                 }
                 _ => None,
             };
-            if let (Some(curr), Some(target)) = (current_highlight_text, &self.passive_translation_target) {
-                if curr == *target {
+            let target = self.passive_translation_target.clone();
+            if let (Some(curr), Some(target)) = (current_highlight_text, target) {
+                if curr == target {
                     if let Some(text) = &prediction.sentence {
                         // 异常防发散保护：若目标短语 <= 10 汉字，译文超过 100 字符，判定为模型幻觉或串译发散，坚决丢弃
                         if target.chars().count() <= 10 && text.chars().count() > 100 {
@@ -234,8 +238,21 @@ impl Router {
                         upgrade,
                     });
 
+                    let translation_total_ms = self
+                        .translation_start_time
+                        .take()
+                        .map(|t| t.elapsed().as_millis())
+                        .unwrap_or(0);
+                    let t_ui = Instant::now();
                     let shown = self.self_drawn_frame();
                     self.reconcile_candidates(&shown);
+                    let ui_update_ms = t_ui.elapsed().as_millis();
+                    tracing::info!(
+                        target = %target,
+                        translation_total_ms,
+                        ui_update_ms,
+                        "Translation端到端耗时 (T0->T7)"
+                    );
                 } else {
                     tracing::debug!(
                         "丢弃过期的被动翻译结果: 目标为 {:?}, 但当前高亮为 {:?}",
@@ -370,6 +387,7 @@ impl Router {
                 review_total_count: due,
                 upgrade: None,
             });
+            self.translation_start_time = Some(Instant::now());
             self.engine.request_translation(&target);
         } else {
             self.passive_learning_card = None;

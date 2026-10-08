@@ -74,6 +74,9 @@ pub struct Router {
     /// 开启 Drill 临时训练会话前的英语学习模式（Daily 或 Learn），退出时恢复。
     pub(crate) previous_learning_mode: qingjian_platform::LearningMode,
 
+    /// 记录当前被动翻译触发时刻（T0），用于端到端延迟诊断。
+    pub(crate) translation_start_time: Option<Instant>,
+
     /// 当前被动翻译请求对应的候选词；若当前首选词变更则作废旧译文，防止污染新候选。
     pub(crate) passive_translation_target: Option<String>,
 
@@ -157,6 +160,7 @@ impl Router {
             passive_learning_card: None,
             learning_mode: config.learning_mode,
             previous_learning_mode: config.learning_mode,
+            translation_start_time: None,
             pending_selection: None,
             selection_seq: 0,
             sentence: None,

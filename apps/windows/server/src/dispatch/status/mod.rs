@@ -100,7 +100,12 @@ impl Router {
             && chord.shift
             && !chord.alt
             && !chord.win;
-        is_configured || is_ctrl_shift_e
+        let is_ctrl_shift_l = event.character.map(|c| c.to_ascii_lowercase()) == Some('l')
+            && chord.ctrl
+            && chord.shift
+            && !chord.alt
+            && !chord.win;
+        is_configured || is_ctrl_shift_e || is_ctrl_shift_l
     }
 
     /// 快捷键展开/收起候选卡片「更多译法」（默认 Ctrl+Alt+E）。

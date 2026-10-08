@@ -451,39 +451,48 @@ fn scene_daily() -> Frame {
 
 fn scene_learn() -> Frame {
     Frame {
-        preedit: Some(Preedit::plain("fangsong", 8)),
+        preedit: Some(Preedit::plain("neng'zhong'lai", 13)),
         rows: vec![
-            Row::plain(0, "放松"),
-            Row::plain(1, "放宽"),
+            Row::plain(0, "能重来"),
+            Row::plain(1, "能"),
+            Row::plain(2, "能够"),
+            Row::plain(3, "能否"),
+            Row::plain(4, "能量"),
         ],
         highlighted: Some(0),
         learning_mode: LearningMode::Learn,
         learning_card: Some(LearningCard {
-            target_text: "放松".to_owned(),
+            target_text: "能重来".to_owned(),
             status: LearningStatus::Ready,
             primary: Some(LearningExpression {
-                text: "Take it easy".to_owned(),
+                text: "Give it another shot".to_owned(),
                 tag: "Natural".to_owned(),
-                meaning: "放轻松，别紧张".to_owned(),
+                meaning: "再试一次，能重来".to_owned(),
                 ..Default::default()
             }),
             alternatives: vec![
                 LearningExpression {
-                    text: "Take it easy".to_owned(),
+                    text: "Give it another shot".to_owned(),
                     tag: "Natural".to_owned(),
-                    meaning: "放轻松，别紧张".to_owned(),
+                    meaning: "再试一次，能重来".to_owned(),
                     ..Default::default()
                 },
                 LearningExpression {
-                    text: "Relax".to_owned(),
+                    text: "Try again".to_owned(),
                     tag: "Casual".to_owned(),
-                    meaning: "放松点".to_owned(),
+                    meaning: "重试一次".to_owned(),
                     ..Default::default()
                 },
                 LearningExpression {
-                    text: "Chill out".to_owned(),
-                    tag: "Casual".to_owned(),
-                    meaning: "别激动，冷静下".to_owned(),
+                    text: "Give it a second chance".to_owned(),
+                    tag: "Natural".to_owned(),
+                    meaning: "给第二次机会".to_owned(),
+                    ..Default::default()
+                },
+                LearningExpression {
+                    text: "Have another go".to_owned(),
+                    tag: "British".to_owned(),
+                    meaning: "再来一把".to_owned(),
                     ..Default::default()
                 },
             ],
@@ -505,12 +514,20 @@ fn scene_more_translations() -> Frame {
 
 fn scene_drill_input() -> Frame {
     Frame {
-        rows: vec![Row::plain(0, "放轻松")],
+        preedit: Some(Preedit::plain("neng'zhong'lai", 13)),
+        rows: vec![
+            Row::plain(0, "能重来"),
+            Row::plain(1, "能"),
+            Row::plain(2, "能够"),
+            Row::plain(3, "能否"),
+            Row::plain(4, "能量"),
+        ],
+        highlighted: Some(0),
         learning_mode: LearningMode::Drill,
         learning_card: Some(LearningCard {
-            target_text: "放轻松".to_owned(),
+            target_text: "能重来".to_owned(),
             drill_stage: Some(DrillStage::Input),
-            drill_input: "Take it easy".to_owned(),
+            drill_input: "Give it another shot".to_owned(),
             ..Default::default()
         }),
         ..Default::default()
@@ -519,17 +536,25 @@ fn scene_drill_input() -> Frame {
 
 fn scene_drill_compare() -> Frame {
     Frame {
-        rows: vec![Row::plain(0, "放轻松")],
+        preedit: Some(Preedit::plain("neng'zhong'lai", 13)),
+        rows: vec![
+            Row::plain(0, "能重来"),
+            Row::plain(1, "能"),
+            Row::plain(2, "能够"),
+            Row::plain(3, "能否"),
+            Row::plain(4, "能量"),
+        ],
+        highlighted: Some(0),
         learning_mode: LearningMode::Drill,
         learning_card: Some(LearningCard {
-            target_text: "放轻松".to_owned(),
+            target_text: "能重来".to_owned(),
             drill_stage: Some(DrillStage::Compared),
-            drill_input: "Relax yourself".to_owned(),
+            drill_input: "Can start again".to_owned(),
             drill_attempt: Some(RecallAttempt {
-                user_attempt: "Relax yourself".to_owned(),
+                user_attempt: "Can start again".to_owned(),
                 comparison: ComparisonResult {
-                    natural_expression: "Take it easy".to_owned(),
-                    key_advice: "口语中用 Take it easy 或 Relax 即可，加 yourself 显得生硬不自然。".to_owned(),
+                    natural_expression: "Give it another shot".to_owned(),
+                    key_advice: "在英语口语中，“能重来/再试一次”习惯用 Give it another shot，直译 Can start again 显得生硬且非地道搭配。".to_owned(),
                     ..Default::default()
                 },
                 ..Default::default()

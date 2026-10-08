@@ -533,16 +533,16 @@ impl Renderer {
         let btn_style = m.style(m.theme.index_font, m.theme.colors.cloud);
         let btn_w = self.measure(btn_text, &btn_style).width + m.px(12.0);
 
-        let btn_x = left + content_width - m.padding() - btn_w;
-        let drill_x = btn_x - m.column_gap() - drill_w;
+        let drill_x = left + content_width - m.padding() - drill_w;
+        let btn_x = drill_x - m.column_gap() - btn_w;
+
+        // 更多译法 / 收起 button
+        canvas.fill_round_rect(btn_x, y - m.px(1.0), btn_w, btn_h, m.px(4.0), Color::rgba(128, 128, 128, 20));
+        self.draw_text(canvas, btn_text, &btn_style, btn_x + m.px(6.0), y);
 
         // Try English button
         canvas.fill_round_rect(drill_x, y - m.px(1.0), drill_w, btn_h, m.px(4.0), Color::rgba(0, 166, 153, 30));
         self.draw_text(canvas, drill_text, &drill_style, drill_x + m.px(6.0), y);
-
-        // 更多译法 button
-        canvas.fill_round_rect(btn_x, y - m.px(1.0), btn_w, btn_h, m.px(4.0), Color::rgba(128, 128, 128, 20));
-        self.draw_text(canvas, btn_text, &btn_style, btn_x + m.px(6.0), y);
 
         let line_height = style.line_height.max(m.px(m.theme.annotation_font.line_height));
         y += line_height + m.row_padding();

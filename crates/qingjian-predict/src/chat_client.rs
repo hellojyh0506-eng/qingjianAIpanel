@@ -15,8 +15,8 @@ use crate::config::PredictConfig;
 use crate::error::PredictError;
 use crate::prompt::{self, Reply};
 
-/// 联想与翻译回复的 token 上限：整句口语翻译 220（紧凑且快速返回），组句 300，问字 200。
-const TRANSLATE_MAX_TOKENS: u32 = 220;
+/// 联想与翻译回复的 token 上限：整句口语翻译 120（紧凑且快速返回），组句 300，问字 200。
+const TRANSLATE_MAX_TOKENS: u32 = 120;
 const COMPOSE_MAX_TOKENS: u32 = 300;
 const QUESTION_MAX_TOKENS: u32 = 200;
 const COMPARE_MAX_TOKENS: u32 = 600;
@@ -75,7 +75,11 @@ impl ChatClient {
         let content = self
             .chat(prompt::system_prompt(request), &user, max_tokens)
             .await?;
-        Ok(prompt::parse_reply(&content, request))
+        let t_val = std::time::Instant::now();
+        let reply = prompt::parse_reply(&content, request);
+        let validation_ms = t_val.elapsed().as_millis();
+        tracing::info!(sequence = request.sequence, validation_ms, "Translation校验完成");
+        Ok(reply)
     }
 
     /// 一问一答：系统提示 + 用户消息，要 JSON 对象，返回正文。联想与释义兜底共用。

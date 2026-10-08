@@ -540,6 +540,17 @@ fn fill_round_rect(hdc: HDC, rect: RECT, color: COLORREF, radius: i32) {
 
 /// GDI 下轻量英语学习卡片的尺寸计算。
 fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
+    if data.learning_card.is_none() {
+        if data.learning_mode == qingjian_platform::LearningMode::Daily && !data.rows.is_empty() {
+            let prompt = "按 Ctrl+Shift+E 查看英文";
+            let prompt_w = measure(hdc, data.theme.index_font, prompt).cx;
+            let small_h = line_height(hdc, data.theme.index_font);
+            let w = 28 + 6 + prompt_w + data.theme.padding * 2;
+            let h = small_h + data.theme.row_padding;
+            return (w, h);
+        }
+        return (0, 0);
+    }
     let Some(card) = &data.learning_card else {
         return (0, 0);
     };
@@ -553,14 +564,18 @@ fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
     if let Some(stage) = card.drill_stage {
         match stage {
             qingjian_render::DrillStage::Input => {
-                let title = format!("🎯 英文回忆练习 (中文: {})", card.target_text);
+                let title = format!("💡 请用英语表达：{}", card.target_text);
                 let title_w = measure(hdc, theme.annotation_font, &title).cx;
-                let input_str = format!("你的尝试: {}|", card.drill_input);
-                let input_w = measure(hdc, theme.text_font, &input_str).cx;
-                let btns = "[对比 (Enter)]   [看答案 (Tab)]   [退出 (Esc)]";
-                let btns_w = measure(hdc, theme.index_font, btns).cx;
+                let placeholder = "在这里输入你的英文表达...";
+                let input_str = if card.drill_input.is_empty() {
+                    format!("{}|", placeholder)
+                } else {
+                    format!("{}|", card.drill_input)
+                };
+                let input_w = measure(hdc, theme.text_font, &input_str).cx + 28;
+                let btns_w = 190;
 
-                width = width.max(title_w).max(input_w).max(btns_w) + theme.column_gap * 2;
+                width = width.max(title_w).max(input_w).max(btns_w).max(280) + theme.column_gap * 2;
                 height += (line_h + theme.row_padding) * 3;
                 if card.drill_notice.is_some() {
                     height += small_h + theme.row_padding;
@@ -588,84 +603,19 @@ fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
                     .as_ref()
                     .map(|a| a.comparison.key_advice.as_str())
                     .unwrap_or("");
-                let feedback_items = card
-                    .drill_attempt
-                    .as_ref()
-                    .map(|a| a.comparison.feedback_items.as_slice())
-                    .unwrap_or(&[]);
-                let status = card.drill_attempt.as_ref().and_then(|a| a.comparison.status);
-                let upgrade = card.drill_attempt.as_ref().and_then(|a| a.comparison.upgrade.as_ref());
-                let is_b2_upgrade = status == Some(qingjian_render::ComparisonStatus::ValidB2Upgrade);
 
-                let row1 = if is_b2_upgrade {
-                    format!("🔵 你的表达: {} (语法正确 · B2)", user_expr)
-                } else {
-                    format!("🔴 你的表达: {}", user_expr)
-                };
-                let row2 = if is_b2_upgrade {
-                    if let Some(up) = upgrade {
-                        format!("✨ 高阶表达 (C1): {}", up.c1_expression)
-                    } else {
-                        format!("🟢 地道表达: {}", natural_expr)
-                    }
-                } else {
-                    format!("🟢 地道表达: {}", natural_expr)
-                };
-                let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [📊 画像]   [完成 (Esc)]";
+                let row1 = format!("❌ 你的表达: {}", user_expr);
+                let row2 = format!("✅ 更自然的表达: {} 🔊", natural_expr);
+                let btns = "[🔄 再试一次 (R)]   [⭐ 保存到表达本 (S)]   [完成 (Enter)]";
 
                 let r1_w = measure(hdc, theme.annotation_font, &row1).cx;
                 let r2_w = measure(hdc, theme.annotation_font, &row2).cx;
+                let advice_w = measure(hdc, theme.index_font, &format!("ⓘ 关键建议: {}", advice)).cx;
                 let btns_w = measure(hdc, theme.index_font, btns).cx;
 
-                width = width.max(r1_w).max(r2_w).max(btns_w);
-                height += (line_h + theme.row_padding) * 2;
+                width = width.max(r1_w + r2_w + theme.column_gap * 2).max(btns_w).max(advice_w).max(330);
+                height += (line_h * 2 + 14) + (small_h * 2 + 8) + (line_h + 4) + theme.row_padding * 2;
 
-                if let Some(up) = upgrade {
-                    if is_b2_upgrade {
-                        let r_why = format!("💡 升级理由: {}", up.why_better);
-                        let rw = measure(hdc, theme.index_font, &r_why).cx;
-                        width = width.max(rw);
-                        height += small_h + theme.row_padding / 2;
-
-                        if !up.nuance_explanation.is_empty() {
-                            let r_nuance = format!("🌿 语用感知: {}", up.nuance_explanation);
-                            let rnw = measure(hdc, theme.index_font, &r_nuance).cx;
-                            width = width.max(rnw);
-                            height += small_h + theme.row_padding / 2;
-                        }
-
-                        if !up.register_variants.is_empty() {
-                            let r_reg = format!(
-                                "🎭 语域风格: {}",
-                                up.register_variants
-                                    .iter()
-                                    .map(|v| format!("[{}: {}]", v.register.label(), v.expression))
-                                    .collect::<Vec<_>>()
-                                    .join(" ")
-                            );
-                            let rgw = measure(hdc, theme.index_font, &r_reg).cx;
-                            width = width.max(rgw);
-                            height += small_h + theme.row_padding / 2;
-                        }
-                    }
-                }
-
-                if feedback_items.is_empty() {
-                    let row3 = format!("💡 关键建议: {}", advice);
-                    let r3_w = measure(hdc, theme.index_font, &row3).cx;
-                    width = width.max(r3_w);
-                    height += small_h + theme.row_padding;
-                } else {
-                    for item in feedback_items.iter().take(3) {
-                        let row_item = format!("💡 [{}] {}", item.label, item.explanation);
-                        let rw = measure(hdc, theme.index_font, &row_item).cx;
-                        width = width.max(rw);
-                        height += small_h + theme.row_padding;
-                    }
-                }
-
-                width += theme.column_gap * 2;
-                height += small_h + theme.row_padding * 2;
                 if card.drill_notice.is_some() {
                     height += small_h + theme.row_padding;
                 }
@@ -728,70 +678,52 @@ fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
 
     let flag = "🇺🇸 ";
     let flag_w = measure(hdc, theme.annotation_font, flag).cx;
-    let main_text = match card.status {
-        qingjian_render::LearningStatus::Loading => "正在推荐地道口语...",
-        qingjian_render::LearningStatus::Failed => "暂无地道口语推荐",
+    let (main_text, has_audio) = match card.status {
+        qingjian_render::LearningStatus::Loading => ("正在推荐地道口语……", false),
+        qingjian_render::LearningStatus::Failed => ("暂时没有译文", false),
         qingjian_render::LearningStatus::Ready => {
             if let Some(prim) = &card.primary {
-                prim.text.as_str()
+                (prim.text.as_str(), true)
             } else if let Some(first) = card.alternatives.first() {
-                first.text.as_str()
+                (first.text.as_str(), true)
             } else {
-                ""
+                ("暂时没有译文", false)
             }
         }
     };
-    let main_w = measure(hdc, theme.annotation_font, main_text).cx;
-    let review_btn = if card.today_due_count > 0 {
-        format!("[📚 复习 ({})]", card.today_due_count)
-    } else {
-        "[📚 复习]".to_string()
-    };
-    let review_w = measure(hdc, theme.index_font, &review_btn).cx;
-    let drill_btn = "[Try English]";
-    let drill_w = measure(hdc, theme.index_font, drill_btn).cx;
-    let profile_btn = "[📊 画像]";
-    let profile_w = measure(hdc, theme.index_font, profile_btn).cx;
-    let btn_text = if card.expanded { "收起 ▴" } else { "更多译法 ▾" };
-    let btn_w = measure(hdc, theme.index_font, btn_text).cx;
+    let audio_w = if has_audio { measure(hdc, theme.annotation_font, " 🔊").cx } else { 0 };
+    let main_w = measure(hdc, theme.annotation_font, main_text).cx + audio_w;
+    let drill_btn = "Try English";
+    let drill_w = measure(hdc, theme.index_font, drill_btn).cx + 16;
+    let btn_text = if card.expanded { "收起 ∧" } else { "更多译法 ∨" };
+    let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
 
-    width = width.max(flag_w + main_w + theme.column_gap * 2 + review_w + theme.column_gap + drill_w + theme.column_gap + profile_w + theme.column_gap + btn_w);
+    let row1_w = flag_w + main_w + theme.column_gap * 3 + drill_w + theme.column_gap + btn_w;
+    width = width.max(row1_w);
     height += line_h + theme.row_padding * 2;
 
     if card.expanded && !card.alternatives.is_empty() {
-        height += theme.row_padding;
-        for alt in &card.alternatives {
-            let tag_str = format!("[{}] ", alt.tag);
-            let tag_w = measure(hdc, theme.index_font, &tag_str).cx;
+        height += 4;
+        for (idx, alt) in card.alternatives.iter().take(5).enumerate() {
+            let idx_str = format!("{}. ", idx + 1);
+            let idx_w = measure(hdc, theme.index_font, &idx_str).cx;
             let text_w = measure(hdc, theme.annotation_font, &alt.text).cx;
-            width = width.max(tag_w + text_w + theme.column_gap);
+            let tag_raw = if alt.tag.is_empty() { "Natural" } else { alt.tag.as_str() };
+            let tag_w = measure(hdc, theme.index_font, tag_raw).cx + 12;
+            let meaning_str = if alt.meaning.is_empty() {
+                String::new()
+            } else {
+                format!("› {}", alt.meaning)
+            };
+            let note_w = if meaning_str.is_empty() {
+                0
+            } else {
+                measure(hdc, theme.index_font, &meaning_str).cx + theme.column_gap
+            };
+            let audio_w = measure(hdc, theme.annotation_font, " 🔊").cx;
+            let item_w = theme.padding + idx_w + text_w + theme.column_gap + tag_w + note_w + theme.column_gap + audio_w + theme.padding;
+            width = width.max(item_w);
             height += line_h + theme.row_padding;
-        }
-        if let Some(sel_idx) = card.selected_index {
-            if let Some(alt) = card.alternatives.get(sel_idx) {
-                let detail_lines = [
-                    format!("含义: {}", alt.meaning),
-                    format!("语气: {}", alt.tone),
-                    format!("场景: {}", alt.scenario),
-                    format!("频度: {}", alt.commonality),
-                    format!("为什么地道: {}", alt.why_natural),
-                ];
-                let small_h = line_height(hdc, theme.index_font);
-                for line in &detail_lines {
-                    let lw = measure(hdc, theme.index_font, line).cx;
-                    width = width.max(lw + theme.column_gap * 2);
-                    height += small_h + 2;
-                }
-                height += theme.row_padding;
-            }
-        }
-        if let Some(up) = &card.upgrade {
-            let u1 = format!("✨ 进阶升级 (C1): {}", up.c1_expression);
-            let u2 = format!("💡 升级理由: {}", up.why_better);
-            let u1_w = measure(hdc, theme.index_font, &u1).cx;
-            let u2_w = measure(hdc, theme.index_font, &u2).cx;
-            width = width.max(u1_w + theme.column_gap * 2).max(u2_w + theme.column_gap * 2);
-            height += (small_h + 2) * 2 + theme.row_padding;
         }
     }
     (width, height)
@@ -799,6 +731,24 @@ fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
 
 /// GDI 下绘制轻量英语学习卡片。
 fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i32) {
+    if data.learning_mode == qingjian_platform::LearningMode::Daily {
+        if !data.rows.is_empty() {
+            let bx = data.theme.padding;
+            let by = y + data.theme.row_padding / 2;
+            let badge_w = 20;
+            let badge_h = 13;
+            let badge_rect = RECT {
+                left: bx,
+                top: by + 1,
+                right: bx + badge_w,
+                bottom: by + 1 + badge_h,
+            };
+            fill_round_rect(hdc, badge_rect, COLORREF(0x001673f9), 3);
+            draw_text(hdc, data.theme.index_font, COLORREF(0x00FFFFFF), bx + 4, by, "us");
+            draw_text(hdc, data.theme.index_font, data.theme.gloss_color, bx + badge_w + 6, by, "按 Ctrl+Shift+E 查看英文");
+        }
+        return;
+    }
     let Some(card) = &data.learning_card else {
         return;
     };
@@ -819,44 +769,74 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
     if let Some(stage) = card.drill_stage {
         match stage {
             qingjian_render::DrillStage::Input => {
-                let title = format!("🎯 英文回忆练习 (中文: {})", card.target_text);
+                let title = format!("💡 请用英语表达：{}", card.target_text);
                 draw_text(
                     hdc,
                     theme.annotation_font,
-                    theme.fresh_color,
+                    theme.text_color,
                     theme.padding,
                     y,
                     &title,
                 );
                 y += line_h + theme.row_padding / 2;
 
-                if let Some(notice) = &card.drill_notice {
-                    draw_text(hdc, theme.index_font, theme.cloud_color, theme.padding, y, notice);
-                    y += small_h + theme.row_padding / 2;
-                }
-
-                // 输入框背景
-                let input_rect = RECT {
+                let box_rect = RECT {
                     left: theme.padding,
                     top: y,
                     right: content_width - theme.padding,
-                    bottom: y + line_h + 6,
+                    bottom: y + line_h + 8,
                 };
-                fill_round_rect(hdc, input_rect, theme.highlight, theme.corner_radius / 2);
-                let input_text = format!("你的尝试: {}|", card.drill_input);
-                draw_text(
-                    hdc,
-                    theme.text_font,
-                    theme.text_color,
-                    theme.padding + 4,
-                    y + 2,
-                    &input_text,
-                );
-                y += line_h + 8 + theme.row_padding / 2;
+                fill_round_rect(hdc, box_rect, theme.highlight, theme.corner_radius / 2);
+                if card.drill_input.is_empty() {
+                    draw_text(
+                        hdc,
+                        theme.index_font,
+                        theme.gloss_color,
+                        theme.padding + 6,
+                        y + 3,
+                        "在这里输入你的英文表达...",
+                    );
+                } else {
+                    let input_text = format!("{}|", card.drill_input);
+                    draw_text(
+                        hdc,
+                        theme.text_font,
+                        theme.text_color,
+                        theme.padding + 6,
+                        y + 3,
+                        &input_text,
+                    );
+                }
+                y += line_h + 10 + theme.row_padding / 2;
 
-                // 底部操作按钮
-                let btns = "[对比 (Enter)]   [看答案 (Tab)]   [退出 (Esc)]";
-                draw_text(hdc, theme.index_font, theme.cloud_color, theme.padding, y, btns);
+                // 底部操作按钮：[对比 (Enter)] 与 [显示答案]
+                let btn_enter_text = "对比 (Enter)";
+                let enter_w = measure(hdc, theme.index_font, btn_enter_text).cx + 16;
+                let enter_rect = RECT {
+                    left: theme.padding,
+                    top: y,
+                    right: theme.padding + enter_w,
+                    bottom: y + line_h + 2,
+                };
+                fill_round_rect(hdc, enter_rect, COLORREF(0x0099A600), 4);
+                draw_text(hdc, theme.index_font, COLORREF(0x00FFFFFF), theme.padding + 8, y + 1, btn_enter_text);
+
+                let show_x = theme.padding + enter_w + theme.column_gap;
+                let btn_show_text = "显示答案";
+                let show_w = measure(hdc, theme.index_font, btn_show_text).cx + 16;
+                let show_rect = RECT {
+                    left: show_x,
+                    top: y,
+                    right: show_x + show_w,
+                    bottom: y + line_h + 2,
+                };
+                fill_round_rect(hdc, show_rect, theme.highlight, 4);
+                draw_text(hdc, theme.index_font, theme.text_color, show_x + 8, y + 1, btn_show_text);
+
+                if let Some(notice) = &card.drill_notice {
+                    y += line_h + 4 + theme.row_padding / 2;
+                    draw_text(hdc, theme.index_font, COLORREF(0x001673f9), theme.padding, y, notice);
+                }
                 return;
             }
             qingjian_render::DrillStage::Comparing => {
@@ -871,11 +851,6 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
                 return;
             }
             qingjian_render::DrillStage::Compared => {
-                if let Some(notice) = &card.drill_notice {
-                    draw_text(hdc, theme.index_font, theme.cloud_color, theme.padding, y, notice);
-                    y += small_h + theme.row_padding / 2;
-                }
-
                 let user_expr = card
                     .drill_attempt
                     .as_ref()
@@ -891,82 +866,52 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
                     .as_ref()
                     .map(|a| a.comparison.key_advice.as_str())
                     .unwrap_or("");
-                let feedback_items = card
-                    .drill_attempt
-                    .as_ref()
-                    .map(|a| a.comparison.feedback_items.as_slice())
-                    .unwrap_or(&[]);
-                let status = card.drill_attempt.as_ref().and_then(|a| a.comparison.status);
-                let upgrade = card.drill_attempt.as_ref().and_then(|a| a.comparison.upgrade.as_ref());
-                let is_b2_upgrade = status == Some(qingjian_render::ComparisonStatus::ValidB2Upgrade);
 
                 // 1. 你的表达
-                let (r1, r1_color) = if is_b2_upgrade {
-                    (format!("🔵 你的表达: {} (语法正确 · B2)", user_expr), theme.fresh_color)
-                } else {
-                    (format!("🔴 你的表达: {}", user_expr), theme.text_color)
-                };
-                draw_text(hdc, theme.annotation_font, r1_color, theme.padding, y, &r1);
+                let r1 = format!("❌ 你的表达: {}", user_expr);
+                draw_text(hdc, theme.annotation_font, theme.text_color, theme.padding, y, &r1);
                 y += line_h + theme.row_padding / 2;
 
-                // 2. 更地道表达 / 高阶表达
-                let r2 = if is_b2_upgrade {
-                    if let Some(up) = upgrade {
-                        format!("✨ 高阶表达 (C1): {}", up.c1_expression)
-                    } else {
-                        format!("🟢 地道表达: {}", natural_expr)
-                    }
-                } else {
-                    format!("🟢 地道表达: {}", natural_expr)
-                };
+                // 2. 更地道表达
+                let r2 = format!("✅ 更自然的表达: {} 🔊", natural_expr);
                 draw_text(hdc, theme.annotation_font, theme.fresh_color, theme.padding, y, &r2);
                 y += line_h + theme.row_padding / 2;
 
-                // 3. 升级理由与语用差异
-                if let Some(up) = upgrade {
-                    if is_b2_upgrade {
-                        let r_why = format!("💡 升级理由: {}", up.why_better);
-                        draw_text(hdc, theme.index_font, theme.pos_color, theme.padding, y, &r_why);
-                        y += small_h + theme.row_padding / 2;
-
-                        if !up.nuance_explanation.is_empty() {
-                            let r_nuance = format!("🌿 语用感知: {}", up.nuance_explanation);
-                            draw_text(hdc, theme.index_font, theme.pos_color, theme.padding, y, &r_nuance);
-                            y += small_h + theme.row_padding / 2;
-                        }
-
-                        if !up.register_variants.is_empty() {
-                            let r_reg = format!(
-                                "🎭 语域风格: {}",
-                                up.register_variants
-                                    .iter()
-                                    .map(|v| format!("[{}: {}]", v.register.label(), v.expression))
-                                    .collect::<Vec<_>>()
-                                    .join(" ")
-                            );
-                            draw_text(hdc, theme.index_font, theme.fresh_color, theme.padding, y, &r_reg);
-                            y += small_h + theme.row_padding / 2;
-                        }
-                    }
-                }
-
-                // 4. 结构化错误诊断 / 关键建议 (1~3条)
-                if feedback_items.is_empty() {
-                    let r3 = format!("💡 关键建议: {}", advice);
+                // 3. 关键建议
+                if !advice.is_empty() {
+                    let r3 = format!("ⓘ 关键建议: {}", advice);
                     draw_text(hdc, theme.index_font, theme.pos_color, theme.padding, y, &r3);
-                    y += small_h + theme.row_padding;
-                } else {
-                    for item in feedback_items.iter().take(3) {
-                        let r_item = format!("💡 [{}] {}", item.label, item.explanation);
-                        draw_text(hdc, theme.index_font, theme.pos_color, theme.padding, y, &r_item);
-                        y += small_h + theme.row_padding / 2;
-                    }
-                    y += theme.row_padding / 2;
+                    y += small_h + theme.row_padding / 2;
                 }
 
-                // 5. 底部按钮
-                let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [📊 画像]   [完成 (Esc)]";
-                draw_text(hdc, theme.index_font, theme.cloud_color, theme.padding, y, btns);
+                // 4. 底部三按钮：[🔄 再试一次 (R)] [⭐ 保存到表达本 (S)] [完成 (Enter)]
+                let mut bx = theme.padding;
+                let btn_h = line_h + 2;
+
+                let retry_text = "🔄 再试一次 (R)";
+                let retry_w = measure(hdc, theme.index_font, retry_text).cx + 16;
+                let retry_rect = RECT { left: bx, top: y, right: bx + retry_w, bottom: y + btn_h };
+                fill_round_rect(hdc, retry_rect, theme.highlight, 4);
+                draw_text(hdc, theme.index_font, theme.text_color, bx + 8, y + 1, retry_text);
+                bx += retry_w + theme.column_gap;
+
+                let save_text = "⭐ 保存到表达本 (S)";
+                let save_w = measure(hdc, theme.index_font, save_text).cx + 16;
+                let save_rect = RECT { left: bx, top: y, right: bx + save_w, bottom: y + btn_h };
+                fill_round_rect(hdc, save_rect, theme.highlight, 4);
+                draw_text(hdc, theme.index_font, theme.text_color, bx + 8, y + 1, save_text);
+                bx += save_w + theme.column_gap;
+
+                let done_text = "完成 (Enter)";
+                let done_w = measure(hdc, theme.index_font, done_text).cx + 16;
+                let done_rect = RECT { left: bx, top: y, right: bx + done_w, bottom: y + btn_h };
+                fill_round_rect(hdc, done_rect, COLORREF(0x0099A600), 4);
+                draw_text(hdc, theme.index_font, COLORREF(0x00FFFFFF), bx + 8, y + 1, done_text);
+
+                if let Some(notice) = &card.drill_notice {
+                    y += btn_h + theme.row_padding / 2;
+                    draw_text(hdc, theme.index_font, COLORREF(0x001673f9), theme.padding, y, notice);
+                }
                 return;
             }
             qingjian_render::DrillStage::Profile => {
@@ -1034,16 +979,16 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
     let mut x = theme.padding;
     x += draw_text(hdc, theme.annotation_font, theme.fresh_color, x, y, flag);
 
-    let main_text = match card.status {
-        qingjian_render::LearningStatus::Loading => "正在推荐地道口语...",
-        qingjian_render::LearningStatus::Failed => "暂无地道口语推荐",
+    let (main_text, has_audio) = match card.status {
+        qingjian_render::LearningStatus::Loading => ("正在推荐地道口语……", false),
+        qingjian_render::LearningStatus::Failed => ("暂时没有译文", false),
         qingjian_render::LearningStatus::Ready => {
             if let Some(prim) = &card.primary {
-                prim.text.as_str()
+                (prim.text.as_str(), true)
             } else if let Some(first) = card.alternatives.first() {
-                first.text.as_str()
+                (first.text.as_str(), true)
             } else {
-                ""
+                ("暂时没有译文", false)
             }
         }
     };
@@ -1052,34 +997,30 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
     } else {
         theme.gloss_color
     };
-    draw_text(hdc, theme.annotation_font, text_color, x, y, main_text);
+    x += draw_text(hdc, theme.annotation_font, text_color, x, y, main_text);
+    if has_audio {
+        draw_text(hdc, theme.index_font, theme.cloud_color, x, y, " 🔊");
+    }
 
-    let review_btn = if card.today_due_count > 0 {
-        format!("[📚 复习 ({})]", card.today_due_count)
-    } else {
-        "[📚 复习]".to_string()
-    };
-    let review_w = measure(hdc, theme.index_font, &review_btn).cx;
-    let drill_btn = "[Try English]";
-    let drill_w = measure(hdc, theme.index_font, drill_btn).cx;
-    let profile_btn = "[📊 画像]";
-    let profile_w = measure(hdc, theme.index_font, profile_btn).cx;
-    let btn_text = if card.expanded { "收起 ▴" } else { "更多译法 ▾" };
-    let btn_w = measure(hdc, theme.index_font, btn_text).cx;
-    let btn_x = content_width - theme.padding - btn_w;
-    let profile_x = btn_x - theme.column_gap - profile_w;
-    let drill_x = profile_x - theme.column_gap - drill_w;
-    let review_x = drill_x - theme.column_gap - review_w;
+    let drill_btn = "Try English";
+    let drill_w = measure(hdc, theme.index_font, drill_btn).cx + 12;
+    let btn_text = if card.expanded { "收起 ∧" } else { "更多译法 ∨" };
+    let btn_w = measure(hdc, theme.index_font, btn_text).cx + 12;
+    let drill_x = content_width - theme.padding - drill_w;
+    let btn_x = drill_x - theme.column_gap - btn_w;
 
-    draw_text(hdc, theme.index_font, theme.fresh_color, review_x, y, &review_btn);
-    draw_text(hdc, theme.index_font, theme.fresh_color, drill_x, y, drill_btn);
-    draw_text(hdc, theme.index_font, theme.fresh_color, profile_x, y, profile_btn);
-    draw_text(hdc, theme.index_font, theme.cloud_color, btn_x, y, btn_text);
+    let btn_rect = RECT { left: btn_x, top: y - 1, right: btn_x + btn_w, bottom: y + line_h };
+    fill_round_rect(hdc, btn_rect, theme.highlight, 4);
+    draw_text(hdc, theme.index_font, theme.cloud_color, btn_x + 6, y, btn_text);
+
+    let drill_rect = RECT { left: drill_x, top: y - 1, right: drill_x + drill_w, bottom: y + line_h };
+    fill_round_rect(hdc, drill_rect, theme.highlight, 4);
+    draw_text(hdc, theme.index_font, theme.fresh_color, drill_x + 6, y, drill_btn);
 
     y += line_h + theme.row_padding;
 
     if card.expanded && !card.alternatives.is_empty() {
-        for (idx, alt) in card.alternatives.iter().enumerate() {
+        for (idx, alt) in card.alternatives.iter().take(5).enumerate() {
             let row_h = line_h + theme.row_padding;
             if card.selected_index == Some(idx) {
                 let rect = RECT {
@@ -1091,40 +1032,26 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
                 fill_round_rect(hdc, rect, theme.highlight, theme.corner_radius / 2);
             }
             let mut ax = theme.padding + 4;
-            let tag_str = format!("[{}] ", alt.tag);
+            let idx_str = format!("{}. ", idx + 1);
+            ax += draw_text(hdc, theme.index_font, theme.gloss_color, ax, y, &idx_str);
+            ax += draw_text(hdc, theme.annotation_font, theme.text_color, ax, y, &alt.text);
+            ax += theme.column_gap;
+            let tag_raw = if alt.tag.is_empty() { "Natural" } else { alt.tag.as_str() };
+            let tag_str = format!("[{}]", tag_raw);
             ax += draw_text(hdc, theme.index_font, theme.fresh_color, ax, y, &tag_str);
-            draw_text(hdc, theme.annotation_font, theme.text_color, ax, y, &alt.text);
-            y += row_h;
-        }
-
-        if let Some(sel_idx) = card.selected_index {
-            if let Some(alt) = card.alternatives.get(sel_idx) {
-                let detail_lines = [
-                    format!("含义: {}", alt.meaning),
-                    format!("语气: {}", alt.tone),
-                    format!("场景: {}", alt.scenario),
-                    format!("频度: {}", alt.commonality),
-                    format!("为什么地道: {}", alt.why_natural),
-                ];
-                let small_h = line_height(hdc, theme.index_font);
-                for line in &detail_lines {
-                    draw_text(hdc, theme.index_font, theme.pos_color, theme.padding + 8, y, line);
-                    y += small_h + 2;
-                }
+            if !alt.meaning.is_empty() {
+                ax += theme.column_gap;
+                let meaning_str = format!("› {}", alt.meaning);
+                ax += draw_text(hdc, theme.index_font, theme.pos_color, ax, y, &meaning_str);
             }
-        }
-
-        if let Some(up) = &card.upgrade {
-            let u1 = format!("✨ 进阶升级 (C1): {}", up.c1_expression);
-            let u2 = format!("💡 升级理由: {}", up.why_better);
-            draw_text(hdc, theme.index_font, theme.fresh_color, theme.padding + 4, y, &u1);
-            y += small_h + 2;
-            draw_text(hdc, theme.index_font, theme.pos_color, theme.padding + 4, y, &u2);
+            draw_text(hdc, theme.index_font, theme.cloud_color, ax + theme.column_gap, y, "🔊");
+            y += row_h;
         }
     }
 }
 
 /// 学习卡片鼠标点击判定动作。
+#[allow(dead_code)]
 pub(super) enum LearningHitAction {
     /// 切换展开/收起「更多译法」
     ToggleExpand,
@@ -1184,12 +1111,13 @@ pub(super) fn hit_test_learning_card(
             qingjian_render::DrillStage::Input => {
                 let btn_y = card_top + (line_h + theme.row_padding) * 2;
                 if y >= btn_y {
-                    if x < theme.padding + 120 {
+                    let enter_w = measure(hdc, theme.index_font, "对比 (Enter)").cx + 16;
+                    let show_x = theme.padding + enter_w + theme.column_gap;
+                    let show_w = measure(hdc, theme.index_font, "显示答案").cx + 16;
+                    if x >= theme.padding && x <= theme.padding + enter_w {
                         return Some(LearningHitAction::Compare);
-                    } else if x < theme.padding + 240 {
+                    } else if x >= show_x && x <= show_x + show_w {
                         return Some(LearningHitAction::Reveal);
-                    } else {
-                        return Some(LearningHitAction::Finish);
                     }
                 }
                 return None;
@@ -1200,13 +1128,20 @@ pub(super) fn hit_test_learning_card(
             qingjian_render::DrillStage::Compared => {
                 let btn_y = card_top + (line_h + theme.row_padding) * 3;
                 if y >= btn_y {
-                    if x < theme.padding + 140 {
+                    let retry_w = measure(hdc, theme.index_font, "🔄 再试一次 (R)").cx + 16;
+                    let save_w = measure(hdc, theme.index_font, "⭐ 保存到表达本 (S)").cx + 16;
+                    let done_w = measure(hdc, theme.index_font, "完成 (Enter)").cx + 16;
+                    let b1_start = theme.padding;
+                    let b1_end = b1_start + retry_w;
+                    let b2_start = b1_end + theme.column_gap;
+                    let b2_end = b2_start + save_w;
+                    let b3_start = b2_end + theme.column_gap;
+                    let b3_end = b3_start + done_w;
+                    if x >= b1_start && x <= b1_end {
                         return Some(LearningHitAction::Retry);
-                    } else if x < theme.padding + 260 {
+                    } else if x >= b2_start && x <= b2_end {
                         return Some(LearningHitAction::Save);
-                    } else if x < theme.padding + 340 {
-                        return Some(LearningHitAction::ShowProfile);
-                    } else {
+                    } else if x >= b3_start && x <= b3_end {
                         return Some(LearningHitAction::Finish);
                     }
                 }
@@ -1256,44 +1191,27 @@ pub(super) fn hit_test_learning_card(
 
     let row1_h = line_h + theme.row_padding * 2;
     if y <= card_top + row1_h {
-        let (content_w, _) = match data.layout {
-            LayoutMode::Vertical => vertical_size(hdc, data),
-            LayoutMode::Horizontal => horizontal_size(hdc, data),
-        };
-        let review_btn = if card.today_due_count > 0 {
-            format!("[📚 复习 ({})]", card.today_due_count)
-        } else {
-            "[📚 复习]".to_string()
-        };
-        let review_w = measure(hdc, theme.index_font, &review_btn).cx;
-        let drill_btn = "[Try English]";
-        let drill_w = measure(hdc, theme.index_font, drill_btn).cx;
-        let profile_btn = "[📊 画像]";
-        let profile_w = measure(hdc, theme.index_font, profile_btn).cx;
-        let btn_text = if card.expanded { "收起 ▴" } else { "更多译法 ▾" };
-        let btn_w = measure(hdc, theme.index_font, btn_text).cx;
-        let btn_x = content_w + theme.padding - btn_w;
-        let profile_x = btn_x - theme.column_gap - profile_w;
-        let drill_x = profile_x - theme.column_gap - drill_w;
-        let review_x = drill_x - theme.column_gap - review_w;
+        let content_w = preferred_size(hdc, data).cx;
+        let drill_btn = "Try English";
+        let drill_w = measure(hdc, theme.index_font, drill_btn).cx + 12;
+        let btn_text = if card.expanded { "收起 ∧" } else { "更多译法 ∨" };
+        let btn_w = measure(hdc, theme.index_font, btn_text).cx + 12;
+        let drill_x = content_w - theme.padding - drill_w;
+        let btn_x = drill_x - theme.column_gap - btn_w;
 
-        if x >= review_x - 10 && x < drill_x - 5 {
-            return Some(LearningHitAction::StartReview);
-        } else if x >= drill_x - 5 && x < profile_x - 5 {
-            return Some(LearningHitAction::StartDrill);
-        } else if x >= profile_x - 5 && x < btn_x - 5 {
-            return Some(LearningHitAction::ShowProfile);
-        } else if x >= btn_x - 5 {
+        if x >= btn_x - 5 && x < drill_x - 5 {
             return Some(LearningHitAction::ToggleExpand);
+        } else if x >= drill_x - 5 {
+            return Some(LearningHitAction::StartDrill);
         }
-        return Some(LearningHitAction::ToggleExpand);
+        return None;
     }
 
     if card.expanded && !card.alternatives.is_empty() {
         let alt_start = card_top + row1_h;
         let alt_row_h = line_h + theme.row_padding;
         let alt_idx = (y - alt_start) / alt_row_h;
-        if alt_idx >= 0 && (alt_idx as usize) < card.alternatives.len() {
+        if alt_idx >= 0 && (alt_idx as usize) < card.alternatives.len().min(5) {
             return Some(LearningHitAction::ToggleAlternative(alt_idx as usize));
         }
     }

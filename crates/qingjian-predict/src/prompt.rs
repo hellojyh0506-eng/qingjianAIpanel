@@ -54,9 +54,9 @@ text（待翻译中文）、target_language（目标语言代码：zh 中文、e
 要求：\
 1. 严格且仅翻译 text 本身，绝不扩写、不解释、不加引号、不加「译文：」等前缀；\
 2. 当 target_language 为 en（英语）时：\
-   - 必须是 100% 地道真实的美式口语（Authentic Gen Z / Spoken American English），大量采用口语缩写（I'm、you're、gonna、wanna、gotta）与地道动词短语搭配；\
-   - sentence 给出 1 个最佳表达；\
-   - alternatives 给出 2~4 个不同语境/风格的精简备选，每个包含 text、tag（Natural/Casual/British/Formal/Idiomatic）、note（极短中文说明，如“更口语”、“稍正式”）；\
+   - 必须是 100% 地道真实的美式口语（Authentic Gen Z / Spoken American English），优先采用口语缩写（I'm、you're、gonna、wanna、gotta）与地道动词短语搭配；\
+   - sentence 给出 1 个最佳口语表达（短小、地道、精悍）；\
+   - alternatives 最多给出 1~3 个不同风格的精简备选（可为空数组 []），每个包含 text、tag（Natural/Casual/British）、note（极短中文说明）；\
 3. 保留原文语气；原文已是目标语言时原样返回；\
 4. 严格只输出单一紧凑 JSON。\
 输出格式：\
@@ -600,7 +600,11 @@ fn strip_translation_prefix(s: &str) -> String {
 }
 
 fn is_valid_english_translation(s: &str) -> bool {
-    let has_cjk = s.chars().any(|c| {
+    let trimmed = s.trim();
+    if trimmed.is_empty() || trimmed.len() > 150 {
+        return false;
+    }
+    let has_cjk = trimmed.chars().any(|c| {
         matches!(c,
             '\u{4e00}'..='\u{9fff}' |
             '\u{3400}'..='\u{4dbf}' |
@@ -610,7 +614,20 @@ fn is_valid_english_translation(s: &str) -> bool {
     if has_cjk {
         return false;
     }
-    s.chars().any(|c| c.is_ascii_alphabetic())
+    // 检查重复循环词（如模型发生死循环输出 "I'm busy I'm busy I'm busy"）
+    let words: Vec<&str> = trimmed.split_whitespace().collect();
+    if words.len() >= 6 {
+        let mut repeat_count = 0;
+        for window in words.windows(2) {
+            if window[0].eq_ignore_ascii_case(window[1]) {
+                repeat_count += 1;
+            }
+        }
+        if repeat_count >= 2 {
+            return false;
+        }
+    }
+    trimmed.chars().any(|c| c.is_ascii_alphabetic())
 }
 
 /// 当模型未返回 alternatives 数组时，从主译文合成多语域口语备选与学习细览
