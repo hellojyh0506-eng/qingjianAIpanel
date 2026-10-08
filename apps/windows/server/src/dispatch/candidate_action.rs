@@ -1,16 +1,31 @@
 //! 候选卡片上的鼠标交互动作，UI 线程发回 Router 处理。
 
-/// 候选卡片上的交互动作。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 候选卡片与学习系统上的交互动作。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CandidateAction {
-    /// 切换展开/收起「更多译法」
+    /// 打开独立 English Assistant（学习助手伴侣窗）
+    OpenAssistant,
+
+    /// 关闭独立 English Assistant
+    CloseAssistant,
+
+    /// 切换学习助手 Tab (0: 更多译法, 1: 用法说明, 2: 相关搭配, 3: 场景示例)
+    SwitchAssistantTab(usize),
+
+    /// 切换展开/收起「更多译法」（兼容旧接口）
     ToggleExpand,
 
     /// 切换高亮某个更多译法选项
     ToggleAlternative(usize),
 
-    /// 点击「Try English」开启主动回忆练习
+    /// 点击进入独立 Drill Session 练习
     StartDrill,
+
+    /// 点击启动独立 Drill Session 练习（显式语义别名）
+    StartDrillSession,
+
+    /// 练习输入态：提交对比请求 (target_chinese, user_input, reference)
+    DrillCompare(String, String, String),
 
     /// 练习输入态：点击「显示答案」
     Reveal,

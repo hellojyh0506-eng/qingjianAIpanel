@@ -63,6 +63,8 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
     /// 「翻译选中文字」当作按下了那个组合键转发给 Server（绕过 `would_eat`）。
     fn OnPreservedKey(&self, pic: Ref<ITfContext>, rguid: *const GUID) -> Result<BOOL> {
         let guid = unsafe { *rguid };
+        // 保留键命中时立即作废任何 pending 的 Shift / Ctrl 单击判定，防止松开修饰键误触发中英切换
+        self.key_tap.cancel();
         log(&format!("保留键命中 guid={guid:?}"));
         if guid == preserved::GUID_SWITCH_MODE {
             if self.keyboard_disabled(&pic) {
@@ -71,11 +73,18 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             self.set_english_mode(!self.mode_state.english());
             return Ok(true.into());
         }
-        if guid == preserved::GUID_LEARNING_MODE {
+        if guid == preserved::GUID_ENGLISH_ASSISTANT {
             if self.keyboard_disabled(&pic) {
                 return Ok(FALSE);
             }
-            let event = preserved::learning_mode_event(self.mode_state.english());
+            let event = preserved::assistant_event(self.mode_state.english());
+            return Ok(self.forward_key(pic, event).into());
+        }
+        if guid == preserved::GUID_ENGLISH_DRILL {
+            if self.keyboard_disabled(&pic) {
+                return Ok(FALSE);
+            }
+            let event = preserved::drill_event(self.mode_state.english());
             return Ok(self.forward_key(pic, event).into());
         }
         if guid != preserved::GUID_TRANSLATE || self.keyboard_disabled(&pic) {

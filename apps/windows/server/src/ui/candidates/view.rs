@@ -540,148 +540,13 @@ pub(crate) fn fill_round_rect(hdc: HDC, rect: RECT, color: COLORREF, radius: i32
 
 /// GDI 下轻量英语学习卡片的尺寸计算。
 fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
-    if data.learning_card.is_none() {
-        if data.learning_mode == qingjian_platform::LearningMode::Daily && !data.rows.is_empty() {
-            let prompt = "按 Ctrl+Shift+E 查看英文";
-            let prompt_w = measure(hdc, data.theme.index_font, prompt).cx;
-            let small_h = line_height(hdc, data.theme.index_font);
-            let w = 28 + 6 + prompt_w + data.theme.padding * 2;
-            let h = small_h + data.theme.row_padding;
-            return (w, h);
-        }
-        return (0, 0);
-    }
     let Some(card) = &data.learning_card else {
         return (0, 0);
     };
     let theme = &data.theme;
-    let mut width = 0;
-    let mut height = 0;
     let line_h = line_height(hdc, theme.annotation_font);
-    let small_h = line_height(hdc, theme.index_font);
 
-    // Active Recall 特殊阶段
-    if let Some(stage) = card.drill_stage {
-        match stage {
-            qingjian_render::DrillStage::Input => {
-                let title = format!("💡 请用英语表达：{}", card.target_text);
-                let title_w = measure(hdc, theme.annotation_font, &title).cx;
-                let placeholder = "在这里输入你的英文表达...";
-                let input_str = if card.drill_input.is_empty() {
-                    format!("{}|", placeholder)
-                } else {
-                    format!("{}|", card.drill_input)
-                };
-                let input_w = measure(hdc, theme.text_font, &input_str).cx + 28;
-                let btns_w = 190;
-
-                width = width.max(title_w).max(input_w).max(btns_w).max(280) + theme.column_gap * 2;
-                height += (line_h + theme.row_padding) * 3;
-                if card.drill_notice.is_some() {
-                    height += small_h + theme.row_padding;
-                }
-                return (width, height);
-            }
-            qingjian_render::DrillStage::Comparing => {
-                let text = "⏳ 正在分析对比表达中...";
-                let w = measure(hdc, theme.annotation_font, text).cx;
-                return (w + theme.column_gap * 2, line_h + theme.row_padding * 2);
-            }
-            qingjian_render::DrillStage::Compared => {
-                let user_expr = card
-                    .drill_attempt
-                    .as_ref()
-                    .map(|a| a.user_attempt.as_str())
-                    .unwrap_or(card.drill_input.as_str());
-                let natural_expr = card
-                    .drill_attempt
-                    .as_ref()
-                    .map(|a| a.comparison.natural_expression.as_str())
-                    .unwrap_or("");
-                let advice = card
-                    .drill_attempt
-                    .as_ref()
-                    .map(|a| a.comparison.key_advice.as_str())
-                    .unwrap_or("");
-
-                let row1 = format!("❌ 你的表达: {}", user_expr);
-                let row2 = format!("✅ 更自然的表达: {} 🔊", natural_expr);
-                let btns = "[🔄 再试一次 (R)]   [⭐ 保存到表达本 (S)]   [完成 (Enter)]";
-
-                let r1_w = measure(hdc, theme.annotation_font, &row1).cx;
-                let r2_w = measure(hdc, theme.annotation_font, &row2).cx;
-                let advice_w = measure(hdc, theme.index_font, &format!("ⓘ 关键建议: {}", advice)).cx;
-                let btns_w = measure(hdc, theme.index_font, btns).cx;
-
-                width = width.max(r1_w + r2_w + theme.column_gap * 2).max(btns_w).max(advice_w).max(330);
-                height += (line_h * 2 + 14) + (small_h * 2 + 8) + (line_h + 4) + theme.row_padding * 2;
-
-                if card.drill_notice.is_some() {
-                    height += small_h + theme.row_padding;
-                }
-                return (width, height);
-            }
-            qingjian_render::DrillStage::Profile => {
-                let title = "📊 个人英语学习画像 (B2 → C1)";
-                let title_w = measure(hdc, theme.annotation_font, title).cx;
-                let btns = "[🗑 清空画像数据]   [返回 (Esc)]";
-                let btns_w = measure(hdc, theme.index_font, btns).cx;
-                width = width.max(title_w).max(btns_w);
-                height += (line_h + theme.row_padding) * 2;
-
-                if let Some(text) = &card.drill_notice {
-                    for line in text.lines() {
-                        let lw = measure(hdc, theme.index_font, line).cx;
-                        width = width.max(lw);
-                        height += small_h + theme.row_padding / 2;
-                    }
-                } else {
-                    height += (small_h + theme.row_padding / 2) * 8;
-                }
-
-                width += theme.column_gap * 2;
-                height += theme.row_padding * 2;
-                return (width, height);
-            }
-            qingjian_render::DrillStage::Review => {
-                let total = card.review_total_count.max(1);
-                let current = card.review_current_index.max(1);
-                let title = format!("📚 今日待复习 ({}/{}) [中文: {}]", current, total, card.target_text);
-                let title_w = measure(hdc, theme.annotation_font, &title).cx;
-
-                if card.drill_attempt.is_none() {
-                    let input_str = format!("你的尝试: {}|", card.drill_input);
-                    let input_w = measure(hdc, theme.annotation_font, &input_str).cx;
-                    let btns = "[对比 (Enter)]   [看答案 (Tab)]   [退出 (Esc)]";
-                    let btns_w = measure(hdc, theme.index_font, btns).cx;
-                    width = width.max(title_w).max(input_w).max(btns_w) + theme.column_gap * 2;
-                    height += (line_h + theme.row_padding) * 3;
-                } else {
-                    let user_expr = card.drill_attempt.as_ref().map(|a| a.user_attempt.as_str()).unwrap_or(card.drill_input.as_str());
-                    let natural_expr = card.drill_attempt.as_ref().map(|a| a.comparison.natural_expression.as_str()).unwrap_or("");
-                    let r1 = format!("🔴 你的表达: {}", user_expr);
-                    let r2 = format!("🟢 地道表达: {}", natural_expr);
-                    let r1_w = measure(hdc, theme.annotation_font, &r1).cx;
-                    let r2_w = measure(hdc, theme.annotation_font, &r2).cx;
-                    let btns = "[1. Again (重来)]   [2. Good (掌握)]   [3. Easy (轻松)]   [退出 (Esc)]";
-                    let btns_w = measure(hdc, theme.index_font, btns).cx;
-                    width = width.max(title_w).max(r1_w).max(r2_w).max(btns_w) + theme.column_gap * 2;
-                    height += (line_h + theme.row_padding) * 3 + theme.row_padding;
-                }
-                if card.drill_notice.is_some() {
-                    height += small_h + theme.row_padding;
-                }
-                return (width, height);
-            }
-        }
-    }
-
-    let is_daily = data.learning_mode == qingjian_platform::LearningMode::Daily;
-    let flag_w = if is_daily {
-        16 + 8
-    } else {
-        measure(hdc, theme.annotation_font, "🇺🇸 ").cx
-    };
+    let flag_w = measure(hdc, theme.annotation_font, "🇺🇸 ").cx;
     let (main_text, has_audio) = match card.status {
         qingjian_render::LearningStatus::Loading => ("正在推荐地道口语……", false),
         qingjian_render::LearningStatus::Failed => ("暂时没有译文", false),
@@ -697,68 +562,31 @@ fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
     };
     let audio_w = if has_audio { measure(hdc, theme.annotation_font, " 🔊").cx } else { 0 };
     let main_w = measure(hdc, theme.annotation_font, main_text).cx + audio_w;
-    let drill_btn = "Try English";
-    let drill_w = if is_daily { 0 } else { measure(hdc, theme.index_font, drill_btn).cx + 16 };
-    let btn_text = if card.expanded { "收起 ∧" } else { "更多译法 ∨" };
-    let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
 
-    let row1_w = if is_daily {
-        flag_w + main_w + theme.column_gap * 2 + btn_w
+    let is_daily = data.learning_mode == qingjian_platform::LearningMode::Daily;
+    let is_learn = data.learning_mode == qingjian_platform::LearningMode::Learn;
+    let is_drill = data.learning_mode == qingjian_platform::LearningMode::Drill;
+
+    let width = if is_daily {
+        flag_w + main_w + theme.column_gap * 2
+    } else if is_learn {
+        let btn_text = "📖 学习助手 (Ctrl+Alt+E)";
+        let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
+        flag_w + main_w + theme.column_gap * 3 + btn_w
+    } else if is_drill {
+        let btn_text = "💡 进入练习 (Ctrl+Alt+D)";
+        let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
+        flag_w + main_w + theme.column_gap * 3 + btn_w
     } else {
-        flag_w + main_w + theme.column_gap * 3 + drill_w + theme.column_gap + btn_w
+        flag_w + main_w + theme.column_gap * 2
     };
-    width = width.max(row1_w);
-    height += line_h + theme.row_padding * 2;
 
-    if card.expanded && !card.alternatives.is_empty() {
-        height += 4;
-        for (idx, alt) in card.alternatives.iter().take(5).enumerate() {
-            let idx_str = format!("{}. ", idx + 1);
-            let idx_w = measure(hdc, theme.index_font, &idx_str).cx;
-            let text_w = measure(hdc, theme.annotation_font, &alt.text).cx;
-            let tag_raw = if alt.tag.is_empty() { "Natural" } else { alt.tag.as_str() };
-            let tag_w = measure(hdc, theme.index_font, tag_raw).cx + 12;
-            let meaning_str = if alt.meaning.is_empty() {
-                String::new()
-            } else {
-                format!("› {}", alt.meaning)
-            };
-            let note_w = if meaning_str.is_empty() {
-                0
-            } else {
-                measure(hdc, theme.index_font, &meaning_str).cx + theme.column_gap
-            };
-            let audio_w = measure(hdc, theme.annotation_font, " 🔊").cx;
-            let item_w = theme.padding + idx_w + text_w + theme.column_gap + tag_w + note_w + theme.column_gap + audio_w + theme.padding;
-            width = width.max(item_w);
-            height += line_h + theme.row_padding;
-        }
-    }
+    let height = line_h + theme.row_padding * 2;
     (width, height)
 }
 
 /// GDI 下绘制轻量英语学习卡片。
 fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i32) {
-    if data.learning_card.is_none() {
-        if data.learning_mode == qingjian_platform::LearningMode::Daily {
-            if !data.rows.is_empty() {
-                let bx = data.theme.padding;
-                let by = y + data.theme.row_padding / 2;
-                let badge_w = 20;
-                let badge_h = 13;
-                let badge_rect = RECT {
-                    left: bx,
-                    top: by + 1,
-                    right: bx + badge_w,
-                    bottom: by + 1 + badge_h,
-                };
-                fill_round_rect(hdc, badge_rect, COLORREF(0x001673f9), 3);
-                draw_text(hdc, data.theme.index_font, COLORREF(0x00FFFFFF), bx + 4, by, "us");
-                draw_text(hdc, data.theme.index_font, data.theme.gloss_color, bx + badge_w + 6, by, "按 Ctrl+Shift+E 查看英文");
-            }
-        }
-        return;
-    }
     let Some(card) = &data.learning_card else {
         return;
     };
@@ -773,258 +601,12 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
     y += theme.row_padding;
 
     let line_h = line_height(hdc, theme.annotation_font);
-    let small_h = line_height(hdc, theme.index_font);
-
-    // Active Recall 特殊阶段绘制
-    if let Some(stage) = card.drill_stage {
-        match stage {
-            qingjian_render::DrillStage::Input => {
-                let title = format!("💡 请用英语表达：{}", card.target_text);
-                draw_text(
-                    hdc,
-                    theme.annotation_font,
-                    theme.text_color,
-                    theme.padding,
-                    y,
-                    &title,
-                );
-                y += line_h + theme.row_padding / 2;
-
-                let box_rect = RECT {
-                    left: theme.padding,
-                    top: y,
-                    right: content_width - theme.padding,
-                    bottom: y + line_h + 8,
-                };
-                fill_round_rect(hdc, box_rect, theme.highlight, theme.corner_radius / 2);
-                if card.drill_input.is_empty() {
-                    draw_text(
-                        hdc,
-                        theme.index_font,
-                        theme.gloss_color,
-                        theme.padding + 6,
-                        y + 3,
-                        "在这里输入你的英文表达...",
-                    );
-                } else {
-                    let input_text = format!("{}|", card.drill_input);
-                    draw_text(
-                        hdc,
-                        theme.text_font,
-                        theme.text_color,
-                        theme.padding + 6,
-                        y + 3,
-                        &input_text,
-                    );
-                }
-                y += line_h + 10 + theme.row_padding / 2;
-
-                // 底部操作按钮：[对比 (Enter)] 与 [显示答案]
-                let btn_enter_text = "对比 (Enter)";
-                let enter_w = measure(hdc, theme.index_font, btn_enter_text).cx + 16;
-                let enter_rect = RECT {
-                    left: theme.padding,
-                    top: y,
-                    right: theme.padding + enter_w,
-                    bottom: y + line_h + 2,
-                };
-                fill_round_rect(hdc, enter_rect, COLORREF(0x0099A600), 4);
-                draw_text(hdc, theme.index_font, COLORREF(0x00FFFFFF), theme.padding + 8, y + 1, btn_enter_text);
-
-                let show_x = theme.padding + enter_w + theme.column_gap;
-                let btn_show_text = "显示答案";
-                let show_w = measure(hdc, theme.index_font, btn_show_text).cx + 16;
-                let show_rect = RECT {
-                    left: show_x,
-                    top: y,
-                    right: show_x + show_w,
-                    bottom: y + line_h + 2,
-                };
-                fill_round_rect(hdc, show_rect, theme.highlight, 4);
-                draw_text(hdc, theme.index_font, theme.text_color, show_x + 8, y + 1, btn_show_text);
-
-                if let Some(notice) = &card.drill_notice {
-                    y += line_h + 4 + theme.row_padding / 2;
-                    draw_text(hdc, theme.index_font, COLORREF(0x001673f9), theme.padding, y, notice);
-                }
-                return;
-            }
-            qingjian_render::DrillStage::Comparing => {
-                draw_text(
-                    hdc,
-                    theme.annotation_font,
-                    theme.fresh_color,
-                    theme.padding,
-                    y,
-                    "⏳ 正在分析对比表达中...",
-                );
-                return;
-            }
-            qingjian_render::DrillStage::Compared => {
-                let user_expr = card
-                    .drill_attempt
-                    .as_ref()
-                    .map(|a| a.user_attempt.as_str())
-                    .unwrap_or(card.drill_input.as_str());
-                let natural_expr = card
-                    .drill_attempt
-                    .as_ref()
-                    .map(|a| a.comparison.natural_expression.as_str())
-                    .unwrap_or("");
-                let advice = card
-                    .drill_attempt
-                    .as_ref()
-                    .map(|a| a.comparison.key_advice.as_str())
-                    .unwrap_or("");
-
-                let is_correct = card.drill_attempt.as_ref().map(|a| {
-                    matches!(a.comparison.status, Some(qingjian_render::ComparisonStatus::ExactMatch) | Some(qingjian_render::ComparisonStatus::ValidB2Upgrade))
-                }).unwrap_or(false);
-
-                // 1. 你的表达
-                let r1 = if is_correct {
-                    format!("✅ 你的表达: {}", user_expr)
-                } else {
-                    format!("❌ 你的表达: {}", user_expr)
-                };
-                draw_text(hdc, theme.annotation_font, theme.text_color, theme.padding, y, &r1);
-                y += line_h + theme.row_padding / 2;
-
-                // 2. 更地道表达
-                let r2 = format!("✅ 更自然的表达: {} 🔊", natural_expr);
-                draw_text(hdc, theme.annotation_font, theme.fresh_color, theme.padding, y, &r2);
-                y += line_h + theme.row_padding / 2;
-
-                // 3. 错误标签与关键建议
-                if let Some(attempt) = &card.drill_attempt {
-                    if !attempt.comparison.feedback_items.is_empty() {
-                        let mut badge_str = String::new();
-                        for item in attempt.comparison.feedback_items.iter().take(3) {
-                            badge_str.push_str(&format!("[{}] ", item.label));
-                        }
-                        let r_badges = format!("🏷️ 分析: {}", badge_str.trim());
-                        draw_text(hdc, theme.index_font, COLORREF(0x001673f9), theme.padding, y, &r_badges);
-                        y += small_h + theme.row_padding / 2;
-                    }
-                }
-                if !advice.is_empty() {
-                    let r3 = format!("ⓘ 关键建议: {}", advice);
-                    draw_text(hdc, theme.index_font, theme.pos_color, theme.padding, y, &r3);
-                    y += small_h + theme.row_padding / 2;
-                }
-
-                // 4. 底部三按钮：[🔄 再试一次 (R)] [⭐ 保存到表达本 (S)] [完成 (Enter)]
-                let mut bx = theme.padding;
-                let btn_h = line_h + 2;
-
-                let retry_text = "🔄 再试一次 (R)";
-                let retry_w = measure(hdc, theme.index_font, retry_text).cx + 16;
-                let retry_rect = RECT { left: bx, top: y, right: bx + retry_w, bottom: y + btn_h };
-                fill_round_rect(hdc, retry_rect, theme.highlight, 4);
-                draw_text(hdc, theme.index_font, theme.text_color, bx + 8, y + 1, retry_text);
-                bx += retry_w + theme.column_gap;
-
-                let save_text = "⭐ 保存到表达本 (S)";
-                let save_w = measure(hdc, theme.index_font, save_text).cx + 16;
-                let save_rect = RECT { left: bx, top: y, right: bx + save_w, bottom: y + btn_h };
-                fill_round_rect(hdc, save_rect, theme.highlight, 4);
-                draw_text(hdc, theme.index_font, theme.text_color, bx + 8, y + 1, save_text);
-                bx += save_w + theme.column_gap;
-
-                let done_text = "完成 (Enter)";
-                let done_w = measure(hdc, theme.index_font, done_text).cx + 16;
-                let done_rect = RECT { left: bx, top: y, right: bx + done_w, bottom: y + btn_h };
-                fill_round_rect(hdc, done_rect, COLORREF(0x0099A600), 4);
-                draw_text(hdc, theme.index_font, COLORREF(0x00FFFFFF), bx + 8, y + 1, done_text);
-
-                if let Some(notice) = &card.drill_notice {
-                    y += btn_h + theme.row_padding / 2;
-                    draw_text(hdc, theme.index_font, COLORREF(0x001673f9), theme.padding, y, notice);
-                }
-                return;
-            }
-            qingjian_render::DrillStage::Profile => {
-                let title = "📊 个人英语学习画像 (B2 → C1)";
-                draw_text(hdc, theme.annotation_font, theme.fresh_color, theme.padding, y, title);
-                y += line_h + theme.row_padding / 2;
-
-                if let Some(text) = &card.drill_notice {
-                    for line in text.lines() {
-                        draw_text(hdc, theme.index_font, theme.text_color, theme.padding, y, line);
-                        y += small_h + theme.row_padding / 2;
-                    }
-                }
-
-                let btns = "[🗑 清空画像数据]   [返回 (Esc)]";
-                draw_text(hdc, theme.index_font, theme.cloud_color, theme.padding, y + theme.row_padding / 2, btns);
-                return;
-            }
-            qingjian_render::DrillStage::Review => {
-                let total = card.review_total_count.max(1);
-                let current = card.review_current_index.max(1);
-                let title = format!("📚 今日待复习 ({}/{}) [中文: {}]", current, total, card.target_text);
-                draw_text(hdc, theme.annotation_font, theme.fresh_color, theme.padding, y, &title);
-                y += line_h + theme.row_padding / 2;
-
-                if let Some(notice) = &card.drill_notice {
-                    draw_text(hdc, theme.index_font, theme.cloud_color, theme.padding, y, notice);
-                    y += small_h + theme.row_padding / 2;
-                }
-
-                if card.drill_attempt.is_none() {
-                    let input_rect = RECT {
-                        left: theme.padding,
-                        top: y,
-                        right: content_width - theme.padding,
-                        bottom: y + line_h + 6,
-                    };
-                    fill_round_rect(hdc, input_rect, theme.highlight, theme.corner_radius / 2);
-                    let input_str = format!("你的尝试: {}|", card.drill_input);
-                    draw_text(hdc, theme.annotation_font, theme.text_color, theme.padding + 4, y + 2, &input_str);
-                    y += line_h + 8 + theme.row_padding / 2;
-
-                    let btns = "[对比 (Enter)]   [看答案 (Tab)]   [退出 (Esc)]";
-                    draw_text(hdc, theme.index_font, theme.cloud_color, theme.padding, y, btns);
-                } else {
-                    let user_expr = card.drill_attempt.as_ref().map(|a| a.user_attempt.as_str()).unwrap_or(card.drill_input.as_str());
-                    let natural_expr = card.drill_attempt.as_ref().map(|a| a.comparison.natural_expression.as_str()).unwrap_or("");
-                    let r1 = format!("🔴 你的表达: {}", user_expr);
-                    draw_text(hdc, theme.annotation_font, theme.text_color, theme.padding, y, &r1);
-                    y += line_h + theme.row_padding / 2;
-
-                    let r2 = format!("🟢 地道表达: {}", natural_expr);
-                    draw_text(hdc, theme.annotation_font, theme.fresh_color, theme.padding, y, &r2);
-                    y += line_h + theme.row_padding / 2;
-
-                    let btns = "[1. Again (重来)]   [2. Good (掌握)]   [3. Easy (轻松)]   [退出 (Esc)]";
-                    draw_text(hdc, theme.index_font, theme.fresh_color, theme.padding, y, btns);
-                }
-                return;
-            }
-        }
-    }
-
-    let is_daily = data.learning_mode == qingjian_platform::LearningMode::Daily;
     let mut x = theme.padding;
-    if is_daily {
-        let bx = theme.padding;
-        let by = y + 1;
-        let badge_w = 16;
-        let badge_h = 14;
-        let badge_rect = RECT {
-            left: bx,
-            top: by,
-            right: bx + badge_w,
-            bottom: by + badge_h,
-        };
-        fill_round_rect(hdc, badge_rect, COLORREF(0x00808080), 3);
-        draw_text(hdc, theme.index_font, COLORREF(0x00FFFFFF), bx + 3, by - 1, "A");
-        x = bx + badge_w + 8;
-    } else {
-        let flag = "🇺🇸 ";
-        x += draw_text(hdc, theme.annotation_font, theme.fresh_color, x, y, flag);
-    }
 
+    // 🇺🇸 国旗前缀
+    x += draw_text(hdc, theme.annotation_font, theme.fresh_color, x, y, "🇺🇸 ");
+
+    // 核心口语表达
     let (main_text, has_audio) = match card.status {
         qingjian_render::LearningStatus::Loading => ("正在推荐地道口语……", false),
         qingjian_render::LearningStatus::Failed => ("暂时没有译文", false),
@@ -1048,59 +630,23 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
         draw_text(hdc, theme.index_font, theme.cloud_color, x, y, " 🔊");
     }
 
-    let btn_text = if card.expanded { "收起 ∧" } else { "更多译法 ∨" };
-    let btn_w = measure(hdc, theme.index_font, btn_text).cx + 12;
+    let is_learn = data.learning_mode == qingjian_platform::LearningMode::Learn;
+    let is_drill = data.learning_mode == qingjian_platform::LearningMode::Drill;
 
-    if !is_daily {
-        let drill_btn = "Try English";
-        let drill_w = measure(hdc, theme.index_font, drill_btn).cx + 12;
-        let drill_x = content_width - theme.padding - drill_w;
-        let btn_x = drill_x - theme.column_gap - btn_w;
-
-        let btn_rect = RECT { left: btn_x, top: y - 1, right: btn_x + btn_w, bottom: y + line_h };
-        fill_round_rect(hdc, btn_rect, theme.highlight, 4);
-        draw_text(hdc, theme.index_font, theme.cloud_color, btn_x + 6, y, btn_text);
-
-        let drill_rect = RECT { left: drill_x, top: y - 1, right: drill_x + drill_w, bottom: y + line_h };
-        fill_round_rect(hdc, drill_rect, theme.highlight, 4);
-        draw_text(hdc, theme.index_font, theme.fresh_color, drill_x + 6, y, drill_btn);
-    } else {
+    if is_learn {
+        let btn_text = "📖 学习助手 (Ctrl+Alt+E)";
+        let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
         let btn_x = content_width - theme.padding - btn_w;
         let btn_rect = RECT { left: btn_x, top: y - 1, right: btn_x + btn_w, bottom: y + line_h };
         fill_round_rect(hdc, btn_rect, theme.highlight, 4);
-        draw_text(hdc, theme.index_font, theme.cloud_color, btn_x + 6, y, btn_text);
-    }
-
-    y += line_h + theme.row_padding;
-
-    if card.expanded && !card.alternatives.is_empty() {
-        for (idx, alt) in card.alternatives.iter().take(5).enumerate() {
-            let row_h = line_h + theme.row_padding;
-            if card.selected_index == Some(idx) {
-                let rect = RECT {
-                    left: theme.padding / 2,
-                    top: y - theme.row_padding / 4,
-                    right: content_width - theme.padding / 2,
-                    bottom: y - theme.row_padding / 4 + row_h,
-                };
-                fill_round_rect(hdc, rect, theme.highlight, theme.corner_radius / 2);
-            }
-            let mut ax = theme.padding + 4;
-            let idx_str = format!("{}. ", idx + 1);
-            ax += draw_text(hdc, theme.index_font, theme.gloss_color, ax, y, &idx_str);
-            ax += draw_text(hdc, theme.annotation_font, theme.text_color, ax, y, &alt.text);
-            ax += theme.column_gap;
-            let tag_raw = if alt.tag.is_empty() { "Natural" } else { alt.tag.as_str() };
-            let tag_str = format!("[{}]", tag_raw);
-            ax += draw_text(hdc, theme.index_font, theme.fresh_color, ax, y, &tag_str);
-            if !alt.meaning.is_empty() {
-                ax += theme.column_gap;
-                let meaning_str = format!("› {}", alt.meaning);
-                ax += draw_text(hdc, theme.index_font, theme.pos_color, ax, y, &meaning_str);
-            }
-            draw_text(hdc, theme.index_font, theme.cloud_color, ax + theme.column_gap, y, "🔊");
-            y += row_h;
-        }
+        draw_text(hdc, theme.index_font, theme.fresh_color, btn_x + 8, y, btn_text);
+    } else if is_drill {
+        let btn_text = "💡 进入练习 (Ctrl+Alt+D)";
+        let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
+        let btn_x = content_width - theme.padding - btn_w;
+        let btn_rect = RECT { left: btn_x, top: y - 1, right: btn_x + btn_w, bottom: y + line_h };
+        fill_round_rect(hdc, btn_rect, theme.highlight, 4);
+        draw_text(hdc, theme.index_font, COLORREF(0x001673f9), btn_x + 8, y, btn_text);
     }
 }
 
@@ -1114,6 +660,7 @@ pub(super) fn hit_test_learning_card(
     y: i32,
     content_w: i32,
 ) -> Option<CandidateAction> {
+    let _card = data.learning_card.as_ref()?;
     let theme = &data.theme;
     let top_h = top_line_size(hdc, data).1;
     let body_h = match data.layout {
@@ -1121,149 +668,39 @@ pub(super) fn hit_test_learning_card(
         LayoutMode::Horizontal => horizontal_size(hdc, data).1,
     };
     let card_top = theme.padding + top_h + body_h;
+    let line_h = line_height(hdc, theme.annotation_font);
+    let row1_h = line_h + theme.row_padding * 2;
 
-    // 日常模式下未展开卡片时点击底部「按 Ctrl+Shift+E 查看英文」提示行
-    if data.learning_card.is_none() {
-        if data.learning_mode == qingjian_platform::LearningMode::Daily {
-            if !data.rows.is_empty() && y >= card_top.saturating_sub(6) {
-                return Some(CandidateAction::ToggleExpand);
-            }
-        }
+    if y < card_top.saturating_sub(6) || y > card_top + row1_h + 6 {
         return None;
     }
 
-    let card = data.learning_card.as_ref()?;
-    let line_h = line_height(hdc, theme.annotation_font);
+    let content_w = if content_w > 0 {
+        content_w
+    } else {
+        preferred_size(hdc, data).cx
+    };
+    let is_learn = data.learning_mode == qingjian_platform::LearningMode::Learn;
+    let is_drill = data.learning_mode == qingjian_platform::LearningMode::Drill;
 
-    // Active Recall 特殊阶段点击判定
-    if let Some(stage) = card.drill_stage {
-        match stage {
-            qingjian_render::DrillStage::Input => {
-                let btn_y = card_top + (line_h + theme.row_padding) * 2;
-                if y >= btn_y.saturating_sub(8) && y <= btn_y + line_h + 16 {
-                    let enter_w = measure(hdc, theme.index_font, "对比 (Enter)").cx + 16;
-                    let show_x = theme.padding + enter_w + theme.column_gap;
-                    let show_w = measure(hdc, theme.index_font, "显示答案").cx + 16;
-                    let split_x = (theme.padding + enter_w + show_x) / 2;
-                    if x >= theme.padding.saturating_sub(10) && x < split_x {
-                        return Some(CandidateAction::Compare);
-                    } else if x >= split_x && x <= show_x + show_w + 16 {
-                        return Some(CandidateAction::Reveal);
-                    }
-                }
-                return None;
-            }
-            qingjian_render::DrillStage::Comparing => {
-                return None;
-            }
-            qingjian_render::DrillStage::Compared => {
-                let btn_y = card_top + (line_h + theme.row_padding) * 3;
-                if y >= btn_y.saturating_sub(8) && y <= btn_y + line_h + 16 {
-                    let retry_w = measure(hdc, theme.index_font, "🔄 再试一次 (R)").cx + 16;
-                    let save_w = measure(hdc, theme.index_font, "⭐ 保存到表达本 (S)").cx + 16;
-                    let done_w = measure(hdc, theme.index_font, "完成 (Enter)").cx + 16;
-                    let b1_start = theme.padding;
-                    let b1_end = b1_start + retry_w;
-                    let b2_start = b1_end + theme.column_gap;
-                    let b2_end = b2_start + save_w;
-                    let b3_start = b2_end + theme.column_gap;
-                    let b3_end = b3_start + done_w;
-                    let split1 = (b1_end + b2_start) / 2;
-                    let split2 = (b2_end + b3_start) / 2;
-                    if x >= b1_start.saturating_sub(8) && x < split1 {
-                        return Some(CandidateAction::Retry);
-                    } else if x >= split1 && x < split2 {
-                        return Some(CandidateAction::Save);
-                    } else if x >= split2 && x <= b3_end + 16 {
-                        return Some(CandidateAction::Finish);
-                    }
-                }
-                return None;
-            }
-            qingjian_render::DrillStage::Profile => {
-                let btn_y = card_top + (line_h + theme.row_padding) * 2;
-                if y >= btn_y.saturating_sub(8) {
-                    if x < theme.padding + 160 {
-                        return Some(CandidateAction::ClearVault);
-                    } else {
-                        return Some(CandidateAction::Finish);
-                    }
-                }
-                return None;
-            }
-            qingjian_render::DrillStage::Review => {
-                if card.drill_attempt.is_none() {
-                    let btn_y = card_top + (line_h + theme.row_padding) * 2;
-                    if y >= btn_y.saturating_sub(8) {
-                        if x < theme.padding + 130 {
-                            return Some(CandidateAction::Compare);
-                        } else if x < theme.padding + 260 {
-                            return Some(CandidateAction::Reveal);
-                        } else {
-                            return Some(CandidateAction::Finish);
-                        }
-                    }
-                } else {
-                    let btn_y = card_top + (line_h + theme.row_padding) * 2 + line_h;
-                    if y >= btn_y.saturating_sub(8) {
-                        if x < theme.padding + 140 {
-                            return Some(CandidateAction::RateAgain);
-                        } else if x < theme.padding + 270 {
-                            return Some(CandidateAction::RateGood);
-                        } else if x < theme.padding + 400 {
-                            return Some(CandidateAction::RateEasy);
-                        } else {
-                            return Some(CandidateAction::Finish);
-                        }
-                    }
-                }
-                return None;
-            }
+    if is_learn {
+        let btn_text = "📖 学习助手 (Ctrl+Alt+E)";
+        let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
+        let btn_x = content_w - theme.padding - btn_w;
+        if x >= btn_x - 8 && x <= content_w {
+            return Some(CandidateAction::OpenAssistant);
         }
+        return Some(CandidateAction::OpenAssistant);
+    } else if is_drill {
+        let btn_text = "💡 进入练习 (Ctrl+Alt+D)";
+        let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
+        let btn_x = content_w - theme.padding - btn_w;
+        if x >= btn_x - 8 && x <= content_w {
+            return Some(CandidateAction::StartDrillSession);
+        }
+        return Some(CandidateAction::StartDrillSession);
     }
 
-    let row1_h = line_h + theme.row_padding * 2;
-    let btn_y_min = card_top.saturating_sub(10);
-    let btn_y_max = card_top + row1_h + 10;
-    if y >= btn_y_min && y <= btn_y_max {
-        let content_w = if content_w > 0 {
-            content_w
-        } else {
-            preferred_size(hdc, data).cx
-        };
-        let is_daily = data.learning_mode == qingjian_platform::LearningMode::Daily;
-        if is_daily {
-            let btn_text = if card.expanded { "收起 ∧" } else { "更多译法 ∨" };
-            let btn_w = measure(hdc, theme.index_font, btn_text).cx + 12;
-            let btn_x = content_w - theme.padding - btn_w;
-            if x >= btn_x - 16 && x <= content_w + 16 {
-                return Some(CandidateAction::ToggleExpand);
-            }
-        } else {
-            let drill_btn = "Try English";
-            let drill_w = measure(hdc, theme.index_font, drill_btn).cx + 12;
-            let btn_text = if card.expanded { "收起 ∧" } else { "更多译法 ∨" };
-            let btn_w = measure(hdc, theme.index_font, btn_text).cx + 12;
-            let drill_x = content_w - theme.padding - drill_w;
-            let btn_x = drill_x - theme.column_gap - btn_w;
-            let split_x = (btn_x + btn_w + drill_x) / 2;
-
-            if x >= btn_x - 16 && x < split_x {
-                return Some(CandidateAction::ToggleExpand);
-            } else if x >= split_x && x <= content_w + 16 {
-                return Some(CandidateAction::StartDrill);
-            }
-        }
-    }
-
-    if card.expanded && !card.alternatives.is_empty() && y > card_top + row1_h.saturating_sub(4) {
-        let alt_start = card_top + row1_h;
-        let alt_row_h = line_h + theme.row_padding;
-        let alt_idx = (y - alt_start) / alt_row_h;
-        if alt_idx >= 0 && (alt_idx as usize) < card.alternatives.len().min(5) {
-            return Some(CandidateAction::ToggleAlternative(alt_idx as usize));
-        }
-    }
     None
 }
 
@@ -1275,7 +712,7 @@ mod tests {
     use qingjian_core::{Candidate, CandidateList};
     use qingjian_platform::LearningMode;
     use qingjian_platform::protocol::{
-        DrillStage, Frame, LearningCardFrame, LearningExpression, LearningState,
+        Frame, LearningCardFrame, LearningExpression, LearningState,
     };
 
     fn make_test_data(mode: LearningMode, card: Option<LearningCardFrame>) -> RenderData {
@@ -1301,17 +738,17 @@ mod tests {
     }
 
     #[test]
-    fn test_hit_test_daily_mode_click_to_learn() {
+    fn test_hit_test_daily_mode_no_interfere() {
         let dc = unsafe { CreateCompatibleDC(None) };
         let data = make_test_data(LearningMode::Daily, None);
-        // Daily mode with candidate rows displays bottom prompt: "us 按 Ctrl+Shift+E 查看英文"
+        // Daily mode maintains clean input experience, no interfering buttons
         let action = hit_test_learning_card(dc, &data, 50, 60, 300);
-        assert_eq!(action, Some(CandidateAction::ToggleExpand));
+        assert_eq!(action, None);
         unsafe { let _ = DeleteDC(dc); }
     }
 
     #[test]
-    fn test_hit_test_learn_mode_expand_and_drill() {
+    fn test_hit_test_learn_mode_open_assistant() {
         let dc = unsafe { CreateCompatibleDC(None) };
         let card = LearningCardFrame {
             target_text: "你好".to_string(),
@@ -1320,13 +757,7 @@ mod tests {
                 text: "Hello there".to_string(),
                 ..Default::default()
             }),
-            alternatives: vec![
-                LearningExpression {
-                    text: "Hi there".to_string(),
-                    meaning: "嗨".to_string(),
-                    ..Default::default()
-                },
-            ],
+            alternatives: vec![],
             expanded: false,
             selected_index: None,
             drill_stage: None,
@@ -1340,20 +771,17 @@ mod tests {
         };
         let data = make_test_data(LearningMode::Learn, Some(card));
         let content_w = 360;
+        let target_y = data.theme.padding + top_line_size(dc, &data).1 + horizontal_size(dc, &data).1 + 6;
 
-        // Click on 更多译法 button (around x=180..240, y in button row)
-        let action_expand = hit_test_learning_card(dc, &data, 200, 50, content_w);
-        assert_eq!(action_expand, Some(CandidateAction::ToggleExpand));
-
-        // Click on Try English button (around x=280..340, y in button row)
-        let action_drill = hit_test_learning_card(dc, &data, 320, 50, content_w);
-        assert_eq!(action_drill, Some(CandidateAction::StartDrill));
+        // Click on 学习助手 button / line
+        let action = hit_test_learning_card(dc, &data, 300, target_y, content_w);
+        assert_eq!(action, Some(CandidateAction::OpenAssistant));
 
         unsafe { let _ = DeleteDC(dc); }
     }
 
     #[test]
-    fn test_hit_test_drill_stage_input_buttons() {
+    fn test_hit_test_drill_mode_start_drill_session() {
         let dc = unsafe { CreateCompatibleDC(None) };
         let card = LearningCardFrame {
             target_text: "你好".to_string(),
@@ -1365,8 +793,8 @@ mod tests {
             alternatives: vec![],
             expanded: false,
             selected_index: None,
-            drill_stage: Some(DrillStage::Input),
-            drill_input: "hello".to_string(),
+            drill_stage: None,
+            drill_input: String::new(),
             drill_attempt: None,
             drill_notice: None,
             today_due_count: 0,
@@ -1376,14 +804,11 @@ mod tests {
         };
         let data = make_test_data(LearningMode::Drill, Some(card));
         let content_w = 360;
+        let target_y = data.theme.padding + top_line_size(dc, &data).1 + horizontal_size(dc, &data).1 + 6;
 
-        // Compare button is at left
-        let action_comp = hit_test_learning_card(dc, &data, 30, 95, content_w);
-        assert_eq!(action_comp, Some(CandidateAction::Compare));
-
-        // Reveal button is to the right
-        let action_reveal = hit_test_learning_card(dc, &data, 160, 95, content_w);
-        assert_eq!(action_reveal, Some(CandidateAction::Reveal));
+        // Click on 进入练习 button
+        let action = hit_test_learning_card(dc, &data, 300, target_y, content_w);
+        assert_eq!(action, Some(CandidateAction::StartDrillSession));
 
         unsafe { let _ = DeleteDC(dc); }
     }

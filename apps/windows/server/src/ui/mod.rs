@@ -6,6 +6,8 @@
 
 mod candidates;
 mod command;
+pub mod companion;
+pub mod drill;
 mod layered;
 mod monitor;
 mod painter;
@@ -97,6 +99,26 @@ impl CandidateSink for UiHandle {
     fn configure(&self, settings: RenderSettings) {
         self.post(UiCommand::Configure(settings));
     }
+
+    fn show_companion(&self, data: companion::CompanionData, rect: ScreenRect) {
+        self.post(UiCommand::CompanionShow(Box::new((data, rect))));
+    }
+
+    fn hide_companion(&self) {
+        self.post(UiCommand::CompanionHide);
+    }
+
+    fn start_drill(&self, target_chinese: String, reference: String, rect: ScreenRect) {
+        self.post(UiCommand::DrillStart(Box::new((target_chinese, reference, rect))));
+    }
+
+    fn show_drill_result(&self, result: drill::DrillResultData) {
+        self.post(UiCommand::DrillResult(Box::new(result)));
+    }
+
+    fn hide_drill(&self) {
+        self.post(UiCommand::DrillHide);
+    }
 }
 
 impl StatusSink for UiHandle {
@@ -151,8 +173,12 @@ fn run(
     let thread_id = unsafe { GetCurrentThreadId() };
     // 装上时随 Configure 命令建。
     let painter: SharedPainter = Rc::new(RefCell::new(None));
+    let on_candidate_rc: Rc<Box<dyn Fn(CandidateAction) + Send>> = Rc::new(on_candidate);
     // 先建窗口再报 id：建窗口顺带建起本线程的消息队列，之后 PostThreadMessageW 才有处可投。
-    let window = match CandidateWindow::new(painter.clone(), on_candidate) {
+    let window = match CandidateWindow::new(painter.clone(), {
+        let cb = on_candidate_rc.clone();
+        Box::new(move |action| (cb)(action))
+    }) {
         Ok(window) => window,
         Err(error) => {
             tracing::error!(%error, "建候选窗口失败，Server 将不显示候选框");
@@ -164,6 +190,26 @@ fn run(
         Ok(status) => Some(status),
         Err(error) => {
             tracing::error!(%error, "建悬浮状态条失败，将不显示状态条");
+            None
+        }
+    };
+    let companion = match companion::CompanionWindow::new({
+        let cb = on_candidate_rc.clone();
+        Box::new(move |action| (cb)(action))
+    }) {
+        Ok(companion) => Some(companion),
+        Err(error) => {
+            tracing::error!(%error, "建 English Assistant 窗口失败");
+            None
+        }
+    };
+    let drill = match drill::DrillWindow::new({
+        let cb = on_candidate_rc.clone();
+        Box::new(move |action| (cb)(action))
+    }) {
+        Ok(drill) => Some(drill),
+        Err(error) => {
+            tracing::error!(%error, "建 Drill 练习窗口失败");
             None
         }
     };
@@ -179,7 +225,14 @@ fn run(
         if msg.message == WM_WAKE {
             // 一次唤醒排空整个队列，保住 Hide→Show 的先后。
             while let Ok(command) = commands.try_recv() {
-                apply(&window, status.as_ref(), &painter, command);
+                apply(
+                    &window,
+                    status.as_ref(),
+                    companion.as_ref().map(|c| c.as_ref()),
+                    drill.as_ref().map(|d| d.as_ref()),
+                    &painter,
+                    command,
+                );
             }
             continue;
         }
@@ -193,6 +246,8 @@ fn run(
 fn apply(
     window: &CandidateWindow,
     status: Option<&StatusBar>,
+    companion: Option<&companion::CompanionWindow>,
+    drill: Option<&drill::DrillWindow>,
     painter: &SharedPainter,
     command: UiCommand,
 ) {
@@ -202,7 +257,12 @@ fn apply(
             window.set_content(&frame);
             window.show(to_win_rect(rect));
         }
-        UiCommand::Hide => window.hide(),
+        UiCommand::Hide => {
+            window.hide();
+            if let Some(comp) = companion {
+                comp.hide();
+            }
+        }
         UiCommand::StatusShow(view) => {
             if let Some(status) = status {
                 status.update(*view);
@@ -214,6 +274,34 @@ fn apply(
             }
         }
         UiCommand::Configure(settings) => Painter::configure(painter, &settings),
+        UiCommand::CompanionShow(payload) => {
+            let (data, rect) = *payload;
+            if let Some(comp) = companion {
+                comp.update_data(data);
+                let _ = comp.show_at(to_win_rect(rect));
+            }
+        }
+        UiCommand::CompanionHide => {
+            if let Some(comp) = companion {
+                comp.hide();
+            }
+        }
+        UiCommand::DrillStart(payload) => {
+            let (target_chinese, reference, rect) = *payload;
+            if let Some(dr) = drill {
+                dr.start_session(&target_chinese, &reference, to_win_rect(rect));
+            }
+        }
+        UiCommand::DrillResult(payload) => {
+            if let Some(dr) = drill {
+                dr.set_result(*payload);
+            }
+        }
+        UiCommand::DrillHide => {
+            if let Some(dr) = drill {
+                dr.hide();
+            }
+        }
     }
 }
 

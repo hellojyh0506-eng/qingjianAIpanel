@@ -22,6 +22,27 @@ pub trait CandidateSink: Send {
 
     /// 换画法：装上时与配置热加载后调，只在设置变了时调。
     fn configure(&self, settings: RenderSettings);
+
+    /// 显示 / 更新 English Assistant 学习助手伴侣窗
+    fn show_companion(&self, data: crate::ui::companion::CompanionData, rect: ScreenRect) {
+        let _ = (data, rect);
+    }
+
+    /// 收起 English Assistant
+    fn hide_companion(&self) {}
+
+    /// 启动 Drill 独立练习窗口
+    fn start_drill(&self, target_chinese: String, reference: String, rect: ScreenRect) {
+        let _ = (target_chinese, reference, rect);
+    }
+
+    /// 下发 Drill 对比批改结果
+    fn show_drill_result(&self, result: crate::ui::drill::DrillResultData) {
+        let _ = result;
+    }
+
+    /// 收起 Drill 窗口
+    fn hide_drill(&self) {}
 }
 
 /// 不画候选窗口的空实现。

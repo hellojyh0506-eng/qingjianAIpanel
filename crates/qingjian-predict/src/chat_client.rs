@@ -14,8 +14,8 @@ use crate::config::PredictConfig;
 use crate::error::PredictError;
 use crate::prompt::{self, Reply};
 
-/// 联想与翻译回复的 token 上限：整句口语翻译 220（容纳 2~4 条备选），组句 300，问字 200，对比评测 450。
-const TRANSLATE_MAX_TOKENS: u32 = 220;
+/// 联想与翻译回复的 token 上限：快速口语单句翻译 36，组句 300，问字 200，对比评测 450。
+const TRANSLATE_MAX_TOKENS: u32 = 36;
 const COMPOSE_MAX_TOKENS: u32 = 300;
 const QUESTION_MAX_TOKENS: u32 = 200;
 const COMPARE_MAX_TOKENS: u32 = 450;

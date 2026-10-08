@@ -74,6 +74,7 @@ pub struct Router {
     pub(crate) learning_mode: qingjian_platform::LearningMode,
 
     /// 开启 Drill 临时训练会话前的英语学习模式（Daily 或 Learn），退出时恢复。
+    #[allow(dead_code)]
     pub(crate) previous_learning_mode: qingjian_platform::LearningMode,
 
     /// 记录当前被动翻译触发时刻（T0），用于端到端延迟诊断。
@@ -196,92 +197,120 @@ impl Router {
         self.learning_mode
     }
 
-    /// 开启 Drill 练习会话：暂存 previous_learning_mode，切入 Drill 模式（状态条学变橙色），绑定候选词并启动输入阶段。
-    pub(crate) fn start_drill_session(&mut self) {
-        if self.learning_mode != qingjian_platform::LearningMode::Drill {
-            self.previous_learning_mode = self.learning_mode;
-            self.learning_mode = qingjian_platform::LearningMode::Drill;
-        }
+    /// 打开独立 English Assistant（学习助手伴侣窗）
+    pub(crate) fn open_assistant(&mut self) {
+        let rect = self.last_rect.unwrap_or(qingjian_platform::protocol::ScreenRect {
+            left: 200,
+            top: 200,
+            right: 400,
+            bottom: 230,
+        });
+
         let target_text = self
             .passive_learning_card
             .as_ref()
             .map(|c| c.target_text.clone())
             .or_else(|| self.passive_translation_target.clone())
             .or_else(|| self.layout_candidate(self.highlight).map(|c| c.text))
-            .unwrap_or_else(|| "当前表达".to_string());
+            .or_else(|| self.layout_candidate(0).map(|c| c.text))
+            .unwrap_or_else(|| "确实有道理".to_string());
 
-        let primary = self
+        let primary_text = self
             .passive_learning_card
             .as_ref()
-            .and_then(|c| c.primary.clone())
+            .and_then(|c| c.primary.as_ref().map(|p| p.text.clone()))
+            .or_else(|| self.passive_translation.clone())
             .or_else(|| {
-                self.passive_translation.as_ref().map(|s| {
-                    qingjian_platform::protocol::LearningExpression {
-                        text: s.clone(),
-                        tag: "Natural".to_string(),
-                        meaning: target_text.clone(),
-                        tone: "Casual".to_string(),
-                        scenario: "Daily conversation".to_string(),
-                        commonality: "Common".to_string(),
-                        why_natural: "Natural spoken English".to_string(),
-                    }
+                self.engine.translate_word(&target_text).and_then(|t| {
+                    t.senses().first().map(|s| s.text.clone())
                 })
-            });
+            })
+            .unwrap_or_else(|| "That makes perfect sense.".to_string());
 
-        let alternatives = self
-            .passive_learning_card
-            .as_ref()
-            .map(|c| c.alternatives.clone())
-            .unwrap_or_default();
+        let mut data = crate::ui::companion::CompanionData::default();
+        data.target_chinese = target_text.clone();
+        data.primary_english = primary_text.clone();
 
-        let due = self.today_due_count();
-        let upgrade = self
-            .passive_learning_card
-            .as_ref()
-            .and_then(|c| c.upgrade.clone());
-
-        self.passive_translation_target = Some(target_text.clone());
-        if primary.is_none() && self.engine.prediction_enabled() {
-            self.translation_start_time = Some(Instant::now());
-            if let Some(seq) = self.engine.request_translation(&target_text) {
-                self.generation_id = seq;
+        if let Some(card) = &self.passive_learning_card {
+            if !card.alternatives.is_empty() {
+                data.alternatives = card
+                    .alternatives
+                    .iter()
+                    .map(|alt| crate::ui::companion::ExpressionVariant {
+                        text: alt.text.clone(),
+                        tag: if alt.tag.is_empty() { "Natural".to_string() } else { alt.tag.clone() },
+                        meaning: alt.meaning.clone(),
+                        why_natural: alt.why_natural.clone(),
+                    })
+                    .collect();
             }
         }
 
-        self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
-            target_text,
-            state: qingjian_platform::protocol::LearningState::Ready,
-            primary,
-            alternatives,
-            expanded: false,
-            selected_index: None,
-            drill_stage: Some(qingjian_platform::protocol::DrillStage::Input),
-            drill_input: String::new(),
-            drill_attempt: None,
-            drill_notice: None,
-            today_due_count: due,
-            review_current_index: 0,
-            review_total_count: due,
-            upgrade,
-        });
-        self.reconcile_status();
+        if data.alternatives.is_empty() {
+            data.alternatives = vec![
+                crate::ui::companion::ExpressionVariant {
+                    text: primary_text.clone(),
+                    tag: "Natural".to_string(),
+                    meaning: target_text.clone(),
+                    why_natural: "最自然口语表达".to_string(),
+                },
+            ];
+        }
+
+        if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+            let vault = qingjian_learning::LearningVault::open(&user_dir);
+            for saved in vault.saved_expressions() {
+                if saved.prompt == target_text {
+                    data.collocations.push(saved.expression.clone());
+                }
+            }
+        }
+
+        self.candidates.show_companion(data, rect);
     }
 
-    /// 结束 Drill 练习会话：恢复 previous_learning_mode（Daily 或 Learn），清空 Drill 交互状态并更新状态条。
+    /// 关闭独立 English Assistant
+    pub(crate) fn close_assistant(&mut self) {
+        self.candidates.hide_companion();
+    }
+
+    /// 开启 Drill 练习会话：弹出独立 Drill 练习窗口。
+    pub(crate) fn start_drill_session(&mut self) {
+        let rect = self.last_rect.unwrap_or(qingjian_platform::protocol::ScreenRect {
+            left: 200,
+            top: 200,
+            right: 400,
+            bottom: 230,
+        });
+
+        let target_text = self
+            .passive_learning_card
+            .as_ref()
+            .map(|c| c.target_text.clone())
+            .or_else(|| self.passive_translation_target.clone())
+            .or_else(|| self.layout_candidate(self.highlight).map(|c| c.text))
+            .or_else(|| self.layout_candidate(0).map(|c| c.text))
+            .unwrap_or_else(|| "确实有道理".to_string());
+
+        let reference_str = self
+            .passive_learning_card
+            .as_ref()
+            .and_then(|c| c.primary.as_ref().map(|p| p.text.clone()))
+            .or_else(|| self.passive_translation.clone())
+            .or_else(|| {
+                self.engine.translate_word(&target_text).and_then(|t| {
+                    t.senses().first().map(|s| s.text.clone())
+                })
+            })
+            .unwrap_or_else(|| "That makes perfect sense.".to_string());
+
+        self.candidates.hide_companion();
+        self.candidates.start_drill(target_text, reference_str, rect);
+    }
+
+    /// 结束 Drill 练习会话：收起 Drill 练习窗口。
     pub(crate) fn end_drill_session(&mut self) {
-        if self.learning_mode == qingjian_platform::LearningMode::Drill {
-            self.learning_mode = self.previous_learning_mode;
-        }
-        if let Some(card) = self.passive_learning_card.as_mut() {
-            card.drill_stage = None;
-            card.drill_input.clear();
-            card.drill_attempt = None;
-            card.drill_notice = None;
-        }
-        if self.learning_mode == qingjian_platform::LearningMode::Daily {
-            self.passive_learning_card = None;
-        }
-        self.reconcile_status();
+        self.candidates.hide_drill();
     }
 
     /// 下发给 DLL 的按键行为设置：`OpenSession` 的回包带一次，之后每拍 `SyncMode` 也跟着走，
@@ -337,6 +366,20 @@ impl Router {
     pub fn handle_candidate_action(&mut self, action: CandidateAction) {
         tracing::info!(?action, mode = ?self.learning_mode, "处理候选卡片动作");
         match action {
+            CandidateAction::OpenAssistant => {
+                self.open_assistant();
+            }
+            CandidateAction::CloseAssistant => {
+                self.close_assistant();
+            }
+            CandidateAction::SwitchAssistantTab(_) => {}
+            CandidateAction::StartDrillSession | CandidateAction::StartDrill => {
+                self.start_drill_session();
+            }
+            CandidateAction::DrillCompare(prompt, input, reference) => {
+                self.compare_start_time = Some(Instant::now());
+                self.engine.request_compare(&prompt, &input, &reference);
+            }
             CandidateAction::ToggleExpand => {
                 if self.learning_mode == qingjian_platform::LearningMode::Daily {
                     if !self.daily_show_english {
@@ -390,9 +433,6 @@ impl Router {
                         card.selected_index = Some(idx);
                     }
                 }
-            }
-            CandidateAction::StartDrill => {
-                self.start_drill_session();
             }
             CandidateAction::Reveal => {
                 if let Some(card) = self.passive_learning_card.as_mut() {

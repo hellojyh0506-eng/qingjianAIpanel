@@ -14,6 +14,11 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 
 use qingjian_platform::{SwitchKey, SwitchKeys};
 
+#[cfg(windows)]
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetKeyState, VK_LWIN, VK_MENU, VK_RWIN,
+};
+
 #[derive(Default)]
 pub(crate) struct KeyTap {
     /// 按下了哪个切换键、之后还没有别的键插进来。
@@ -30,6 +35,12 @@ impl KeyTap {
         if (lparam.0 >> 30) & 1 != 0 {
             return;
         }
+        // Chord-first: 如果伴随有其它修饰键处于按下状态（Ctrl/Alt/Win/Shift 组合），
+        // 绝对不能认作单独切换键按下。
+        if is_other_modifier_down(key) {
+            self.cancel();
+            return;
+        }
         // 两个切换键一起按（Ctrl + Shift 是系统换布局的键）不算单击
         let pressed = match self.pressed.get() {
             Some(other) if other != key => None,
@@ -43,6 +54,10 @@ impl KeyTap {
         let Some(key) = tap_key(keys, vk) else {
             return false;
         };
+        if is_other_modifier_down(key) {
+            self.cancel();
+            return false;
+        }
         if self.pressed.get() == Some(key) {
             self.pressed.set(None);
             true
@@ -55,6 +70,27 @@ impl KeyTap {
     pub(crate) fn cancel(&self) {
         self.pressed.set(None);
     }
+}
+
+/// 检查除了目标单键之外，是否有其它修饰键（Ctrl/Alt/Win/Shift）正被按下。
+fn is_other_modifier_down(key: SwitchKey) -> bool {
+    #[cfg(windows)]
+    unsafe {
+        let is_down = |code: u16| -> bool {
+            (GetKeyState(i32::from(code)) as u16 & 0x8000) != 0
+        };
+        match key {
+            SwitchKey::Shift => {
+                is_down(VK_CONTROL.0) || is_down(VK_MENU.0) || is_down(VK_LWIN.0) || is_down(VK_RWIN.0)
+            }
+            SwitchKey::Control => {
+                is_down(VK_SHIFT.0) || is_down(VK_MENU.0) || is_down(VK_LWIN.0) || is_down(VK_RWIN.0)
+            }
+            SwitchKey::CtrlAltSpace => false,
+        }
+    }
+    #[cfg(not(windows))]
+    false
 }
 
 /// 这个虚拟键码是不是勾着的单击切换键（左右两个都算）；组合键 Ctrl + Alt + Space 不走单击判定。

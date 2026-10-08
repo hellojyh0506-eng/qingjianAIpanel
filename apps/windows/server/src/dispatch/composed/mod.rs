@@ -3,9 +3,9 @@
 mod state;
 
 use qingjian_core::{
-    Candidate, CandidateLayout, CandidateList, CloudWord, ComparisonResult, ComparisonStatus,
+    Candidate, CandidateLayout, CandidateList, CloudWord,
     ErrorMajorCategory, ErrorSubcategory, FeedbackItem, Language, PredictionKind, Query,
-    RecallAttempt, Sense, Translation,
+    Sense, Translation,
 };
 use qingjian_platform::protocol::{Frame, PROTOCOL_VERSION, PreeditKind, PreeditSegment};
 
@@ -39,10 +39,7 @@ impl Router {
             Some((items, preedit, cursor, typed_keys)) => {
                 let layout =
                     CandidateLayout::new(items, self.config.page_size, self.config.cloud_slots);
-                let learning_on = (self.learning_mode == qingjian_platform::LearningMode::Learn
-                    || self.learning_mode == qingjian_platform::LearningMode::Drill
-                    || (self.learning_mode == qingjian_platform::LearningMode::Daily && self.daily_show_english))
-                    && !self.config.learning_language_off
+                let learning_on = !self.config.learning_language_off
                     && self.engine.learning_language() != Language::Chinese
                     && !self.is_private();
                 let first_target = layout.candidate(0).map(|c| c.text.clone());
@@ -103,13 +100,36 @@ impl Router {
         }
 
         // 超时防冻结守护：
-        // 1. 被动翻译超时保护 (>3500ms): 置为 Failed 状态并重置 translation_start_time
+        // 1. 被动翻译超时保护 (>1500ms): 本地离线词典兜底，消除等待空白
         if let Some(start) = self.translation_start_time {
-            if start.elapsed().as_millis() > 3500 {
+            if start.elapsed().as_millis() > 1500 {
                 if let Some(card) = self.passive_learning_card.as_mut() {
                     if card.state == qingjian_platform::protocol::LearningState::Loading {
-                        tracing::warn!(target = ?self.passive_translation_target, "被动翻译请求超时 (>3500ms)，置为失败状态");
-                        card.state = qingjian_platform::protocol::LearningState::Failed;
+                        tracing::warn!(target = ?self.passive_translation_target, "被动翻译请求超时 (>1500ms)，触发本地离线词典兜底");
+                        if let Some(target) = &self.passive_translation_target {
+                            if let Some(local_trans) = self.engine.translate_word(target) {
+                                if let Some(first_sense) = local_trans.senses().first() {
+                                    let offline_text = first_sense.text.clone();
+                                    card.primary = Some(qingjian_platform::protocol::LearningExpression {
+                                        text: offline_text.clone(),
+                                        tag: "Offline".to_string(),
+                                        meaning: target.clone(),
+                                        tone: "Standard".to_string(),
+                                        scenario: "General".to_string(),
+                                        commonality: "Common".to_string(),
+                                        why_natural: "Offline glossary fallback".to_string(),
+                                    });
+                                    card.state = qingjian_platform::protocol::LearningState::Ready;
+                                    self.passive_translation = Some(offline_text);
+                                } else {
+                                    card.state = qingjian_platform::protocol::LearningState::Failed;
+                                }
+                            } else {
+                                card.state = qingjian_platform::protocol::LearningState::Failed;
+                            }
+                        } else {
+                            card.state = qingjian_platform::protocol::LearningState::Failed;
+                        }
                         self.translation_start_time = None;
                         let shown = self.self_drawn_frame();
                         self.reconcile_candidates(&shown);
@@ -151,103 +171,68 @@ impl Router {
             return;
         }
         if self.engine.last_prediction_kind() == PredictionKind::Compare {
-            if let Some(card) = self.passive_learning_card.as_mut() {
-                if card.drill_stage == Some(qingjian_platform::protocol::DrillStage::Comparing) {
-                    let compare_total_ms = self
-                        .compare_start_time
-                        .take()
-                        .map(|t| t.elapsed().as_millis())
-                        .unwrap_or(0);
+            let compare_total_ms = self
+                .compare_start_time
+                .take()
+                .map(|t| t.elapsed().as_millis())
+                .unwrap_or(0);
 
-                    let user_input = card.drill_input.clone();
-                    let reference = card
-                        .primary
-                        .as_ref()
-                        .map(|p| p.text.clone())
-                        .unwrap_or_default();
-
-                    let (nat_expr, status_str, advice, feedback_items) = if let Some(first) = prediction.alternatives.first() {
-                        let advice = prediction.sentence.clone().unwrap_or_else(|| {
-                            if !first.why_natural.is_empty() {
-                                first.why_natural.clone()
-                            } else {
-                                "表达地道，用词准确。".to_string()
-                            }
-                        });
-                        let mut items = Vec::new();
-                        for alt in prediction.alternatives.iter().skip(1) {
-                            let major = match alt.tag.as_str() {
-                                "语法" | "Grammar" => ErrorMajorCategory::Grammar,
-                                "用词" | "Vocabulary" => ErrorMajorCategory::Vocabulary,
-                                "搭配" | "Collocation" => ErrorMajorCategory::Collocation,
-                                "自然度" | "Naturalness" => ErrorMajorCategory::Naturalness,
-                                "短语习语" | "PhrasalIdiomatic" => ErrorMajorCategory::PhrasalIdiomatic,
-                                "语用语域" | "Pragmatics" => ErrorMajorCategory::Pragmatics,
-                                _ => ErrorMajorCategory::Naturalness,
-                            };
-                            items.push(FeedbackItem {
-                                major_category: major,
-                                subcategory: ErrorSubcategory::Other(alt.meaning.clone()),
-                                label: alt.tag.clone(),
-                                explanation: alt.why_natural.clone(),
-                                suggestion: None,
-                            });
-                        }
-                        (first.text.clone(), first.tag.clone(), advice, items)
+            let (nat_expr, status_str, advice, feedback_items) = if let Some(first) = prediction.alternatives.first() {
+                let advice = prediction.sentence.clone().unwrap_or_else(|| {
+                    if !first.why_natural.is_empty() {
+                        first.why_natural.clone()
                     } else {
-                        let advice = prediction.sentence.unwrap_or_else(|| "表达地道，用词准确。".to_string());
-                        let nat = if !reference.is_empty() { reference.clone() } else { user_input.clone() };
-                        (nat, "NaturalBetter".to_string(), advice, Vec::new())
-                    };
-
-                    let status = match status_str.as_str() {
-                        "ExactMatch" => ComparisonStatus::ExactMatch,
-                        "ValidB2Upgrade" => ComparisonStatus::ValidB2Upgrade,
-                        "GrammarIssue" => ComparisonStatus::GrammarIssue,
-                        "Chinglish" => ComparisonStatus::Chinglish,
-                        _ => ComparisonStatus::NaturalBetter,
-                    };
-
-                    let comparison = ComparisonResult {
-                        status: Some(status),
-                        key_advice: advice,
-                        user_formatted: user_input.clone(),
-                        natural_expression: nat_expr,
-                        primary_category: feedback_items.first().map(|f| f.major_category),
-                        feedback_items,
-                        upgrade: None,
-                        dimensions: None,
-                    };
-
-                    let attempt = RecallAttempt {
-                        prompt: card.target_text.clone(),
-                        user_attempt: user_input,
-                        reference_expression: reference,
-                        timestamp: jiff::Zoned::now().timestamp().as_second(),
-                        comparison,
-                        error_categories: Vec::new(),
-                    };
-
-                    if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
-                        let mut vault = qingjian_learning::LearningVault::open(&user_dir);
-                        vault.record_attempt(&attempt);
-                        let _ = vault.flush();
+                        "表达地道，用词准确。".to_string()
                     }
-
-                    card.drill_attempt = Some(attempt);
-                    card.drill_stage = Some(qingjian_platform::protocol::DrillStage::Compared);
-                    card.drill_notice = None;
-
-                    tracing::info!(
-                        target = %card.target_text,
-                        compare_total_ms,
-                        "Compare端到端耗时 (T0->T7)"
-                    );
-
-                    let shown = self.self_drawn_frame();
-                    self.reconcile_candidates(&shown);
+                });
+                let mut items = Vec::new();
+                for alt in prediction.alternatives.iter().skip(1) {
+                    let major = match alt.tag.as_str() {
+                        "语法" | "Grammar" => ErrorMajorCategory::Grammar,
+                        "用词" | "Vocabulary" => ErrorMajorCategory::Vocabulary,
+                        "搭配" | "Collocation" => ErrorMajorCategory::Collocation,
+                        "自然度" | "Naturalness" => ErrorMajorCategory::Naturalness,
+                        "短语习语" | "PhrasalIdiomatic" => ErrorMajorCategory::PhrasalIdiomatic,
+                        "语用语域" | "Pragmatics" => ErrorMajorCategory::Pragmatics,
+                        _ => ErrorMajorCategory::Naturalness,
+                    };
+                    items.push(FeedbackItem {
+                        major_category: major,
+                        subcategory: ErrorSubcategory::Other(alt.meaning.clone()),
+                        label: alt.tag.clone(),
+                        explanation: alt.why_natural.clone(),
+                        suggestion: None,
+                    });
                 }
-            }
+                (first.text.clone(), first.tag.clone(), advice, items)
+            } else {
+                let advice = prediction.sentence.unwrap_or_else(|| "表达地道，用词准确。".to_string());
+                ("That makes perfect sense.".to_string(), "NaturalBetter".to_string(), advice, Vec::new())
+            };
+
+            let is_good = status_str == "ExactMatch" || status_str == "ValidB2Upgrade";
+            let drill_feedback: Vec<crate::ui::drill::DrillFeedbackItem> = feedback_items.iter().map(|item| {
+                crate::ui::drill::DrillFeedbackItem {
+                    label: item.label.clone(),
+                    explanation: item.explanation.clone(),
+                }
+            }).collect();
+
+            let drill_res = crate::ui::drill::DrillResultData {
+                verdict: if is_good { "Perfect".to_string() } else { "Needs Work".to_string() },
+                main_issue: advice.clone(),
+                better_expression: nat_expr.clone(),
+                feedback_items: drill_feedback,
+                overall_rating: if is_good { "A (地道口语)".to_string() } else { "B (需微调)".to_string() },
+                ielts_suggestion: Some(advice.clone()),
+            };
+            self.candidates.show_drill_result(drill_res);
+
+            tracing::info!(
+                compare_total_ms,
+                status = %status_str,
+                "Compare 批改结果已下发至独立练习窗口"
+            );
             return;
         }
         if self.engine.last_prediction_kind() == PredictionKind::Translate {
@@ -632,9 +617,9 @@ impl Router {
                         }
                     }
                 }
-                let learning_card = if self.learning_mode == qingjian_platform::LearningMode::Learn
-                    || self.learning_mode == qingjian_platform::LearningMode::Drill
-                    || (self.learning_mode == qingjian_platform::LearningMode::Daily && self.daily_show_english)
+                let learning_card = if !self.config.learning_language_off
+                    && self.engine.learning_language() != Language::Chinese
+                    && !self.is_private()
                 {
                     self.passive_learning_card.clone()
                 } else {

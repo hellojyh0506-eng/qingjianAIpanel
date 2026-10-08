@@ -31,6 +31,7 @@ use super::layered::{self, Layered};
 use super::monitor;
 use super::painter::SharedPainter;
 use super::window_class::WindowClass;
+use crate::dispatch::CandidateAction;
 
 const CLASS_NAME: PCWSTR = w!("QingjianCandidateWindow");
 static CLASS: WindowClass = WindowClass::new();
@@ -72,7 +73,7 @@ struct CandidateWindowInner {
     logged_dpi: Cell<Option<(u32, Option<u32>)>>,
     last_anchor: Cell<Option<RECT>>,
     painter: SharedPainter,
-    events: super::CandidateEvents,
+    events: Box<dyn Fn(CandidateAction)>,
     margin_x: Cell<i32>,
     margin_y: Cell<i32>,
     content_width: Cell<i32>,
@@ -228,7 +229,7 @@ pub(crate) struct CandidateWindow {
 
 impl CandidateWindow {
     /// 建一个隐藏的候选窗口。
-    pub(crate) fn new(painter: SharedPainter, events: super::CandidateEvents) -> Result<Self> {
+    pub(crate) fn new(painter: SharedPainter, events: Box<dyn Fn(CandidateAction)>) -> Result<Self> {
         CLASS.ensure(|| WNDCLASSEXW {
             lpfnWndProc: Some(wndproc),
             hInstance: super::module_handle(),
