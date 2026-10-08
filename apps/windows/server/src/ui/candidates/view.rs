@@ -570,13 +570,12 @@ fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
     let width = if is_daily {
         flag_w + main_w + theme.column_gap * 2
     } else if is_learn {
-        let btn_text = "📖 学习助手 (Ctrl+Alt+E)";
+        let btn_text = "📖 打开学习助手 (Ctrl+Alt+E)";
         let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
         flag_w + main_w + theme.column_gap * 3 + btn_w
     } else if is_drill {
         let btn_text = "💡 进入练习 (Ctrl+Alt+D)";
-        let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
-        flag_w + main_w + theme.column_gap * 3 + btn_w
+        measure(hdc, theme.index_font, btn_text).cx + 24
     } else {
         flag_w + main_w + theme.column_gap * 2
     };
@@ -602,6 +601,19 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
 
     let line_h = line_height(hdc, theme.annotation_font);
     let mut x = theme.padding;
+
+    let is_learn = data.learning_mode == qingjian_platform::LearningMode::Learn;
+    let is_drill = data.learning_mode == qingjian_platform::LearningMode::Drill;
+
+    // Drill 模式直接呈现主动输出练习入口
+    if is_drill {
+        let btn_text = "💡 进入练习 (Ctrl+Alt+D)";
+        let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
+        let btn_rect = RECT { left: theme.padding, top: y - 1, right: theme.padding + btn_w, bottom: y + line_h };
+        fill_round_rect(hdc, btn_rect, theme.highlight, 4);
+        draw_text(hdc, theme.index_font, COLORREF(0x001673f9), theme.padding + 8, y, btn_text);
+        return;
+    }
 
     // 🇺🇸 国旗前缀
     x += draw_text(hdc, theme.annotation_font, theme.fresh_color, x, y, "🇺🇸 ");
@@ -630,23 +642,13 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
         draw_text(hdc, theme.index_font, theme.cloud_color, x, y, " 🔊");
     }
 
-    let is_learn = data.learning_mode == qingjian_platform::LearningMode::Learn;
-    let is_drill = data.learning_mode == qingjian_platform::LearningMode::Drill;
-
     if is_learn {
-        let btn_text = "📖 学习助手 (Ctrl+Alt+E)";
+        let btn_text = "📖 打开学习助手 (Ctrl+Alt+E)";
         let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
         let btn_x = content_width - theme.padding - btn_w;
         let btn_rect = RECT { left: btn_x, top: y - 1, right: btn_x + btn_w, bottom: y + line_h };
         fill_round_rect(hdc, btn_rect, theme.highlight, 4);
         draw_text(hdc, theme.index_font, theme.fresh_color, btn_x + 8, y, btn_text);
-    } else if is_drill {
-        let btn_text = "💡 进入练习 (Ctrl+Alt+D)";
-        let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
-        let btn_x = content_width - theme.padding - btn_w;
-        let btn_rect = RECT { left: btn_x, top: y - 1, right: btn_x + btn_w, bottom: y + line_h };
-        fill_round_rect(hdc, btn_rect, theme.highlight, 4);
-        draw_text(hdc, theme.index_font, COLORREF(0x001673f9), btn_x + 8, y, btn_text);
     }
 }
 
@@ -684,7 +686,7 @@ pub(super) fn hit_test_learning_card(
     let is_drill = data.learning_mode == qingjian_platform::LearningMode::Drill;
 
     if is_learn {
-        let btn_text = "📖 学习助手 (Ctrl+Alt+E)";
+        let btn_text = "📖 打开学习助手 (Ctrl+Alt+E)";
         let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
         let btn_x = content_w - theme.padding - btn_w;
         if x >= btn_x - 8 && x <= content_w {
@@ -694,8 +696,7 @@ pub(super) fn hit_test_learning_card(
     } else if is_drill {
         let btn_text = "💡 进入练习 (Ctrl+Alt+D)";
         let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
-        let btn_x = content_w - theme.padding - btn_w;
-        if x >= btn_x - 8 && x <= content_w {
+        if x >= theme.padding - 8 && x <= theme.padding + btn_w + 16 {
             return Some(CandidateAction::StartDrillSession);
         }
         return Some(CandidateAction::StartDrillSession);
@@ -806,8 +807,8 @@ mod tests {
         let content_w = 360;
         let target_y = data.theme.padding + top_line_size(dc, &data).1 + horizontal_size(dc, &data).1 + 6;
 
-        // Click on 进入练习 button
-        let action = hit_test_learning_card(dc, &data, 300, target_y, content_w);
+        // Click on 进入练习 button (located on left)
+        let action = hit_test_learning_card(dc, &data, 50, target_y, content_w);
         assert_eq!(action, Some(CandidateAction::StartDrillSession));
 
         unsafe { let _ = DeleteDC(dc); }
