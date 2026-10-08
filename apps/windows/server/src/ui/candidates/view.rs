@@ -520,7 +520,7 @@ pub(crate) fn fill_rect(hdc: HDC, rect: RECT, color: COLORREF) {
     }
 }
 
-fn fill_round_rect(hdc: HDC, rect: RECT, color: COLORREF, radius: i32) {
+pub(crate) fn fill_round_rect(hdc: HDC, rect: RECT, color: COLORREF, radius: i32) {
     let diameter = (radius * 2).max(1);
     unsafe {
         let region = CreateRoundRectRgn(
@@ -1050,38 +1050,7 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
     }
 }
 
-/// 学习卡片鼠标点击判定动作。
-#[allow(dead_code)]
-pub(super) enum LearningHitAction {
-    /// 切换展开/收起「更多译法」
-    ToggleExpand,
-    /// 切换某一条备选表达的细览展示
-    ToggleAlternative(usize),
-    /// 点击「Try English」开启回忆测试
-    StartDrill,
-    /// 点击「[📚 复习 (N)]」开启 FSRS 间隔复习
-    StartReview,
-    /// 复习评级：Again (重来)
-    RateAgain,
-    /// 复习评级：Good (掌握)
-    RateGood,
-    /// 复习评级：Easy (轻松)
-    RateEasy,
-    /// 点击「看答案」查看参考答案
-    Reveal,
-    /// 点击「对比」提交答案
-    Compare,
-    /// 点击「再试一次」重新输入
-    Retry,
-    /// 点击「保存」记录到生词本
-    Save,
-    /// 点击「📊 画像」查看学习画像
-    ShowProfile,
-    /// 点击「🗑 清空画像数据」彻底重置学习数据
-    ClearVault,
-    /// 点击「完成」或「退出」关闭卡片
-    Finish,
-}
+use crate::dispatch::CandidateAction;
 
 /// 命中测试：判断鼠标点击是否落在学习卡片及其内部交互控件上。
 pub(super) fn hit_test_learning_card(
@@ -1089,20 +1058,25 @@ pub(super) fn hit_test_learning_card(
     data: &RenderData,
     x: i32,
     y: i32,
-) -> Option<LearningHitAction> {
-    let card = data.learning_card.as_ref()?;
+    content_w: i32,
+) -> Option<CandidateAction> {
     let theme = &data.theme;
     let top_h = top_line_size(hdc, data).1;
-    let notice_h = notice_line_size(hdc, data).1;
     let body_h = match data.layout {
         LayoutMode::Vertical => vertical_size(hdc, data).1,
         LayoutMode::Horizontal => horizontal_size(hdc, data).1,
     };
-    let card_top = theme.padding + top_h + notice_h + body_h;
-    if y < card_top {
+    let card_top = theme.padding + top_h + body_h;
+
+    // 日常模式下点击底部「按 Ctrl+Shift+E 查看英文」提示行
+    if data.learning_mode == qingjian_platform::LearningMode::Daily {
+        if !data.rows.is_empty() && y >= card_top.saturating_sub(6) {
+            return Some(CandidateAction::ToggleExpand);
+        }
         return None;
     }
 
+    let card = data.learning_card.as_ref()?;
     let line_h = line_height(hdc, theme.annotation_font);
 
     // Active Recall 特殊阶段点击判定
@@ -1110,14 +1084,15 @@ pub(super) fn hit_test_learning_card(
         match stage {
             qingjian_render::DrillStage::Input => {
                 let btn_y = card_top + (line_h + theme.row_padding) * 2;
-                if y >= btn_y {
+                if y >= btn_y.saturating_sub(8) && y <= btn_y + line_h + 16 {
                     let enter_w = measure(hdc, theme.index_font, "对比 (Enter)").cx + 16;
                     let show_x = theme.padding + enter_w + theme.column_gap;
                     let show_w = measure(hdc, theme.index_font, "显示答案").cx + 16;
-                    if x >= theme.padding && x <= theme.padding + enter_w {
-                        return Some(LearningHitAction::Compare);
-                    } else if x >= show_x && x <= show_x + show_w {
-                        return Some(LearningHitAction::Reveal);
+                    let split_x = (theme.padding + enter_w + show_x) / 2;
+                    if x >= theme.padding.saturating_sub(10) && x < split_x {
+                        return Some(CandidateAction::Compare);
+                    } else if x >= split_x && x <= show_x + show_w + 16 {
+                        return Some(CandidateAction::Reveal);
                     }
                 }
                 return None;
@@ -1127,7 +1102,7 @@ pub(super) fn hit_test_learning_card(
             }
             qingjian_render::DrillStage::Compared => {
                 let btn_y = card_top + (line_h + theme.row_padding) * 3;
-                if y >= btn_y {
+                if y >= btn_y.saturating_sub(8) && y <= btn_y + line_h + 16 {
                     let retry_w = measure(hdc, theme.index_font, "🔄 再试一次 (R)").cx + 16;
                     let save_w = measure(hdc, theme.index_font, "⭐ 保存到表达本 (S)").cx + 16;
                     let done_w = measure(hdc, theme.index_font, "完成 (Enter)").cx + 16;
@@ -1137,23 +1112,25 @@ pub(super) fn hit_test_learning_card(
                     let b2_end = b2_start + save_w;
                     let b3_start = b2_end + theme.column_gap;
                     let b3_end = b3_start + done_w;
-                    if x >= b1_start && x <= b1_end {
-                        return Some(LearningHitAction::Retry);
-                    } else if x >= b2_start && x <= b2_end {
-                        return Some(LearningHitAction::Save);
-                    } else if x >= b3_start && x <= b3_end {
-                        return Some(LearningHitAction::Finish);
+                    let split1 = (b1_end + b2_start) / 2;
+                    let split2 = (b2_end + b3_start) / 2;
+                    if x >= b1_start.saturating_sub(8) && x < split1 {
+                        return Some(CandidateAction::Retry);
+                    } else if x >= split1 && x < split2 {
+                        return Some(CandidateAction::Save);
+                    } else if x >= split2 && x <= b3_end + 16 {
+                        return Some(CandidateAction::Finish);
                     }
                 }
                 return None;
             }
             qingjian_render::DrillStage::Profile => {
                 let btn_y = card_top + (line_h + theme.row_padding) * 2;
-                if y >= btn_y {
-                    if x < theme.padding + 140 {
-                        return Some(LearningHitAction::ClearVault);
+                if y >= btn_y.saturating_sub(8) {
+                    if x < theme.padding + 160 {
+                        return Some(CandidateAction::ClearVault);
                     } else {
-                        return Some(LearningHitAction::Finish);
+                        return Some(CandidateAction::Finish);
                     }
                 }
                 return None;
@@ -1161,26 +1138,26 @@ pub(super) fn hit_test_learning_card(
             qingjian_render::DrillStage::Review => {
                 if card.drill_attempt.is_none() {
                     let btn_y = card_top + (line_h + theme.row_padding) * 2;
-                    if y >= btn_y {
-                        if x < theme.padding + 120 {
-                            return Some(LearningHitAction::Compare);
-                        } else if x < theme.padding + 240 {
-                            return Some(LearningHitAction::Reveal);
+                    if y >= btn_y.saturating_sub(8) {
+                        if x < theme.padding + 130 {
+                            return Some(CandidateAction::Compare);
+                        } else if x < theme.padding + 260 {
+                            return Some(CandidateAction::Reveal);
                         } else {
-                            return Some(LearningHitAction::Finish);
+                            return Some(CandidateAction::Finish);
                         }
                     }
                 } else {
                     let btn_y = card_top + (line_h + theme.row_padding) * 2 + line_h;
-                    if y >= btn_y {
-                        if x < theme.padding + 130 {
-                            return Some(LearningHitAction::RateAgain);
-                        } else if x < theme.padding + 260 {
-                            return Some(LearningHitAction::RateGood);
-                        } else if x < theme.padding + 390 {
-                            return Some(LearningHitAction::RateEasy);
+                    if y >= btn_y.saturating_sub(8) {
+                        if x < theme.padding + 140 {
+                            return Some(CandidateAction::RateAgain);
+                        } else if x < theme.padding + 270 {
+                            return Some(CandidateAction::RateGood);
+                        } else if x < theme.padding + 400 {
+                            return Some(CandidateAction::RateEasy);
                         } else {
-                            return Some(LearningHitAction::Finish);
+                            return Some(CandidateAction::Finish);
                         }
                     }
                 }
@@ -1190,30 +1167,159 @@ pub(super) fn hit_test_learning_card(
     }
 
     let row1_h = line_h + theme.row_padding * 2;
-    if y <= card_top + row1_h {
-        let content_w = preferred_size(hdc, data).cx;
+    let btn_y_min = card_top.saturating_sub(10);
+    let btn_y_max = card_top + row1_h + 10;
+    if y >= btn_y_min && y <= btn_y_max {
+        let content_w = if content_w > 0 {
+            content_w
+        } else {
+            preferred_size(hdc, data).cx
+        };
         let drill_btn = "Try English";
         let drill_w = measure(hdc, theme.index_font, drill_btn).cx + 12;
         let btn_text = if card.expanded { "收起 ∧" } else { "更多译法 ∨" };
         let btn_w = measure(hdc, theme.index_font, btn_text).cx + 12;
         let drill_x = content_w - theme.padding - drill_w;
         let btn_x = drill_x - theme.column_gap - btn_w;
+        let split_x = (btn_x + btn_w + drill_x) / 2;
 
-        if x >= btn_x - 5 && x < drill_x - 5 {
-            return Some(LearningHitAction::ToggleExpand);
-        } else if x >= drill_x - 5 {
-            return Some(LearningHitAction::StartDrill);
+        if x >= btn_x - 16 && x < split_x {
+            return Some(CandidateAction::ToggleExpand);
+        } else if x >= split_x && x <= content_w + 16 {
+            return Some(CandidateAction::StartDrill);
         }
-        return None;
     }
 
-    if card.expanded && !card.alternatives.is_empty() {
+    if card.expanded && !card.alternatives.is_empty() && y > card_top + row1_h.saturating_sub(4) {
         let alt_start = card_top + row1_h;
         let alt_row_h = line_h + theme.row_padding;
         let alt_idx = (y - alt_start) / alt_row_h;
         if alt_idx >= 0 && (alt_idx as usize) < card.alternatives.len().min(5) {
-            return Some(LearningHitAction::ToggleAlternative(alt_idx as usize));
+            return Some(CandidateAction::ToggleAlternative(alt_idx as usize));
         }
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::rc::Rc;
+    use windows::Win32::Graphics::Gdi::{CreateCompatibleDC, DeleteDC};
+    use qingjian_core::{Candidate, CandidateList};
+    use qingjian_platform::LearningMode;
+    use qingjian_platform::protocol::{
+        DrillStage, Frame, LearningCardFrame, LearningExpression, LearningState,
+    };
+
+    fn make_test_data(mode: LearningMode, card: Option<LearningCardFrame>) -> RenderData {
+        let theme = Rc::new(Theme::new(96, false));
+        let frame = Frame {
+            candidates: CandidateList {
+                items: vec![Candidate {
+                    text: "你好".to_string(),
+                    kind: qingjian_core::CandidateKind::Chinese,
+                    syllables: Vec::new(),
+                    reading: None,
+                    translation: None,
+                    aux_code: None,
+                }],
+            },
+            learning_mode: mode,
+            learning_card: card,
+            ..Frame::default()
+        };
+        let mut data = RenderData::empty(theme);
+        data.set(&frame);
+        data
+    }
+
+    #[test]
+    fn test_hit_test_daily_mode_click_to_learn() {
+        let dc = unsafe { CreateCompatibleDC(None) };
+        let data = make_test_data(LearningMode::Daily, None);
+        // Daily mode with candidate rows displays bottom prompt: "us 按 Ctrl+Shift+E 查看英文"
+        let action = hit_test_learning_card(dc, &data, 50, 60, 300);
+        assert_eq!(action, Some(CandidateAction::ToggleExpand));
+        unsafe { let _ = DeleteDC(dc); }
+    }
+
+    #[test]
+    fn test_hit_test_learn_mode_expand_and_drill() {
+        let dc = unsafe { CreateCompatibleDC(None) };
+        let card = LearningCardFrame {
+            target_text: "你好".to_string(),
+            state: LearningState::Ready,
+            primary: Some(LearningExpression {
+                text: "Hello there".to_string(),
+                ..Default::default()
+            }),
+            alternatives: vec![
+                LearningExpression {
+                    text: "Hi there".to_string(),
+                    meaning: "嗨".to_string(),
+                    ..Default::default()
+                },
+            ],
+            expanded: false,
+            selected_index: None,
+            drill_stage: None,
+            drill_input: String::new(),
+            drill_attempt: None,
+            drill_notice: None,
+            today_due_count: 0,
+            review_current_index: 0,
+            review_total_count: 0,
+            upgrade: None,
+        };
+        let data = make_test_data(LearningMode::Learn, Some(card));
+        let content_w = 360;
+
+        // Click on 更多译法 button (around x=180..240, y in button row)
+        let action_expand = hit_test_learning_card(dc, &data, 200, 50, content_w);
+        assert_eq!(action_expand, Some(CandidateAction::ToggleExpand));
+
+        // Click on Try English button (around x=280..340, y in button row)
+        let action_drill = hit_test_learning_card(dc, &data, 320, 50, content_w);
+        assert_eq!(action_drill, Some(CandidateAction::StartDrill));
+
+        unsafe { let _ = DeleteDC(dc); }
+    }
+
+    #[test]
+    fn test_hit_test_drill_stage_input_buttons() {
+        let dc = unsafe { CreateCompatibleDC(None) };
+        let card = LearningCardFrame {
+            target_text: "你好".to_string(),
+            state: LearningState::Ready,
+            primary: Some(LearningExpression {
+                text: "Hello there".to_string(),
+                ..Default::default()
+            }),
+            alternatives: vec![],
+            expanded: false,
+            selected_index: None,
+            drill_stage: Some(DrillStage::Input),
+            drill_input: "hello".to_string(),
+            drill_attempt: None,
+            drill_notice: None,
+            today_due_count: 0,
+            review_current_index: 0,
+            review_total_count: 0,
+            upgrade: None,
+        };
+        let data = make_test_data(LearningMode::Drill, Some(card));
+        let content_w = 360;
+
+        // Compare button is at left
+        let action_comp = hit_test_learning_card(dc, &data, 30, 95, content_w);
+        assert_eq!(action_comp, Some(CandidateAction::Compare));
+
+        // Reveal button is to the right
+        let action_reveal = hit_test_learning_card(dc, &data, 160, 95, content_w);
+        assert_eq!(action_reveal, Some(CandidateAction::Reveal));
+
+        unsafe { let _ = DeleteDC(dc); }
+    }
+}
+

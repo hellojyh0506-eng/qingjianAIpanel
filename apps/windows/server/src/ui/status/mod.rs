@@ -180,14 +180,20 @@ impl StatusBar {
         }
     }
 
-    /// 渲染器要的四格：模式（品牌色）、标点（生效时品牌色，否则灰）、学习模式（学：Daily灰/Learn青/Drill橙）、齿轮。
+    /// 渲染器要的四格：模式（品牌色）、标点（生效时品牌色，否则灰）、学习模式（Daily灰"学"/Learn蓝底白字"学"/Drill橙底白字"练"）、齿轮。
     fn status_cells(view: &StatusView) -> Vec<StatusCell> {
         let learn_cell = match view.learning_mode {
             qingjian_platform::LearningMode::Daily => StatusCell::text("学", false),
-            qingjian_platform::LearningMode::Learn => StatusCell::text("学", true),
-            qingjian_platform::LearningMode::Drill => {
-                StatusCell::colored("学", qingjian_render::Color::rgb(249, 115, 22))
-            }
+            qingjian_platform::LearningMode::Learn => StatusCell::badge(
+                "学",
+                qingjian_render::Color::rgb(0, 166, 153),
+                qingjian_render::Color::rgb(255, 255, 255),
+            ),
+            qingjian_platform::LearningMode::Drill => StatusCell::badge(
+                "练",
+                qingjian_render::Color::rgb(249, 115, 22),
+                qingjian_render::Color::rgb(255, 255, 255),
+            ),
         };
         vec![
             StatusCell::text(Self::mode_text(view), true),
@@ -204,16 +210,25 @@ impl StatusBar {
             return Vec::new();
         };
         let punctuation_active = view.full_width;
-        let learn_color = match view.learning_mode {
-            qingjian_platform::LearningMode::Daily => theme.gloss_color,
-            qingjian_platform::LearningMode::Learn => theme.cloud_color,
-            qingjian_platform::LearningMode::Drill => COLORREF(0x001673f9), // 橙色 #F97316
+        let (learn_text, learn_color, learn_bg) = match view.learning_mode {
+            qingjian_platform::LearningMode::Daily => ("学", theme.gloss_color, None),
+            qingjian_platform::LearningMode::Learn => (
+                "学",
+                COLORREF(0x00FFFFFF),
+                Some(COLORREF(0x0099A600)), // #00A699 (BGR: 0x0099A600)
+            ),
+            qingjian_platform::LearningMode::Drill => (
+                "练",
+                COLORREF(0x00FFFFFF),
+                Some(COLORREF(0x001673F9)), // #F97316 (BGR: 0x001673F9)
+            ),
         };
         vec![
             CellSpec {
                 text: Self::mode_text(view),
                 font: theme.text_font,
                 color: theme.cloud_color,
+                background: None,
                 action: StatusAction::ToggleMode,
             },
             CellSpec {
@@ -224,18 +239,21 @@ impl StatusBar {
                 } else {
                     theme.gloss_color
                 },
+                background: None,
                 action: StatusAction::TogglePunctuation,
             },
             CellSpec {
-                text: "学".to_owned(),
+                text: learn_text.to_owned(),
                 font: theme.text_font,
                 color: learn_color,
+                background: learn_bg,
                 action: StatusAction::ToggleLearningMode,
             },
             CellSpec {
                 text: "\u{2699}".to_owned(),
                 font: theme.symbol_font,
                 color: theme.gloss_color,
+                background: None,
                 action: StatusAction::OpenSettings,
             },
         ]
@@ -377,9 +395,26 @@ fn paint_cells(
                 separator,
             );
         }
-        let ox = x + (width - size.cx) / 2;
-        let oy = (client.bottom - size.cy) / 2;
-        view::draw_text(hdc, cell.font, cell.color, ox, oy, &cell.text);
+        if let Some(bg) = cell.background {
+            let badge_w = size.cx + 10;
+            let badge_h = (client.bottom - 6).max(size.cy + 4);
+            let badge_x = x + (width - badge_w) / 2;
+            let badge_y = (client.bottom - badge_h) / 2;
+            let badge_rect = RECT {
+                left: badge_x,
+                top: badge_y,
+                right: badge_x + badge_w,
+                bottom: badge_y + badge_h,
+            };
+            view::fill_round_rect(hdc, badge_rect, bg, 4);
+            let ox = badge_x + (badge_w - size.cx) / 2;
+            let oy = badge_y + (badge_h - size.cy) / 2;
+            view::draw_text(hdc, cell.font, cell.color, ox, oy, &cell.text);
+        } else {
+            let ox = x + (width - size.cx) / 2;
+            let oy = (client.bottom - size.cy) / 2;
+            view::draw_text(hdc, cell.font, cell.color, ox, oy, &cell.text);
+        }
         x += width;
     }
 }

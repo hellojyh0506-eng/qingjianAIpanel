@@ -32,6 +32,10 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
             }
             Err(error) => log(&format!("登记翻译快捷键失败: {error}")),
         }
+        match preserved::register_learning_mode(&keystroke, tid) {
+            Ok(()) => log("切换英语学习模式快捷键 (Ctrl+Shift+E) 已登记为保留键"),
+            Err(error) => log(&format!("登记切换英语学习模式保留键失败: {error}")),
+        }
 
         self.client_id.set(tid);
         // 连不上 Server、没定时器都不致命。
@@ -99,6 +103,7 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
         if let Some(thread_mgr) = self.thread_mgr.borrow_mut().take()
             && let Ok(keystroke) = thread_mgr.cast::<ITfKeystrokeMgr>()
         {
+            preserved::unregister_learning_mode(&keystroke);
             self.drop_switch_preserved_key(&keystroke);
             if let Some(combo) = self.translate_combo.take() {
                 preserved::unregister(&keystroke, combo);

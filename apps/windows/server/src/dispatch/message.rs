@@ -137,15 +137,7 @@ impl Router {
             return self.start_recall_session(session);
         }
         if self.matches_learning_mode_combo(&event) {
-            let next = if self.engine.composition().is_empty() {
-                self.learning_mode.next()
-            } else {
-                match self.learning_mode {
-                    qingjian_platform::LearningMode::Daily => qingjian_platform::LearningMode::Learn,
-                    qingjian_platform::LearningMode::Learn => qingjian_platform::LearningMode::Daily,
-                    qingjian_platform::LearningMode::Drill => self.previous_learning_mode,
-                }
-            };
+            let next = self.learning_mode.next();
             self.learning_mode = next;
             self.config.learning_mode = next;
             tracing::info!(mode = ?next, "快捷键：切换英语学习模式");
@@ -155,6 +147,8 @@ impl Router {
                 self.on_candidate_selection_changed();
             } else if next == qingjian_platform::LearningMode::Daily {
                 self.passive_learning_card = None;
+            } else if next == qingjian_platform::LearningMode::Drill && self.composing() {
+                self.start_drill_session();
             }
             self.reconcile_status();
             let shown = self.self_drawn_frame();
@@ -201,8 +195,16 @@ impl Router {
                 frame: self.current_frame(),
             };
         }
-        if self.composing() && self.matches_learning_drill_combo(&event) {
-            self.start_drill_session();
+        if self.matches_learning_drill_combo(&event) {
+            if self.composing() {
+                self.start_drill_session();
+            } else {
+                self.learning_mode = qingjian_platform::LearningMode::Drill;
+                self.config.learning_mode = qingjian_platform::LearningMode::Drill;
+                self.persist("general", "learning_mode", qingjian_platform::LearningMode::Drill.key());
+                self.notice = Some("已切换至【主动回忆】".to_string());
+                self.reconcile_status();
+            }
             let shown = self.self_drawn_frame();
             self.reconcile_candidates(&shown);
             return ServerMessage::KeyResult {
@@ -237,6 +239,7 @@ impl Router {
                     }
                 }
             }
+            self.reconcile_status();
             let shown = self.self_drawn_frame();
             self.reconcile_candidates(&shown);
             return ServerMessage::KeyResult {
@@ -300,7 +303,7 @@ impl Router {
                             let chord = event.modifiers.chord();
                             let is_reveal = event.virtual_key == super::key::TAB
                                 || (chord.ctrl && chord.shift && !chord.alt && !chord.win
-                                    && event.character.map(|c| c.to_ascii_lowercase()) == Some('r'));
+                                    && (event.character.map(|c| c.to_ascii_lowercase()) == Some('r') || event.virtual_key == 0x52));
                             if is_reveal {
                                 let reference = card
                                     .primary
@@ -364,6 +367,7 @@ impl Router {
                         }
                         qingjian_platform::protocol::DrillStage::Compared => {
                             let is_retry = event.virtual_key == super::key::TAB
+                                || event.virtual_key == 0x52
                                 || event.character.map(|c| c.to_ascii_lowercase()) == Some('r');
                             if is_retry {
                                 card.drill_stage =
@@ -380,8 +384,9 @@ impl Router {
                                     frame: self.current_frame(),
                                 };
                             }
-                            let is_save = (event.modifiers.ctrl
-                                && event.character.map(|c| c.to_ascii_lowercase()) == Some('s'))
+                            let is_save = event.virtual_key == 0x53
+                                || (event.modifiers.ctrl
+                                    && event.character.map(|c| c.to_ascii_lowercase()) == Some('s'))
                                 || event.character.map(|c| c.to_ascii_lowercase()) == Some('s');
                             if is_save {
                                 if let Some(attempt) = &card.drill_attempt {
@@ -414,7 +419,9 @@ impl Router {
                                     frame: self.current_frame(),
                                 };
                             }
-                            if event.character.map(|c| c.to_ascii_lowercase()) == Some('p') {
+                            if event.virtual_key == 0x50
+                                || event.character.map(|c| c.to_ascii_lowercase()) == Some('p')
+                            {
                                 let profile_text = if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
                                     let vault = qingjian_learning::LearningVault::open(&user_dir);
                                     vault.calculate_profile().format_ascii_bars()

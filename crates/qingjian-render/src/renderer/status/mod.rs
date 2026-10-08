@@ -98,6 +98,10 @@ impl Renderer {
         match cell {
             StatusCell::Text { text, .. } => self.measure(text, &m.text_style()).width,
             StatusCell::ColoredText { text, .. } => self.measure(text, &m.text_style()).width,
+            StatusCell::Badge { text, text_color, .. } => {
+                let style = m.style(m.theme.text_font, *text_color);
+                self.measure(text, &style).width + m.px(8.0)
+            }
             StatusCell::Gear => m.px(GEAR_SIZE),
         }
     }
@@ -129,6 +133,23 @@ impl Renderer {
                 let size = self.measure(text, &style);
                 let left = x + (width - size.width) / 2.0;
                 let top = y + (height - size.height) / 2.0;
+                self.draw_text(canvas, text, &style, left, top);
+            }
+            StatusCell::Badge {
+                text,
+                bg_color,
+                text_color,
+            } => {
+                let style = m.style(m.theme.text_font, *text_color);
+                let size = self.measure(text, &style);
+                let badge_w = size.width + m.px(10.0);
+                let badge_h = (height - m.px(6.0)).max(size.height + m.px(4.0));
+                let badge_x = x + (width - badge_w) / 2.0;
+                let badge_y = y + (height - badge_h) / 2.0;
+                let radius = m.px(4.0);
+                canvas.fill_round_rect(badge_x, badge_y, badge_w, badge_h, radius, *bg_color);
+                let left = badge_x + (badge_w - size.width) / 2.0;
+                let top = badge_y + (badge_h - size.height) / 2.0;
                 self.draw_text(canvas, text, &style, left, top);
             }
             StatusCell::Gear => {

@@ -3,6 +3,7 @@
 //! 候选窗口输出在 [`candidates`]，状态条在 [`status`]，翻译选中文字在 [`translate`]，配置热加载在 [`reload`]，
 //! 本地整句模型在 [`rescore`]，形码码表在 [`code`]。
 
+mod candidate_action;
 mod candidates;
 mod code;
 mod composed;
@@ -26,6 +27,7 @@ use qingjian_platform::protocol::{
     ClientMessage, Frame, IndicatorState, InputSettings, ScreenRect, ServerMessage, SessionId,
 };
 
+pub use self::candidate_action::CandidateAction;
 pub use self::candidates::{CandidateSink, NoopSink, RenderSettings};
 pub use self::code::find_code_table;
 use self::composed::Composed;
@@ -315,5 +317,203 @@ impl Router {
     pub fn flush_learning(&mut self) {
         self.engine.flush_learning();
         self.last_flush = Instant::now();
+    }
+
+    /// 处理候选卡片上的鼠标交互操作。
+    pub fn handle_candidate_action(&mut self, action: CandidateAction) {
+        tracing::info!(?action, mode = ?self.learning_mode, "处理候选卡片动作");
+        match action {
+            CandidateAction::ToggleExpand => {
+                if self.learning_mode == qingjian_platform::LearningMode::Daily {
+                    self.learning_mode = qingjian_platform::LearningMode::Learn;
+                    self.config.learning_mode = qingjian_platform::LearningMode::Learn;
+                    self.persist("general", "learning_mode", qingjian_platform::LearningMode::Learn.key());
+                    self.notice = Some("已切换至【学习模式】".to_string());
+                    if self.composing() {
+                        self.on_candidate_selection_changed();
+                    }
+                } else if let Some(card) = self.passive_learning_card.as_mut() {
+                    card.expanded = !card.expanded;
+                    if !card.expanded {
+                        card.selected_index = None;
+                    }
+                }
+            }
+            CandidateAction::ToggleAlternative(idx) => {
+                if let Some(card) = self.passive_learning_card.as_mut() {
+                    if card.selected_index == Some(idx) {
+                        card.selected_index = None;
+                    } else {
+                        card.selected_index = Some(idx);
+                    }
+                }
+            }
+            CandidateAction::StartDrill => {
+                self.start_drill_session();
+            }
+            CandidateAction::Reveal => {
+                if let Some(card) = self.passive_learning_card.as_mut() {
+                    let reference = card
+                        .primary
+                        .as_ref()
+                        .map(|p| p.text.as_str())
+                        .unwrap_or("");
+                    card.drill_notice = Some(format!("参考答案: {}", reference));
+                }
+            }
+            CandidateAction::Compare => {
+                if let Some(card) = self.passive_learning_card.as_mut() {
+                    let input = card.drill_input.trim();
+                    if input.is_empty() {
+                        card.drill_notice = Some("请输入英文表达进行对比".to_string());
+                    } else {
+                        let reference = card
+                            .primary
+                            .as_ref()
+                            .map(|p| p.text.as_str())
+                            .unwrap_or("");
+                        let attempt = qingjian_learning::RecallBook::evaluate_attempt(
+                            &card.target_text,
+                            input,
+                            reference,
+                        );
+                        if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                            let mut vault = qingjian_learning::LearningVault::open(&user_dir);
+                            vault.record_attempt(&attempt);
+                            let _ = vault.flush();
+                        }
+                        card.drill_attempt = Some(attempt);
+                        card.drill_stage = Some(qingjian_platform::protocol::DrillStage::Compared);
+                        card.drill_notice = None;
+                    }
+                }
+            }
+            CandidateAction::Retry => {
+                if let Some(card) = self.passive_learning_card.as_mut() {
+                    card.drill_stage = Some(qingjian_platform::protocol::DrillStage::Input);
+                    card.drill_input.clear();
+                    card.drill_attempt = None;
+                    card.drill_notice = None;
+                }
+            }
+            CandidateAction::Save => {
+                if let Some(card) = self.passive_learning_card.as_mut() {
+                    if let Some(attempt) = &card.drill_attempt {
+                        self.engine.record_recall_attempt(
+                            self.engine.learning_language(),
+                            attempt,
+                        );
+                    }
+                    if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                        let mut vault = qingjian_learning::LearningVault::open(&user_dir);
+                        let saved_expr = card
+                            .drill_attempt
+                            .as_ref()
+                            .map(|a| a.comparison.natural_expression.clone())
+                            .or_else(|| card.primary.as_ref().map(|p| p.text.clone()))
+                            .unwrap_or_default();
+                        if !saved_expr.is_empty() {
+                            let tag = card.primary.as_ref().map(|p| p.tag.as_str());
+                            vault.save_expression(&card.target_text, &saved_expr, tag, None);
+                            let _ = vault.flush();
+                            card.drill_notice = Some(format!("⭐ 已保存到表达本: {}", saved_expr));
+                        } else {
+                            card.drill_notice = Some("⭐ 已保存到表达本".to_string());
+                        }
+                    } else {
+                        card.drill_notice = Some("⭐ 已保存到表达本".to_string());
+                    }
+                }
+            }
+            CandidateAction::ShowProfile => {
+                if let Some(card) = self.passive_learning_card.as_mut() {
+                    let profile_text = if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                        let vault = qingjian_learning::LearningVault::open(&user_dir);
+                        vault.calculate_profile().format_ascii_bars()
+                    } else {
+                        "暂无用户目录数据".to_string()
+                    };
+                    card.drill_stage = Some(qingjian_platform::protocol::DrillStage::Profile);
+                    card.drill_notice = Some(profile_text);
+                }
+            }
+            CandidateAction::StartReview => {
+                if let Some(card) = self.passive_learning_card.as_mut() {
+                    if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                        let vault = qingjian_learning::LearningVault::open(&user_dir);
+                        let now = jiff::Zoned::now().timestamp().as_second();
+                        let due_list = vault.today_due_reviews(now);
+                        if due_list.is_empty() {
+                            card.drill_notice = Some("🎉 今日暂无到期复习！记忆状态良好。".to_string());
+                        } else {
+                            let first = due_list[0];
+                            card.drill_stage = Some(qingjian_platform::protocol::DrillStage::Review);
+                            card.today_due_count = due_list.len();
+                            card.review_current_index = 1;
+                            card.review_total_count = due_list.len();
+                            card.target_text = first.prompt.clone();
+                            card.primary = Some(qingjian_platform::protocol::LearningExpression {
+                                text: first.expression.clone(),
+                                ..Default::default()
+                            });
+                            card.drill_input.clear();
+                            card.drill_attempt = None;
+                            card.drill_notice = None;
+                        }
+                    }
+                }
+            }
+            CandidateAction::RateAgain | CandidateAction::RateGood | CandidateAction::RateEasy => {
+                let rating = match action {
+                    CandidateAction::RateAgain => qingjian_learning::ReviewRating::Again,
+                    CandidateAction::RateEasy => qingjian_learning::ReviewRating::Easy,
+                    _ => qingjian_learning::ReviewRating::Good,
+                };
+                if let Some(card) = self.passive_learning_card.as_mut() {
+                    if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                        let mut vault = qingjian_learning::LearningVault::open(&user_dir);
+                        let now = jiff::Zoned::now().timestamp().as_second();
+                        let target_expr = card.primary.as_ref().map(|p| p.text.clone()).unwrap_or_default();
+                        vault.process_review(&card.target_text, &target_expr, rating, now);
+                        let _ = vault.flush();
+
+                        let remaining = vault.today_due_reviews(now);
+                        if remaining.is_empty() {
+                            card.drill_notice = Some("🎉 今日复习已全部完成！记忆已固化。\n请按 Esc 返回。".to_string());
+                            card.drill_attempt = None;
+                            card.drill_input.clear();
+                            card.today_due_count = 0;
+                        } else {
+                            let next = remaining[0];
+                            card.today_due_count = remaining.len();
+                            card.review_current_index += 1;
+                            card.target_text = next.prompt.clone();
+                            card.primary = Some(qingjian_platform::protocol::LearningExpression {
+                                text: next.expression.clone(),
+                                ..Default::default()
+                            });
+                            card.drill_input.clear();
+                            card.drill_attempt = None;
+                            card.drill_notice = None;
+                        }
+                    }
+                }
+            }
+            CandidateAction::ClearVault => {
+                if let Some(card) = self.passive_learning_card.as_mut() {
+                    if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                        let mut vault = qingjian_learning::LearningVault::open(&user_dir);
+                        let _ = vault.clear_all();
+                    }
+                    card.drill_notice = Some("已彻底清空个人学习画像与错题记录。\n请按 Esc 返回。".to_string());
+                }
+            }
+            CandidateAction::Finish => {
+                self.end_drill_session();
+            }
+        }
+        let shown = self.self_drawn_frame();
+        self.reconcile_candidates(&shown);
+        self.reconcile_status();
     }
 }

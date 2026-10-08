@@ -8,6 +8,13 @@ pub enum StatusCell {
     /// 指定颜色的文字（如训练模式下的高亮橙色）。
     ColoredText { text: String, color: crate::color::Color },
 
+    /// 圆角高亮徽标（如 Learn 模式的蓝底白字、Drill 模式的橙底白字）。
+    Badge {
+        text: String,
+        bg_color: crate::color::Color,
+        text_color: crate::color::Color,
+    },
+
     /// 打开设置的齿轮。
     Gear,
 }
@@ -26,4 +33,17 @@ impl StatusCell {
             color,
         }
     }
+
+    pub fn badge(
+        text: impl Into<String>,
+        bg_color: crate::color::Color,
+        text_color: crate::color::Color,
+    ) -> Self {
+        Self::Badge {
+            text: text.into(),
+            bg_color,
+            text_color,
+        }
+    }
 }
+

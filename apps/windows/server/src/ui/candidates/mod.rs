@@ -72,6 +72,10 @@ struct CandidateWindowInner {
     logged_dpi: Cell<Option<(u32, Option<u32>)>>,
     last_anchor: Cell<Option<RECT>>,
     painter: SharedPainter,
+    events: super::CandidateEvents,
+    margin_x: Cell<i32>,
+    margin_y: Cell<i32>,
+    content_width: Cell<i32>,
 }
 
 impl CandidateWindowInner {
@@ -100,6 +104,9 @@ impl CandidateWindowInner {
                     return;
                 }
                 let (content_x, content_y) = place(anchor, content);
+                self.margin_x.set(rendered.content_x as i32);
+                self.margin_y.set(rendered.content_y as i32);
+                self.content_width.set(rendered.content_width as i32);
                 layered::present(
                     self.hwnd,
                     &rendered.pixmap,
@@ -129,6 +136,9 @@ impl CandidateWindowInner {
             return Err(Error::from(E_INVALIDARG));
         }
         let (content_x, content_y) = place(anchor, content);
+        self.margin_x.set(margin);
+        self.margin_y.set(margin);
+        self.content_width.set(content.0);
         let data = self.data.borrow();
         layered::composite(
             self.hwnd,
@@ -194,185 +204,19 @@ impl CandidateWindowInner {
     }
 
     fn on_lbutton_down(&self, x: i32, y: i32) {
+        let cx = x - self.margin_x.get();
+        let cy = y - self.margin_y.get();
+        let content_w = self.content_width.get();
         let action = {
             let data = self.data.borrow();
             let hdc = unsafe { GetDC(Some(self.hwnd)) };
-            let action = view::hit_test_learning_card(hdc, &data, x, y);
+            let action = view::hit_test_learning_card(hdc, &data, cx, cy, content_w);
             unsafe { ReleaseDC(Some(self.hwnd), hdc) };
             action
         };
+        tracing::info!(x, y, cx, cy, content_w, ?action, "候选窗口点击命中判定");
         if let Some(action) = action {
-            {
-                let mut data = self.data.borrow_mut();
-                if let Some(card) = data.learning_card.as_mut() {
-                    match action {
-                        view::LearningHitAction::ToggleExpand => {
-                            card.expanded = !card.expanded;
-                            if !card.expanded {
-                                card.selected_index = None;
-                            }
-                        }
-                        view::LearningHitAction::ToggleAlternative(idx) => {
-                            if card.selected_index == Some(idx) {
-                                card.selected_index = None;
-                            } else {
-                                card.selected_index = Some(idx);
-                            }
-                        }
-                        view::LearningHitAction::StartDrill => {
-                            card.drill_stage = Some(qingjian_render::DrillStage::Input);
-                            card.drill_input.clear();
-                            card.drill_attempt = None;
-                            card.drill_notice = None;
-                        }
-                        view::LearningHitAction::Reveal => {
-                            let ref_str = card
-                                .primary
-                                .as_ref()
-                                .map(|p| p.text.clone())
-                                .unwrap_or_default();
-                            card.drill_notice = Some(format!("参考表达: {}", ref_str));
-                        }
-                        view::LearningHitAction::Compare => {
-                            let input = card.drill_input.trim();
-                            if input.is_empty() {
-                                card.drill_notice = Some("请输入英文表达进行对比".to_string());
-                            } else {
-                                let ref_str = card
-                                    .primary
-                                    .as_ref()
-                                    .map(|p| p.text.as_str())
-                                    .unwrap_or("");
-                                let attempt = qingjian_learning::RecallBook::evaluate_attempt(
-                                    &card.target_text,
-                                    input,
-                                    ref_str,
-                                );
-                                if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
-                                    let mut vault = qingjian_learning::LearningVault::open(&user_dir);
-                                    vault.record_attempt(&attempt);
-                                    let _ = vault.flush();
-                                }
-                                card.drill_attempt = Some(render_data::convert_attempt(&attempt));
-                                card.drill_stage = Some(qingjian_render::DrillStage::Compared);
-                                card.drill_notice = None;
-                            }
-                        }
-                        view::LearningHitAction::Retry => {
-                            card.drill_stage = Some(qingjian_render::DrillStage::Input);
-                            card.drill_notice = None;
-                            card.drill_attempt = None;
-                        }
-                        view::LearningHitAction::Save => {
-                            let saved_expr = card
-                                .drill_attempt
-                                .as_ref()
-                                .map(|a| a.comparison.natural_expression.clone())
-                                .or_else(|| card.primary.as_ref().map(|p| p.text.clone()))
-                                .unwrap_or_default();
-                            if !saved_expr.is_empty() {
-                                if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
-                                    let mut vault = qingjian_learning::LearningVault::open(&user_dir);
-                                    let tag = card.primary.as_ref().map(|p| p.tag.as_str());
-                                    vault.save_expression(&card.target_text, &saved_expr, tag, None);
-                                    let _ = vault.flush();
-                                }
-                                card.drill_notice = Some(format!("⭐ 已保存到生词本: {}", saved_expr));
-                            } else {
-                                card.drill_notice = Some("⭐ 已保存到生词本".to_string());
-                            }
-                        }
-                        view::LearningHitAction::ShowProfile => {
-                            let profile_text = if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
-                                let vault = qingjian_learning::LearningVault::open(&user_dir);
-                                vault.calculate_profile().format_ascii_bars()
-                            } else {
-                                "暂无用户目录数据".to_string()
-                            };
-                            card.drill_stage = Some(qingjian_render::DrillStage::Profile);
-                            card.drill_notice = Some(profile_text);
-                        }
-                        view::LearningHitAction::StartReview => {
-                            if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
-                                let vault = qingjian_learning::LearningVault::open(&user_dir);
-                                let now = jiff::Zoned::now().timestamp().as_second();
-                                let due_list = vault.today_due_reviews(now);
-                                if due_list.is_empty() {
-                                    card.drill_notice = Some("🎉 今日暂无到期复习！记忆状态良好。".to_string());
-                                } else {
-                                    let first = due_list[0];
-                                    card.drill_stage = Some(qingjian_render::DrillStage::Review);
-                                    card.today_due_count = due_list.len();
-                                    card.review_current_index = 1;
-                                    card.review_total_count = due_list.len();
-                                    card.target_text = first.prompt.clone();
-                                    card.primary = Some(qingjian_render::LearningExpression {
-                                        text: first.expression.clone(),
-                                        ..Default::default()
-                                    });
-                                    card.drill_input.clear();
-                                    card.drill_attempt = None;
-                                    card.drill_notice = None;
-                                }
-                            } else {
-                                card.drill_notice = Some("暂无用户数据目录".to_string());
-                            }
-                        }
-                        view::LearningHitAction::RateAgain
-                        | view::LearningHitAction::RateGood
-                        | view::LearningHitAction::RateEasy => {
-                            let rating = match action {
-                                view::LearningHitAction::RateAgain => qingjian_learning::ReviewRating::Again,
-                                view::LearningHitAction::RateEasy => qingjian_learning::ReviewRating::Easy,
-                                _ => qingjian_learning::ReviewRating::Good,
-                            };
-                            if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
-                                let mut vault = qingjian_learning::LearningVault::open(&user_dir);
-                                let now = jiff::Zoned::now().timestamp().as_second();
-                                let target_expr = card.primary.as_ref().map(|p| p.text.clone()).unwrap_or_default();
-                                vault.process_review(&card.target_text, &target_expr, rating, now);
-                                let _ = vault.flush();
-
-                                let remaining = vault.today_due_reviews(now);
-                                if remaining.is_empty() {
-                                    card.drill_notice = Some("🎉 今日复习已全部完成！记忆已固化。\n请按 Esc 返回。".to_string());
-                                    card.drill_attempt = None;
-                                    card.drill_input.clear();
-                                    card.today_due_count = 0;
-                                } else {
-                                    let next = remaining[0];
-                                    card.today_due_count = remaining.len();
-                                    card.review_current_index += 1;
-                                    card.target_text = next.prompt.clone();
-                                    card.primary = Some(qingjian_render::LearningExpression {
-                                        text: next.expression.clone(),
-                                        ..Default::default()
-                                    });
-                                    card.drill_input.clear();
-                                    card.drill_attempt = None;
-                                    card.drill_notice = None;
-                                }
-                            }
-                        }
-                        view::LearningHitAction::ClearVault => {
-                            if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
-                                let mut vault = qingjian_learning::LearningVault::open(&user_dir);
-                                let _ = vault.clear_all();
-                            }
-                            card.drill_notice = Some("已彻底清空个人学习画像与错题记录。\n请按 Esc 返回。".to_string());
-                        }
-                        view::LearningHitAction::Finish => {
-                            card.drill_stage = None;
-                            card.drill_input.clear();
-                            card.drill_attempt = None;
-                            card.drill_notice = None;
-                        }
-                    }
-                }
-            }
-            if let Some(anchor) = self.last_anchor.get() {
-                self.show(anchor);
-            }
+            (self.events)(action);
         }
     }
 }
@@ -384,7 +228,7 @@ pub(crate) struct CandidateWindow {
 
 impl CandidateWindow {
     /// 建一个隐藏的候选窗口。
-    pub(crate) fn new(painter: SharedPainter) -> Result<Self> {
+    pub(crate) fn new(painter: SharedPainter, events: super::CandidateEvents) -> Result<Self> {
         CLASS.ensure(|| WNDCLASSEXW {
             lpfnWndProc: Some(wndproc),
             hInstance: super::module_handle(),
@@ -420,6 +264,10 @@ impl CandidateWindow {
             logged_dpi: Cell::new(None),
             last_anchor: Cell::new(None),
             painter,
+            events,
+            margin_x: Cell::new(0),
+            margin_y: Cell::new(0),
+            content_width: Cell::new(0),
         });
         WINDOWS.with(|map| map.borrow_mut().insert(hwnd.0 as isize, Rc::clone(&inner)));
         Ok(Self { inner })

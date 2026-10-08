@@ -71,6 +71,13 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             self.set_english_mode(!self.mode_state.english());
             return Ok(true.into());
         }
+        if guid == preserved::GUID_LEARNING_MODE {
+            if self.keyboard_disabled(&pic) {
+                return Ok(FALSE);
+            }
+            let event = preserved::learning_mode_event(self.mode_state.english());
+            return Ok(self.forward_key(pic, event).into());
+        }
         if guid != preserved::GUID_TRANSLATE || self.keyboard_disabled(&pic) {
             return Ok(FALSE);
         }
@@ -300,6 +307,9 @@ fn eats_key(
     if translating {
         return true;
     }
+    if is_learning_shortcut(event) {
+        return true;
+    }
     let modifiers = event.modifiers;
     if modifiers.has_command_key() {
         return composing && digit_key(event.virtual_key);
@@ -322,6 +332,28 @@ fn eats_key(
     event
         .character
         .is_some_and(|c| c.is_ascii_punctuation() || c.is_ascii_digit())
+}
+
+/// 判断是否为英语学习相关快捷键：
+/// - Ctrl+Shift+(E | T | R | L)
+/// - Ctrl+Alt+(L | D | E | R)
+fn is_learning_shortcut(event: &KeyEvent) -> bool {
+    let chord = event.modifiers.chord();
+    let vk = event.virtual_key;
+    let ch = event.character.map(|c| c.to_ascii_lowercase());
+    let is_e = vk == 0x45 || ch == Some('e');
+    let is_t = vk == 0x54 || ch == Some('t');
+    let is_r = vk == 0x52 || ch == Some('r');
+    let is_l = vk == 0x4C || ch == Some('l');
+    let is_d = vk == 0x44 || ch == Some('d');
+
+    if chord.ctrl && chord.shift && !chord.alt && !chord.win {
+        return is_e || is_t || is_r || is_l;
+    }
+    if chord.ctrl && chord.alt && !chord.shift && !chord.win {
+        return is_l || is_d || is_e || is_r;
+    }
+    false
 }
 
 #[cfg(test)]
@@ -699,5 +731,37 @@ mod tests {
         // 在 English Direct ON 状态下，英文按键立即直接原生放行
         assert!(!eats_key(&with_modifiers(0x41, 'a', en_mod), false, false, false, true));
         assert!(!eats_key(&KeyEvent::new(0x08, None, en_mod), false, false, false, true));
+    }
+
+    #[test]
+    fn learning_shortcuts_are_always_eaten() {
+        let ctrl_shift = KeyModifiers {
+            ctrl: true,
+            shift: true,
+            ..KeyModifiers::default()
+        };
+        let ctrl_alt = KeyModifiers {
+            ctrl: true,
+            alt: true,
+            ..KeyModifiers::default()
+        };
+
+        // Ctrl+Shift+E, T, R, L 无论是否在组句、是否开启直输模式，都必须吃
+        for vk in [0x45, 0x54, 0x52, 0x4C] {
+            assert!(eats_key(&with_modifiers(vk, ' ', ctrl_shift), false, false, false, false));
+            assert!(eats_key(&with_modifiers(vk, ' ', ctrl_shift), false, false, false, true));
+            assert!(eats_key(&with_modifiers(vk, ' ', ctrl_shift), true, false, false, false));
+        }
+
+        // Ctrl+Alt+L, D, E, R 同样必须吃
+        for vk in [0x4C, 0x44, 0x45, 0x52] {
+            assert!(eats_key(&with_modifiers(vk, ' ', ctrl_alt), false, false, false, false));
+            assert!(eats_key(&with_modifiers(vk, ' ', ctrl_alt), false, false, false, true));
+            assert!(eats_key(&with_modifiers(vk, ' ', ctrl_alt), true, false, false, false));
+        }
+
+        // 普通 Ctrl+Shift+A 或 Ctrl+Alt+A 则不吃（放行给宿主应用）
+        assert!(!eats_key(&with_modifiers(0x41, 'a', ctrl_shift), false, false, false, false));
+        assert!(!eats_key(&with_modifiers(0x41, 'a', ctrl_alt), false, false, false, false));
     }
 }

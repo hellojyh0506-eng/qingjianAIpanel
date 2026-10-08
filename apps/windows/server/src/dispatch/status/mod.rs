@@ -72,6 +72,15 @@ impl Router {
                 tracing::info!(mode = ?next, "状态条：切换英语学习模式");
                 self.persist("general", "learning_mode", next.key());
                 self.notice = Some(format!("已切换至【{}】", next.label()));
+                if next == qingjian_platform::LearningMode::Learn && self.composing() {
+                    self.on_candidate_selection_changed();
+                } else if next == qingjian_platform::LearningMode::Daily {
+                    self.passive_learning_card = None;
+                } else if next == qingjian_platform::LearningMode::Drill && self.composing() {
+                    self.start_drill_session();
+                }
+                let shown = self.self_drawn_frame();
+                self.reconcile_candidates(&shown);
             }
             StatusEvent::SetLearningMode(mode) => {
                 self.learning_mode = mode;
@@ -79,6 +88,15 @@ impl Router {
                 tracing::info!(mode = ?mode, "状态条：设置英语学习模式");
                 self.persist("general", "learning_mode", mode.key());
                 self.notice = Some(format!("已切换至【{}】", mode.label()));
+                if mode == qingjian_platform::LearningMode::Learn && self.composing() {
+                    self.on_candidate_selection_changed();
+                } else if mode == qingjian_platform::LearningMode::Daily {
+                    self.passive_learning_card = None;
+                } else if mode == qingjian_platform::LearningMode::Drill && self.composing() {
+                    self.start_drill_session();
+                }
+                let shown = self.self_drawn_frame();
+                self.reconcile_candidates(&shown);
             }
             StatusEvent::Moved(x, y) => {
                 self.config.status_pos = Some((x, y));
@@ -93,14 +111,17 @@ impl Router {
     pub(super) fn matches_learning_mode_combo(&self, event: &qingjian_platform::protocol::KeyEvent) -> bool {
         let chord = event.modifiers.chord();
         let combo = self.config.toggle_learning_mode;
-        let is_configured = event.character.map(|c| c.to_ascii_lowercase()) == Some(combo.key.to_ascii_lowercase())
+        let is_configured = (event.character.map(|c| c.to_ascii_lowercase()) == Some(combo.key.to_ascii_lowercase())
+            || event.virtual_key == combo.key.to_ascii_uppercase() as u32)
             && chord == qingjian_platform::protocol::KeyModifiers::from(combo.modifiers);
-        let is_ctrl_shift_e = event.character.map(|c| c.to_ascii_lowercase()) == Some('e')
+        let is_e = event.character.map(|c| c.to_ascii_lowercase()) == Some('e') || event.virtual_key == 0x45;
+        let is_l = event.character.map(|c| c.to_ascii_lowercase()) == Some('l') || event.virtual_key == 0x4C;
+        let is_ctrl_shift_e = is_e
             && chord.ctrl
             && chord.shift
             && !chord.alt
             && !chord.win;
-        let is_ctrl_shift_l = event.character.map(|c| c.to_ascii_lowercase()) == Some('l')
+        let is_ctrl_shift_l = is_l
             && chord.ctrl
             && chord.shift
             && !chord.alt
@@ -111,19 +132,24 @@ impl Router {
     /// 快捷键展开/收起候选卡片「更多译法」（默认 Ctrl+Alt+E）。
     pub(super) fn matches_learning_expand_combo(&self, event: &qingjian_platform::protocol::KeyEvent) -> bool {
         let combo = self.config.toggle_learning_expand;
-        event.character.map(|c| c.to_ascii_lowercase()) == Some(combo.key.to_ascii_lowercase())
-            && event.modifiers.chord() == qingjian_platform::protocol::KeyModifiers::from(combo.modifiers)
+        let is_key = event.character.map(|c| c.to_ascii_lowercase()) == Some(combo.key.to_ascii_lowercase())
+            || event.virtual_key == combo.key.to_ascii_uppercase() as u32;
+        let is_configured = is_key
+            && event.modifiers.chord() == qingjian_platform::protocol::KeyModifiers::from(combo.modifiers);
+        is_configured
     }
 
     /// 快捷键触发当前高亮候选的 Active Recall 练习（默认 Ctrl+Alt+D 或 Ctrl+Shift+T）。
     pub(super) fn matches_learning_drill_combo(&self, event: &qingjian_platform::protocol::KeyEvent) -> bool {
         let chord = event.modifiers.chord();
-        let is_ctrl_alt_d = event.character.map(|c| c.to_ascii_lowercase()) == Some('d')
+        let is_d = event.character.map(|c| c.to_ascii_lowercase()) == Some('d') || event.virtual_key == 0x44;
+        let is_t = event.character.map(|c| c.to_ascii_lowercase()) == Some('t') || event.virtual_key == 0x54;
+        let is_ctrl_alt_d = is_d
             && chord.ctrl
             && chord.alt
             && !chord.shift
             && !chord.win;
-        let is_ctrl_shift_t = event.character.map(|c| c.to_ascii_lowercase()) == Some('t')
+        let is_ctrl_shift_t = is_t
             && chord.ctrl
             && chord.shift
             && !chord.alt
@@ -131,14 +157,21 @@ impl Router {
         is_ctrl_alt_d || is_ctrl_shift_t
     }
 
-    /// 快捷键触发 FSRS 今日复习队列（默认 Ctrl+Alt+R）。
+    /// 快捷键触发 FSRS 今日复习队列（默认 Ctrl+Alt+R 或 Ctrl+Shift+R）。
     pub(super) fn matches_learning_review_combo(&self, event: &qingjian_platform::protocol::KeyEvent) -> bool {
         let chord = event.modifiers.chord();
-        event.character.map(|c| c.to_ascii_lowercase()) == Some('r')
+        let is_r = event.character.map(|c| c.to_ascii_lowercase()) == Some('r') || event.virtual_key == 0x52;
+        let is_ctrl_alt_r = is_r
             && chord.ctrl
             && chord.alt
             && !chord.shift
-            && !chord.win
+            && !chord.win;
+        let is_ctrl_shift_r = is_r
+            && chord.ctrl
+            && chord.shift
+            && !chord.alt
+            && !chord.win;
+        is_ctrl_alt_r || is_ctrl_shift_r
     }
 
     /// 任务栏图标右键菜单：标点与悬浮条的开关写回配置文件（热加载会再读回来），设置程序交给 UI 起。

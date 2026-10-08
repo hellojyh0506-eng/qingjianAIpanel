@@ -13,5 +13,7 @@ pub(super) struct CellSpec {
 
     pub(super) color: COLORREF,
 
+    pub(super) background: Option<COLORREF>,
+
     pub(super) action: StatusAction,
 }
