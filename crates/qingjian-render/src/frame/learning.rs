@@ -1,5 +1,13 @@
 //! 候选窗口绑定的轻量英语学习卡片数据模型。
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LearningMode {
+    #[default]
+    Daily,
+    Learn,
+    Drill,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LearningStatus {
     Loading,

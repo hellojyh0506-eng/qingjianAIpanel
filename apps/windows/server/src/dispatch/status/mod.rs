@@ -89,11 +89,18 @@ impl Router {
         self.reconcile_status();
     }
 
-    /// 快捷键切换学习模式比对（默认 Ctrl+Alt+L）。
+    /// 快捷键切换学习模式比对（默认 Ctrl+Alt+L 或 Ctrl+Shift+E）。
     pub(super) fn matches_learning_mode_combo(&self, event: &qingjian_platform::protocol::KeyEvent) -> bool {
+        let chord = event.modifiers.chord();
         let combo = self.config.toggle_learning_mode;
-        event.character.map(|c| c.to_ascii_lowercase()) == Some(combo.key.to_ascii_lowercase())
-            && event.modifiers.chord() == qingjian_platform::protocol::KeyModifiers::from(combo.modifiers)
+        let is_configured = event.character.map(|c| c.to_ascii_lowercase()) == Some(combo.key.to_ascii_lowercase())
+            && chord == qingjian_platform::protocol::KeyModifiers::from(combo.modifiers);
+        let is_ctrl_shift_e = event.character.map(|c| c.to_ascii_lowercase()) == Some('e')
+            && chord.ctrl
+            && chord.shift
+            && !chord.alt
+            && !chord.win;
+        is_configured || is_ctrl_shift_e
     }
 
     /// 快捷键展开/收起候选卡片「更多译法」（默认 Ctrl+Alt+E）。
@@ -103,14 +110,20 @@ impl Router {
             && event.modifiers.chord() == qingjian_platform::protocol::KeyModifiers::from(combo.modifiers)
     }
 
-    /// 快捷键触发当前高亮候选的 Active Recall 练习（默认 Ctrl+Alt+D）。
+    /// 快捷键触发当前高亮候选的 Active Recall 练习（默认 Ctrl+Alt+D 或 Ctrl+Shift+T）。
     pub(super) fn matches_learning_drill_combo(&self, event: &qingjian_platform::protocol::KeyEvent) -> bool {
         let chord = event.modifiers.chord();
-        event.character.map(|c| c.to_ascii_lowercase()) == Some('d')
+        let is_ctrl_alt_d = event.character.map(|c| c.to_ascii_lowercase()) == Some('d')
             && chord.ctrl
             && chord.alt
             && !chord.shift
-            && !chord.win
+            && !chord.win;
+        let is_ctrl_shift_t = event.character.map(|c| c.to_ascii_lowercase()) == Some('t')
+            && chord.ctrl
+            && chord.shift
+            && !chord.alt
+            && !chord.win;
+        is_ctrl_alt_d || is_ctrl_shift_t
     }
 
     /// 快捷键触发 FSRS 今日复习队列（默认 Ctrl+Alt+R）。

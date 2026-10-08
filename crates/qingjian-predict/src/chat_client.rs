@@ -15,8 +15,8 @@ use crate::config::PredictConfig;
 use crate::error::PredictError;
 use crate::prompt::{self, Reply};
 
-/// 联想与翻译回复的 token 上限：整句翻译 1500（防止长句截断），组句 300，问字 200。
-const TRANSLATE_MAX_TOKENS: u32 = 1500;
+/// 联想与翻译回复的 token 上限：整句口语翻译 220（紧凑且快速返回），组句 300，问字 200。
+const TRANSLATE_MAX_TOKENS: u32 = 220;
 const COMPOSE_MAX_TOKENS: u32 = 300;
 const QUESTION_MAX_TOKENS: u32 = 200;
 const COMPARE_MAX_TOKENS: u32 = 600;
@@ -85,6 +85,7 @@ impl ChatClient {
         user: &str,
         max_tokens: u32,
     ) -> Result<String, PredictError> {
+        let t_start = std::time::Instant::now();
         let messages: Vec<ChatCompletionRequestMessage> = vec![
             ChatCompletionRequestSystemMessage::from(system).into(),
             ChatCompletionRequestUserMessage::from(user).into(),
@@ -102,11 +103,15 @@ impl ChatClient {
         if matches!(self.reasoning_effort, Some(ReasoningEffort::None)) {
             self.thinking_switch.disable(&mut body);
         }
+        let t_http_start = std::time::Instant::now();
         let raw: serde_json::Value =
             tokio::time::timeout(self.timeout, self.client.chat().create_byot(body))
                 .await
                 .map_err(|_| PredictError::Timeout(self.timeout.as_millis() as u64))??;
+        let http_ms = t_http_start.elapsed().as_millis();
+        let t_parse_start = std::time::Instant::now();
         let response: CreateChatCompletionResponse = serde_json::from_value(raw.clone())?;
+        let parse_ms = t_parse_start.elapsed().as_millis();
         let cut_off = response
             .choices
             .iter()
@@ -127,6 +132,15 @@ impl ChatClient {
                     PredictError::EmptyReply
                 }
             })?;
+        let total_ms = t_start.elapsed().as_millis();
+        tracing::info!(
+            http_ms = http_ms,
+            parse_ms = parse_ms,
+            total_ms = total_ms,
+            model = %self.model,
+            content_chars = content.len(),
+            "HTTP完成与耗时分解"
+        );
         tracing::debug!(%content, "模型回复");
         Ok(content)
     }
@@ -188,18 +202,18 @@ fn host_of(base_url: &str) -> Option<String> {
 /// 按接口地址决定 HTTP 客户端：OpenCode 带上它要求的会话头，其他服务用默认客户端。
 /// 头装不上（理论上不会）就退回默认客户端，请求照发，让服务端的报错说明问题。
 fn http_client(base_url: &str) -> reqwest::Client {
-    if !is_opencode(base_url) {
-        return reqwest::Client::new();
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(Duration::from_millis(2500))
+        .pool_idle_timeout(Duration::from_secs(90))
+        .tcp_keepalive(Duration::from_secs(30));
+    if is_opencode(base_url) {
+        if let Ok(value) = HeaderValue::from_str(&SESSION_ID) {
+            let mut headers = HeaderMap::new();
+            headers.insert(OPENCODE_SESSION_HEADER, value);
+            builder = builder.default_headers(headers);
+        }
     }
-    let Ok(value) = HeaderValue::from_str(&SESSION_ID) else {
-        return reqwest::Client::new();
-    };
-    let mut headers = HeaderMap::new();
-    headers.insert(OPENCODE_SESSION_HEADER, value);
-    reqwest::Client::builder()
-        .default_headers(headers)
-        .build()
-        .unwrap_or_default()
+    builder.build().unwrap_or_default()
 }
 
 /// 接口地址是否指向 OpenCode（`opencode.ai` 及其子域）。

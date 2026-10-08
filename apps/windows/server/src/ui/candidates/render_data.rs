@@ -44,6 +44,9 @@ pub(crate) struct RenderData {
     /// 候选上是否显示辅码（随帧下发的 `[general] aux_code_show`）。
     pub(super) show_code: bool,
 
+    /// 当前英语学习模式（Daily / Learn / Drill）。
+    pub(super) learning_mode: qingjian_platform::LearningMode,
+
     /// 候选窗口第三层：轻量英语学习卡片。
     pub(super) learning_card: Option<qingjian_render::LearningCard>,
 }
@@ -62,6 +65,7 @@ impl RenderData {
             layout: LayoutMode::default(),
             theme_mode: ThemeMode::default(),
             show_code: false,
+            learning_mode: qingjian_platform::LearningMode::default(),
             learning_card: None,
         }
     }
@@ -70,6 +74,7 @@ impl RenderData {
         self.layout = frame.layout;
         self.theme_mode = frame.theme;
         self.show_code = frame.aux_code_show;
+        self.learning_mode = frame.learning_mode;
         self.preedit = window_preedit(frame);
         self.cursor = frame.cursor;
         self.rows = frame
@@ -158,6 +163,11 @@ impl RenderData {
             footer: self.footer.clone(),
             sentence: self.sentence.clone(),
             status: self.notice.clone(),
+            learning_mode: match self.learning_mode {
+                qingjian_platform::LearningMode::Daily => qingjian_render::LearningMode::Daily,
+                qingjian_platform::LearningMode::Learn => qingjian_render::LearningMode::Learn,
+                qingjian_platform::LearningMode::Drill => qingjian_render::LearningMode::Drill,
+            },
             learning_card: self.learning_card.clone(),
         }
     }

@@ -336,8 +336,11 @@ mod tests {
 
     fn key(vk: u32, caps: bool, english_mode: bool) -> qingjian_platform::protocol::KeyEvent {
         let mut event = to_key_event(vk, english_mode);
-        event.modifiers.caps = caps;
-        event.modifiers.english_mode = english_mode;
+        event.modifiers = KeyModifiers {
+            caps,
+            english_mode,
+            ..Default::default()
+        };
         event
     }
 

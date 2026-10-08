@@ -180,17 +180,19 @@ impl StatusBar {
         }
     }
 
-    /// 渲染器要的四格：模式（品牌色）、标点（生效时品牌色，否则灰）、学习模式（学/练）、齿轮。
+    /// 渲染器要的四格：模式（品牌色）、标点（生效时品牌色，否则灰）、学习模式（学：Daily灰/Learn青/Drill橙）、齿轮。
     fn status_cells(view: &StatusView) -> Vec<StatusCell> {
-        let (learn_text, learn_active) = match view.learning_mode {
-            qingjian_platform::LearningMode::Daily => ("学", false),
-            qingjian_platform::LearningMode::Learn => ("学", true),
-            qingjian_platform::LearningMode::Drill => ("练", true),
+        let learn_cell = match view.learning_mode {
+            qingjian_platform::LearningMode::Daily => StatusCell::text("学", false),
+            qingjian_platform::LearningMode::Learn => StatusCell::text("学", true),
+            qingjian_platform::LearningMode::Drill => {
+                StatusCell::colored("学", qingjian_render::Color::rgb(249, 115, 22))
+            }
         };
         vec![
             StatusCell::text(Self::mode_text(view), true),
             StatusCell::text(if view.full_width { "，。" } else { ",." }, view.full_width),
-            StatusCell::text(learn_text, learn_active),
+            learn_cell,
             StatusCell::Gear,
         ]
     }
@@ -202,10 +204,10 @@ impl StatusBar {
             return Vec::new();
         };
         let punctuation_active = view.full_width;
-        let (learn_text, learn_active) = match view.learning_mode {
-            qingjian_platform::LearningMode::Daily => ("学", false),
-            qingjian_platform::LearningMode::Learn => ("学", true),
-            qingjian_platform::LearningMode::Drill => ("练", true),
+        let learn_color = match view.learning_mode {
+            qingjian_platform::LearningMode::Daily => theme.gloss_color,
+            qingjian_platform::LearningMode::Learn => theme.cloud_color,
+            qingjian_platform::LearningMode::Drill => COLORREF(0x001673f9), // 橙色 #F97316
         };
         vec![
             CellSpec {
@@ -225,13 +227,9 @@ impl StatusBar {
                 action: StatusAction::TogglePunctuation,
             },
             CellSpec {
-                text: learn_text.to_owned(),
+                text: "学".to_owned(),
                 font: theme.text_font,
-                color: if learn_active {
-                    theme.cloud_color
-                } else {
-                    theme.gloss_color
-                },
+                color: learn_color,
                 action: StatusAction::ToggleLearningMode,
             },
             CellSpec {

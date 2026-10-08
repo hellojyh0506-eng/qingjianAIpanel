@@ -46,24 +46,21 @@ question（输入法本地把拼音转成的汉字，可能有错字，只是帮
 answers：1 到 max_items 个，按可能性排序。text 是能直接上屏的字、词或短答案，不要解释；\
 pinyin 是 text 的带声调拼音（如 sēn），非中文答案给空字符串。不确定就少给，实在不懂就给空数组。";
 
-/// 翻译的系统提示：为口语练习与日常交流提供地道鲜活的 Gen Z 当代美式口语。拒绝机器翻译与死板应试英语。
+/// 翻译的系统提示：为日常口语交流提供最自然鲜活的地道当代美式口语。短小、精悍、快速。
 pub const TRANSLATE_SYSTEM_PROMPT: &str = "\
-你是一个专为年轻人日常口语交流量身打造的英汉口语私教与即时翻译引擎。你会收到一段 JSON：\
-text（待翻译的原文）、target_language（目标语言代码：zh 中文、en 英语、ja 日语）。\
-核心使命：帮助用户练习和掌握最自然鲜活的当代美式口语（Gen Z / Young Native Speaker 口语实战）。\
+你是一个日常口语即时翻译与美式表达引擎。你会收到一段 JSON：\
+text（待翻译中文）、target_language（目标语言代码：zh 中文、en 英语、ja 日语）。\
+核心使命：为当前中文提供地道鲜活的美式口语表达。\
 要求：\
-1. 严格且仅翻译 text 字段中的文本本身，绝对严禁翻译任何外部推测，严禁扩写或串入历史上下文；\
+1. 严格且仅翻译 text 本身，绝不扩写、不解释、不加引号、不加「译文：」等前缀；\
 2. 当 target_language 为 en（英语）时：\
-   - 必须是 100% 地道真实的美式口语（Authentic Gen Z Spoken American English），如同母语青年在日常微信/聊天、发消息、打语音、街头咖啡馆对话中脱口而出的自然表达；\
-   - 彻底拒绝死板教科书、考试做题英语（如 CET-4/6、中高考或语法试卷式死板英语）以及生硬字对字机器翻译；\
-   - 大量采用真实口语自然的缩写（I'm、you're、gonna、wanna、kinda、gotta）、地道口语动词短语与高频习惯搭配（例如「搞定了」译为「All set.」或「Got it covered.」；「累瘫了」译为「I'm beat.」或「I'm wiped out.」；「太逗了/笑死我了」译为「That's hilarious.」或「I'm dead.」；「你咋还不来？」译为「Where you at?」或「Why aren't you here yet?」；「别墨迹了」译为「Stop dragging your feet.」或「Quit stalling.」）；\
-   - 原文含有方言、调侃或情绪（如「我日他哥」、「我嘞个豆」、「得劲」）时，自然捕捉对应语气的鲜活美式口语（如「No freaking way.」「Holy crap.」「That feels so good.」），神形兼备；\
-   - 语调必须真实可信，严禁在没有语境的前提下强行尬塞网络烂梗；\
-   - 提供 1 个最佳表达 sentence，以及 2~4 个不同语境/语气/难度的替换表达 alternatives，每个包含 text、tag（Casual/Natural/Professional/Formal/Idiomatic）、meaning（中文含义）、tone（语气）、scenario（适用场景）、commonality（是否常见）、why_natural（更自然的原因）；\
-3. 保留原文的语气、标点与情感；原文已经是目标语言时：目标不是中文就改译成中文，目标是中文就原样返回；\
-4. 绝不解释、不加引号、不加「译文：」之类的前缀，严格只输出单一 JSON。\
-输出 JSON 格式：\
-{\"sentence\": \"最佳口语译文\", \"alternatives\": [{\"text\": \"…\", \"tag\": \"Casual/Natural/Professional/Formal/Idiomatic\", \"meaning\": \"…\", \"tone\": \"…\", \"scenario\": \"…\", \"commonality\": \"…\", \"why_natural\": \"…\"}]}";
+   - 必须是 100% 地道真实的美式口语（Authentic Gen Z / Spoken American English），大量采用口语缩写（I'm、you're、gonna、wanna、gotta）与地道动词短语搭配；\
+   - sentence 给出 1 个最佳表达；\
+   - alternatives 给出 2~4 个不同语境/风格的精简备选，每个包含 text、tag（Natural/Casual/British/Formal/Idiomatic）、note（极短中文说明，如“更口语”、“稍正式”）；\
+3. 保留原文语气；原文已是目标语言时原样返回；\
+4. 严格只输出单一紧凑 JSON。\
+输出格式：\
+{\"sentence\": \"最佳口语译文\", \"alternatives\": [{\"text\": \"…\", \"tag\": \"Natural\", \"note\": \"极短说明\"}]}";
 
 /// 主动回忆对比的系统提示：为口语学习者提供对比与结构化错误分类 (Error Taxonomy) 反馈。
 pub const COMPARE_SYSTEM_PROMPT: &str = "\
@@ -281,6 +278,7 @@ struct RawAlternative {
     text: String,
     tag: String,
     meaning: String,
+    note: Option<String>,
     tone: String,
     scenario: String,
     commonality: String,
@@ -295,9 +293,30 @@ struct RawWord {
     pinyin: String,
 }
 
+/// 提取模型输出里的有效 JSON 字符串（自动剥离 ```json 等 markdown 标记与外层无关文字）
+fn extract_json_str(content: &str) -> &str {
+    let trimmed = content.trim();
+    if let Some(rest) = trimmed.strip_prefix("```json") {
+        if let Some(end) = rest.rfind("```") {
+            return rest[..end].trim();
+        }
+    } else if let Some(rest) = trimmed.strip_prefix("```") {
+        if let Some(end) = rest.rfind("```") {
+            return rest[..end].trim();
+        }
+    }
+    if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
+        if end >= start {
+            return &trimmed[start..=end];
+        }
+    }
+    trimmed
+}
+
 /// 解析模型回复：去空、去重、去换行，截到 `max_items`。不要与本地首选相同的词，也不要没给拼音的词。
 pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
-    let raw: RawReply = match serde_json::from_str(content.trim()) {
+    let json_str = extract_json_str(content);
+    let raw: RawReply = match serde_json::from_str(json_str) {
         Ok(raw) => raw,
         Err(_) => return Reply::default(),
     };
@@ -375,6 +394,18 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
                 if request.target_language == "en" && !is_valid_english_translation(&alt_text) {
                     continue;
                 }
+                let display_meaning = if !alt.meaning.trim().is_empty() {
+                    alt.meaning.trim().to_owned()
+                } else if let Some(n) = &alt.note {
+                    let nt = n.trim();
+                    if !nt.is_empty() {
+                        nt.to_owned()
+                    } else {
+                        request.text.clone()
+                    }
+                } else {
+                    request.text.clone()
+                };
                 alternatives.push(PredictionAlternative {
                     text: alt_text,
                     tag: if alt.tag.trim().is_empty() {
@@ -382,15 +413,19 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
                     } else {
                         alt.tag.trim().to_owned()
                     },
-                    meaning: if alt.meaning.trim().is_empty() {
-                        request.text.clone()
+                    meaning: display_meaning.clone(),
+                    tone: if !alt.tone.trim().is_empty() {
+                        alt.tone.trim().to_owned()
                     } else {
-                        alt.meaning.trim().to_owned()
+                        "Casual".to_owned()
                     },
-                    tone: alt.tone.trim().to_owned(),
                     scenario: alt.scenario.trim().to_owned(),
                     commonality: alt.commonality.trim().to_owned(),
-                    why_natural: alt.why_natural.trim().to_owned(),
+                    why_natural: if !alt.why_natural.trim().is_empty() {
+                        alt.why_natural.trim().to_owned()
+                    } else {
+                        display_meaning
+                    },
                 });
             }
             if alternatives.is_empty() {
@@ -912,6 +947,25 @@ mod tests {
         assert_eq!(parsed.alternatives[0].tag, "NaturalBetter");
         assert_eq!(parsed.alternatives[0].text, "I've been swamped lately.");
         assert_eq!(parsed.alternatives[0].why_natural, "swamped 比 very busy 更生动形象");
+    }
+
+    #[test]
+    fn test_compact_and_markdown_translate_reply() {
+        let mut translate = request("", false);
+        translate.kind = PredictionKind::Translate;
+        translate.text = "能重来".to_owned();
+        translate.target_language = "en".to_owned();
+
+        // 包含 markdown 代码块与 note 字段的高速紧凑回复
+        let md_reply = "```json\n{\n  \"sentence\": \"Give it another shot.\",\n  \"alternatives\": [\n    {\"text\": \"Try again.\", \"tag\": \"Casual\", \"note\": \"更口语、更简洁\"},\n    {\"text\": \"Give it a second chance.\", \"tag\": \"Natural\", \"note\": \"稍正式，可用人或计划\"},\n    {\"text\": \"Have another go.\", \"tag\": \"British\", \"note\": \"英式表达，口语\"}\n  ]\n}\n```";
+        let parsed = parse_reply(md_reply, &translate);
+        assert_eq!(parsed.sentence.as_deref(), Some("Give it another shot."));
+        assert_eq!(parsed.alternatives.len(), 3);
+        assert_eq!(parsed.alternatives[0].text, "Try again.");
+        assert_eq!(parsed.alternatives[0].tag, "Casual");
+        assert_eq!(parsed.alternatives[0].meaning, "更口语、更简洁");
+        assert_eq!(parsed.alternatives[2].tag, "British");
+        assert_eq!(parsed.alternatives[2].meaning, "英式表达，口语");
     }
 }
 

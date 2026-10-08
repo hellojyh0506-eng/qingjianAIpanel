@@ -97,6 +97,7 @@ impl Renderer {
     fn status_cell_width(&mut self, cell: &StatusCell, m: &Metrics) -> f32 {
         match cell {
             StatusCell::Text { text, .. } => self.measure(text, &m.text_style()).width,
+            StatusCell::ColoredText { text, .. } => self.measure(text, &m.text_style()).width,
             StatusCell::Gear => m.px(GEAR_SIZE),
         }
     }
@@ -118,6 +119,13 @@ impl Renderer {
                     m.theme.colors.gloss
                 };
                 let style = m.style(m.theme.text_font, color);
+                let size = self.measure(text, &style);
+                let left = x + (width - size.width) / 2.0;
+                let top = y + (height - size.height) / 2.0;
+                self.draw_text(canvas, text, &style, left, top);
+            }
+            StatusCell::ColoredText { text, color } => {
+                let style = m.style(m.theme.text_font, *color);
                 let size = self.measure(text, &style);
                 let left = x + (width - size.width) / 2.0;
                 let top = y + (height - size.height) / 2.0;

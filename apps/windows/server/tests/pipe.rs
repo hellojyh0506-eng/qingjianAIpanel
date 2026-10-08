@@ -317,8 +317,11 @@ fn named_pipe_active_recall_round_trip() {
     std::fs::remove_dir_all(&temp_dir).unwrap();
 }
 
+static REAL_PIPE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn test_real_running_server_shui_yue_and_zhengliushui() {
+    let _guard = REAL_PIPE_MUTEX.lock().unwrap();
     let mut client = match OpenOptions::new().read(true).write(true).open(r"\\.\pipe\qingjian") {
         Ok(f) => f,
         Err(_) => return, // Server not running, skip
@@ -388,6 +391,7 @@ fn test_real_running_server_shui_yue_and_zhengliushui() {
 
 #[test]
 fn test_real_running_server_learning_mode_switch() {
+    let _guard = REAL_PIPE_MUTEX.lock().unwrap();
     let mut client = match OpenOptions::new().read(true).write(true).open(r"\\.\pipe\qingjian") {
         Ok(f) => f,
         Err(_) => return, // Server not running, skip
@@ -430,6 +434,7 @@ fn test_real_running_server_learning_mode_switch() {
 
 #[test]
 fn test_real_running_server_fsrs_review_round_trip() {
+    let _guard = REAL_PIPE_MUTEX.lock().unwrap();
     let mut client = match OpenOptions::new().read(true).write(true).open(r"\\.\pipe\qingjian") {
         Ok(f) => f,
         Err(_) => return, // Server not running, skip

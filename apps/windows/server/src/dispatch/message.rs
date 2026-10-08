@@ -136,15 +136,26 @@ impl Router {
         {
             return self.start_recall_session(session);
         }
-        if self.engine.composition().is_empty()
-            && self.matches_learning_mode_combo(&event)
-        {
-            let next = self.learning_mode.next();
+        if self.matches_learning_mode_combo(&event) {
+            let next = if self.engine.composition().is_empty() {
+                self.learning_mode.next()
+            } else {
+                match self.learning_mode {
+                    qingjian_platform::LearningMode::Daily => qingjian_platform::LearningMode::Learn,
+                    qingjian_platform::LearningMode::Learn => qingjian_platform::LearningMode::Daily,
+                    qingjian_platform::LearningMode::Drill => self.previous_learning_mode,
+                }
+            };
             self.learning_mode = next;
             self.config.learning_mode = next;
             tracing::info!(mode = ?next, "快捷键：切换英语学习模式");
             self.persist("general", "learning_mode", next.key());
             self.notice = Some(format!("已切换至【{}】", next.label()));
+            if next == qingjian_platform::LearningMode::Learn && self.composing() {
+                self.on_candidate_selection_changed();
+            } else if next == qingjian_platform::LearningMode::Daily {
+                self.passive_learning_card = None;
+            }
             self.reconcile_status();
             let shown = self.self_drawn_frame();
             self.reconcile_candidates(&shown);
@@ -191,12 +202,7 @@ impl Router {
             };
         }
         if self.composing() && self.matches_learning_drill_combo(&event) {
-            if let Some(card) = self.passive_learning_card.as_mut() {
-                card.drill_stage = Some(qingjian_platform::protocol::DrillStage::Input);
-                card.drill_input.clear();
-                card.drill_attempt = None;
-                card.drill_notice = None;
-            }
+            self.start_drill_session();
             let shown = self.self_drawn_frame();
             self.reconcile_candidates(&shown);
             return ServerMessage::KeyResult {
@@ -247,10 +253,7 @@ impl Router {
                     match stage {
                         qingjian_platform::protocol::DrillStage::Input => {
                             if event.virtual_key == super::key::ESCAPE {
-                                card.drill_stage = None;
-                                card.drill_input.clear();
-                                card.drill_attempt = None;
-                                card.drill_notice = None;
+                                self.end_drill_session();
                                 let shown = self.self_drawn_frame();
                                 self.reconcile_candidates(&shown);
                                 return ServerMessage::KeyResult {
@@ -294,7 +297,11 @@ impl Router {
                                     frame: self.current_frame(),
                                 };
                             }
-                            if event.virtual_key == super::key::TAB {
+                            let chord = event.modifiers.chord();
+                            let is_reveal = event.virtual_key == super::key::TAB
+                                || (chord.ctrl && chord.shift && !chord.alt && !chord.win
+                                    && event.character.map(|c| c.to_ascii_lowercase()) == Some('r'));
+                            if is_reveal {
                                 let reference = card
                                     .primary
                                     .as_ref()
@@ -356,9 +363,12 @@ impl Router {
                             };
                         }
                         qingjian_platform::protocol::DrillStage::Compared => {
-                            if event.virtual_key == super::key::TAB {
+                            let is_retry = event.virtual_key == super::key::TAB
+                                || event.character.map(|c| c.to_ascii_lowercase()) == Some('r');
+                            if is_retry {
                                 card.drill_stage =
                                     Some(qingjian_platform::protocol::DrillStage::Input);
+                                card.drill_input.clear();
                                 card.drill_notice = None;
                                 card.drill_attempt = None;
                                 let shown = self.self_drawn_frame();
@@ -391,9 +401,9 @@ impl Router {
                                     let tag = card.primary.as_ref().map(|p| p.tag.as_str());
                                     vault.save_expression(&card.target_text, saved_expr, tag, None);
                                     let _ = vault.flush();
-                                    card.drill_notice = Some(format!("⭐ 已保存到生词本: {}", saved_expr));
+                                    card.drill_notice = Some(format!("⭐ 已保存到表达本: {}", saved_expr));
                                 } else {
-                                    card.drill_notice = Some("⭐ 已保存到生词本".to_string());
+                                    card.drill_notice = Some("⭐ 已保存到表达本".to_string());
                                 }
                                 let shown = self.self_drawn_frame();
                                 self.reconcile_candidates(&shown);
@@ -425,10 +435,7 @@ impl Router {
                             if event.virtual_key == super::key::ESCAPE
                                 || event.virtual_key == super::key::RETURN
                             {
-                                card.drill_stage = None;
-                                card.drill_input.clear();
-                                card.drill_attempt = None;
-                                card.drill_notice = None;
+                                self.end_drill_session();
                                 let shown = self.self_drawn_frame();
                                 self.reconcile_candidates(&shown);
                                 return ServerMessage::KeyResult {
@@ -464,10 +471,7 @@ impl Router {
                             if event.virtual_key == super::key::ESCAPE
                                 || event.virtual_key == super::key::RETURN
                             {
-                                card.drill_stage = None;
-                                card.drill_input.clear();
-                                card.drill_attempt = None;
-                                card.drill_notice = None;
+                                self.end_drill_session();
                                 let shown = self.self_drawn_frame();
                                 self.reconcile_candidates(&shown);
                                 return ServerMessage::KeyResult {
@@ -486,10 +490,7 @@ impl Router {
                         }
                         qingjian_platform::protocol::DrillStage::Review => {
                             if event.virtual_key == super::key::ESCAPE {
-                                card.drill_stage = None;
-                                card.drill_input.clear();
-                                card.drill_attempt = None;
-                                card.drill_notice = None;
+                                self.end_drill_session();
                                 let shown = self.self_drawn_frame();
                                 self.reconcile_candidates(&shown);
                                 return ServerMessage::KeyResult {
@@ -507,10 +508,7 @@ impl Router {
                                         .map(|n| n.contains("全部完成"))
                                         .unwrap_or(false)
                                     {
-                                        card.drill_stage = None;
-                                        card.drill_input.clear();
-                                        card.drill_attempt = None;
-                                        card.drill_notice = None;
+                                        self.end_drill_session();
                                     } else {
                                         let input = card.drill_input.trim();
                                         if input.is_empty() {

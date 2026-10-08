@@ -36,7 +36,8 @@ impl Router {
             Some((items, preedit, cursor, typed_keys)) => {
                 let layout =
                     CandidateLayout::new(items, self.config.page_size, self.config.cloud_slots);
-                let learning_on = self.learning_mode == qingjian_platform::LearningMode::Learn
+                let learning_on = (self.learning_mode == qingjian_platform::LearningMode::Learn
+                    || self.learning_mode == qingjian_platform::LearningMode::Drill)
                     && !self.config.learning_language_off
                     && self.engine.learning_language() != Language::Chinese
                     && !self.is_private();
@@ -301,7 +302,8 @@ impl Router {
 
     /// 高亮候选词变更时：若处于 Learn 模式，立即同步绑定新候选词，取消旧请求并抛弃不匹配旧结果。
     pub(super) fn on_candidate_selection_changed(&mut self) {
-        let learning_on = self.learning_mode == qingjian_platform::LearningMode::Learn
+        let learning_on = (self.learning_mode == qingjian_platform::LearningMode::Learn
+            || self.learning_mode == qingjian_platform::LearningMode::Drill)
             && !self.config.learning_language_off
             && self.engine.learning_language() != Language::Chinese
             && !self.is_private();
@@ -522,7 +524,9 @@ impl Router {
                         }
                     }
                 }
-                let learning_card = if self.learning_mode == qingjian_platform::LearningMode::Learn {
+                let learning_card = if self.learning_mode == qingjian_platform::LearningMode::Learn
+                    || self.learning_mode == qingjian_platform::LearningMode::Drill
+                {
                     self.passive_learning_card.clone()
                 } else {
                     None

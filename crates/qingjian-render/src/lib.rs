@@ -28,7 +28,7 @@ pub use fonts::{FontLibrary, UiFont};
 pub use frame::{
     ComparisonResult, ComparisonStatus, DrillStage, ErrorMajorCategory, ErrorSubcategory,
     EvaluationFourDimensions, ExpressionUpgradeRecord, FeedbackItem, Frame, LearningCard,
-    LearningExpression, LearningStatus, PragmaticNuance, Preedit, PreeditSegment, PreeditStyle,
+    LearningExpression, LearningMode, LearningStatus, PragmaticNuance, Preedit, PreeditSegment, PreeditStyle,
     RecallAttempt, Register, Row, Sophistication, Tone,
 };
 pub use layout::Layout;

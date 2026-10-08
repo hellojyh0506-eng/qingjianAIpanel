@@ -55,8 +55,12 @@ impl Worker {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        while let Ok(first) = self.requests.recv() {
-            let Some(request) = self.debounce(first) else {
+        while let Ok(mut latest) = self.requests.recv() {
+            // 立即排空积压的过期请求，直接跳到最新请求，防止多请求串行阻塞
+            while let Ok(newer) = self.requests.try_recv() {
+                latest = newer;
+            }
+            let Some(request) = self.debounce(latest) else {
                 return Ok(());
             };
             let key = PredictionCache::key(&request);
@@ -83,7 +87,15 @@ impl Worker {
                     self.reply(request.sequence, reply);
                 }
                 Err(error) => {
-                    tracing::warn!(sequence = request.sequence, %error, "联想失败");
+                    tracing::warn!(
+                        sequence = request.sequence,
+                        elapsed_ms = start.elapsed().as_millis(),
+                        %error,
+                        "联想失败，下发空兜底通知"
+                    );
+                    // 关键修复：发生网络超时或模型拒绝时，绝不可静默吞掉请求导致 UI 陷入永久 loading！
+                    // 必须下发带 sequence 的空回复，通知上层转入 Failed / 暂无译文 状态
+                    self.reply(request.sequence, Reply::default());
                 }
             }
         }

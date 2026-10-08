@@ -48,17 +48,17 @@ impl Default for PredictConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            base_url: "https://api.deepseek.com".to_owned(),
-            model: "deepseek-v4-flash".to_owned(),
+            base_url: "https://api.siliconflow.cn/v1".to_owned(),
+            model: "Qwen/Qwen2.5-7B-Instruct".to_owned(),
             api_key: None,
             api_key_env: "QINGJIAN_API_KEY".to_owned(),
             timeout_ms: 5000,
-            debounce_ms: 300,
+            debounce_ms: 150,
             lookback: 64,
             lookahead: 32,
             slots: 2,
             sentence: true,
-            reasoning_effort: "none".to_owned(),
+            reasoning_effort: "".to_owned(),
         }
     }
 }

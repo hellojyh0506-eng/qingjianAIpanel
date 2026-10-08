@@ -71,6 +71,9 @@ pub struct Router {
     /// 当前英语学习模式（Daily / Learn / Drill）。
     pub(crate) learning_mode: qingjian_platform::LearningMode,
 
+    /// 开启 Drill 临时训练会话前的英语学习模式（Daily 或 Learn），退出时恢复。
+    pub(crate) previous_learning_mode: qingjian_platform::LearningMode,
+
     /// 当前被动翻译请求对应的候选词；若当前首选词变更则作废旧译文，防止污染新候选。
     pub(crate) passive_translation_target: Option<String>,
 
@@ -153,6 +156,7 @@ impl Router {
             passive_translation_target: None,
             passive_learning_card: None,
             learning_mode: config.learning_mode,
+            previous_learning_mode: config.learning_mode,
             pending_selection: None,
             selection_seq: 0,
             sentence: None,
@@ -178,6 +182,86 @@ impl Router {
     /// 当前英语学习模式。
     pub fn learning_mode(&self) -> qingjian_platform::LearningMode {
         self.learning_mode
+    }
+
+    /// 开启 Drill 练习会话：暂存 previous_learning_mode，切入 Drill 模式（状态条学变橙色），绑定候选词并启动输入阶段。
+    pub(crate) fn start_drill_session(&mut self) {
+        if self.learning_mode != qingjian_platform::LearningMode::Drill {
+            self.previous_learning_mode = self.learning_mode;
+            self.learning_mode = qingjian_platform::LearningMode::Drill;
+        }
+        let target_text = self
+            .passive_learning_card
+            .as_ref()
+            .map(|c| c.target_text.clone())
+            .or_else(|| self.passive_translation_target.clone())
+            .or_else(|| self.layout_candidate(self.highlight).map(|c| c.text))
+            .unwrap_or_else(|| "当前表达".to_string());
+
+        let primary = self
+            .passive_learning_card
+            .as_ref()
+            .and_then(|c| c.primary.clone())
+            .or_else(|| {
+                self.passive_translation.as_ref().map(|s| {
+                    qingjian_platform::protocol::LearningExpression {
+                        text: s.clone(),
+                        tag: "Natural".to_string(),
+                        meaning: target_text.clone(),
+                        tone: "Casual".to_string(),
+                        scenario: "Daily conversation".to_string(),
+                        commonality: "Common".to_string(),
+                        why_natural: "Natural spoken English".to_string(),
+                    }
+                })
+            });
+
+        let alternatives = self
+            .passive_learning_card
+            .as_ref()
+            .map(|c| c.alternatives.clone())
+            .unwrap_or_default();
+
+        let due = self.today_due_count();
+        let upgrade = self
+            .passive_learning_card
+            .as_ref()
+            .and_then(|c| c.upgrade.clone());
+
+        self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
+            target_text,
+            state: qingjian_platform::protocol::LearningState::Ready,
+            primary,
+            alternatives,
+            expanded: false,
+            selected_index: None,
+            drill_stage: Some(qingjian_platform::protocol::DrillStage::Input),
+            drill_input: String::new(),
+            drill_attempt: None,
+            drill_notice: None,
+            today_due_count: due,
+            review_current_index: 0,
+            review_total_count: due,
+            upgrade,
+        });
+        self.reconcile_status();
+    }
+
+    /// 结束 Drill 练习会话：恢复 previous_learning_mode（Daily 或 Learn），清空 Drill 交互状态并更新状态条。
+    pub(crate) fn end_drill_session(&mut self) {
+        if self.learning_mode == qingjian_platform::LearningMode::Drill {
+            self.learning_mode = self.previous_learning_mode;
+        }
+        if let Some(card) = self.passive_learning_card.as_mut() {
+            card.drill_stage = None;
+            card.drill_input.clear();
+            card.drill_attempt = None;
+            card.drill_notice = None;
+        }
+        if self.learning_mode == qingjian_platform::LearningMode::Daily {
+            self.passive_learning_card = None;
+        }
+        self.reconcile_status();
     }
 
     /// 下发给 DLL 的按键行为设置：`OpenSession` 的回包带一次，之后每拍 `SyncMode` 也跟着走，

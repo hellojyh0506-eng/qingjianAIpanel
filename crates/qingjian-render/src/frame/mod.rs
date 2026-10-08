@@ -8,7 +8,8 @@ mod tone;
 pub use learning::{
     ComparisonResult, ComparisonStatus, DrillStage, ErrorMajorCategory, ErrorSubcategory,
     EvaluationFourDimensions, ExpressionUpgradeRecord, FeedbackItem, LearningCard,
-    LearningExpression, LearningStatus, PragmaticNuance, RecallAttempt, Register, Sophistication,
+    LearningExpression, LearningMode, LearningStatus, PragmaticNuance, RecallAttempt, Register,
+    Sophistication,
 };
 pub use preedit::{Preedit, PreeditSegment, PreeditStyle};
 pub use row::Row;
@@ -39,6 +40,9 @@ pub struct Frame {
 
     /// 拼音行右侧的一句临时状态（删了什么词），有它时不画整句补全。
     pub status: Option<String>,
+
+    /// 当前英语学习模式。
+    pub learning_mode: LearningMode,
 
     /// 绑定的轻量英语学习卡片（仅在 Learn 模式或主动展开时存在）。
     pub learning_card: Option<LearningCard>,

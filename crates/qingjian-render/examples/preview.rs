@@ -247,6 +247,7 @@ fn matrix() -> Frame {
         sentence: None,
         status: None,
         learning_card: None,
+        ..Default::default()
     }
 }
 
@@ -303,6 +304,7 @@ fn nihao() -> Frame {
         sentence: None,
         status: None,
         learning_card: None,
+        ..Default::default()
     }
 }
 
@@ -376,6 +378,7 @@ fn corrected_japanese() -> Frame {
         sentence: None,
         status: Some("已删除「开放」".to_owned()),
         learning_card: None,
+        ..Default::default()
     }
 }
 
@@ -391,6 +394,7 @@ fn probe() -> Frame {
         sentence: None,
         status: None,
         learning_card: None,
+        ..Default::default()
     }
 }
 

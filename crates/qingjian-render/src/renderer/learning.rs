@@ -9,6 +9,15 @@ use crate::frame::{Frame, LearningStatus};
 impl Renderer {
     /// 计算轻量英语学习卡片需要的尺寸（若不存在卡片返回 0, 0）。
     pub(super) fn learning_card_size(&mut self, frame: &Frame, m: &Metrics) -> (f32, f32) {
+        if frame.learning_card.is_none() {
+            if frame.learning_mode == crate::frame::LearningMode::Daily && !frame.rows.is_empty() {
+                let text_style = m.style(m.theme.index_font, m.theme.colors.gloss);
+                let w = m.px(28.0) + m.px(6.0) + self.measure("按 Ctrl+Shift+E 查看英文", &text_style).width + m.padding() * 2.0;
+                let h = text_style.line_height + m.row_padding();
+                return (w, h);
+            }
+            return (0.0, 0.0);
+        }
         let Some(card) = &frame.learning_card else {
             return (0.0, 0.0);
         };
@@ -23,11 +32,16 @@ impl Renderer {
         if let Some(stage) = card.drill_stage {
             match stage {
                 crate::frame::DrillStage::Input => {
-                    let title = format!("🎯 英文回忆练习 (中文: {})", card.target_text);
+                    let title = format!("💡 请用英语表达：{}", card.target_text);
                     let title_w = self.measure(&title, &style).width;
-                    let input_str = format!("你的尝试: {}|", card.drill_input);
-                    let input_w = self.measure(&input_str, &m.annotation_style(m.theme.colors.text)).width;
-                    let btns = "[对比 (Enter)]   [看答案 (Tab)]   [退出 (Esc)]";
+                    let placeholder = "在这里输入你的英文表达...";
+                    let input_str = if card.drill_input.is_empty() {
+                        format!("{}|", placeholder)
+                    } else {
+                        format!("{}|", card.drill_input)
+                    };
+                    let input_w = self.measure(&input_str, &m.annotation_style(m.theme.colors.text)).width + m.px(24.0);
+                    let btns = "[对比 (Enter)]   [显示答案]";
                     let btns_w = self.measure(btns, &m.index_style()).width;
 
                     width = width.max(title_w).max(input_w).max(btns_w) + m.column_gap() * 2.0;
@@ -81,7 +95,7 @@ impl Renderer {
                     } else {
                         format!("🟢 地道表达: {}", natural_expr)
                     };
-                    let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [📊 画像]   [完成 (Esc)]";
+                    let btns = "[🔄 再试一次 (R)]   [⭐ 保存到表达本 (S)]   [完成 (Enter)]";
 
                     let r1_w = self.measure(&row1, &style).width;
                     let r2_w = self.measure(&row2, &style).width;
@@ -212,13 +226,8 @@ impl Renderer {
                 }
             }
         };
-        let main_width = self.measure(main_text, &style).width;
-        let review_btn = if card.today_due_count > 0 {
-            format!("[📚 复习 ({})]", card.today_due_count)
-        } else {
-            "[📚 复习]".to_string()
-        };
-        let review_width = self.measure(&review_btn, &m.index_style()).width;
+        let audio_icon = " 🔊";
+        let main_width = self.measure(main_text, &style).width + self.measure(audio_icon, &style).width;
         let drill_btn = "[Try English]";
         let drill_width = self.measure(drill_btn, &m.index_style()).width;
         let btn_text = if card.expanded { "收起 ▴" } else { "更多译法 ▾" };
@@ -226,9 +235,7 @@ impl Renderer {
 
         let row1_width = flag_width
             + main_width
-            + m.column_gap() * 2.0
-            + review_width
-            + m.column_gap()
+            + m.column_gap() * 3.0
             + drill_width
             + m.column_gap()
             + btn_width;
