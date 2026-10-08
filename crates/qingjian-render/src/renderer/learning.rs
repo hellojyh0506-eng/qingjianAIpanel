@@ -40,12 +40,11 @@ impl Renderer {
                     } else {
                         format!("{}|", card.drill_input)
                     };
-                    let input_w = self.measure(&input_str, &m.annotation_style(m.theme.colors.text)).width + m.px(24.0);
-                    let btns = "[对比 (Enter)]   [显示答案]";
-                    let btns_w = self.measure(btns, &m.index_style()).width;
+                    let input_w = self.measure(&input_str, &m.annotation_style(m.theme.colors.text)).width + m.px(28.0);
+                    let btns_w = m.px(190.0);
 
-                    width = width.max(title_w).max(input_w).max(btns_w) + m.column_gap() * 2.0;
-                    height += (line_height + m.row_padding()) * 3.0;
+                    width = width.max(title_w).max(input_w).max(btns_w).max(m.px(280.0)) + m.column_gap() * 2.0;
+                    height += (line_height + m.row_padding()) * 3.5;
                     if card.drill_notice.is_some() {
                         height += small_style.line_height + m.row_padding();
                     }
@@ -72,84 +71,19 @@ impl Renderer {
                         .as_ref()
                         .map(|a| a.comparison.key_advice.as_str())
                         .unwrap_or("");
-                    let feedback_items = card
-                        .drill_attempt
-                        .as_ref()
-                        .map(|a| a.comparison.feedback_items.as_slice())
-                        .unwrap_or(&[]);
-                    let status = card.drill_attempt.as_ref().and_then(|a| a.comparison.status);
-                    let upgrade = card.drill_attempt.as_ref().and_then(|a| a.comparison.upgrade.as_ref());
-                    let is_b2_upgrade = status == Some(crate::frame::ComparisonStatus::ValidB2Upgrade);
 
-                    let row1 = if is_b2_upgrade {
-                        format!("🔵 你的表达: {} (语法正确 · B2)", user_expr)
-                    } else {
-                        format!("🔴 你的表达: {}", user_expr)
-                    };
-                    let row2 = if is_b2_upgrade {
-                        if let Some(up) = upgrade {
-                            format!("✨ 高阶表达 (C1): {}", up.c1_expression)
-                        } else {
-                            format!("🟢 地道表达: {}", natural_expr)
-                        }
-                    } else {
-                        format!("🟢 地道表达: {}", natural_expr)
-                    };
-                    let btns = "[🔄 再试一次 (R)]   [⭐ 保存到表达本 (S)]   [完成 (Enter)]";
+                    let r1 = format!("❌ 你的表达: {}", user_expr);
+                    let r2 = format!("✅ 更自然的表达: {} 🔊", natural_expr);
+                    let btns_w = m.px(320.0);
 
-                    let r1_w = self.measure(&row1, &style).width;
-                    let r2_w = self.measure(&row2, &style).width;
-                    let btns_w = self.measure(btns, &m.index_style()).width;
+                    let r1_w = self.measure(&r1, &style).width;
+                    let r2_w = self.measure(&r2, &style).width;
+                    let advice_w = self.measure(&format!("ⓘ 关键建议: {}", advice), &small_style).width;
 
-                    width = width.max(r1_w).max(r2_w).max(btns_w);
-                    height += (line_height + m.row_padding()) * 2.0;
+                    width = width.max(r1_w + r2_w + m.column_gap() * 2.0).max(btns_w).max(advice_w).max(m.px(330.0));
+                    // 两卡片高度 + 关键建议高度 + 按钮高度 + 留白
+                    height += (line_height * 2.0 + m.px(14.0)) + (small_style.line_height * 2.0 + m.px(8.0)) + (line_height + m.px(4.0)) + m.row_padding() * 2.5;
 
-                    if let Some(up) = upgrade {
-                        if is_b2_upgrade {
-                            let r_why = format!("💡 升级理由: {}", up.why_better);
-                            let rw = self.measure(&r_why, &small_style).width;
-                            width = width.max(rw);
-                            height += small_style.line_height + m.row_padding() / 2.0;
-
-                            if !up.nuance_explanation.is_empty() {
-                                let r_nuance = format!("🌿 语用感知: {}", up.nuance_explanation);
-                                let rnw = self.measure(&r_nuance, &small_style).width;
-                                width = width.max(rnw);
-                                height += small_style.line_height + m.row_padding() / 2.0;
-                            }
-
-                            if !up.register_variants.is_empty() {
-                                let r_reg = format!(
-                                    "🎭 语域风格: {}",
-                                    up.register_variants
-                                        .iter()
-                                        .map(|v| format!("[{}: {}]", v.register.label(), v.expression))
-                                        .collect::<Vec<_>>()
-                                        .join(" ")
-                                );
-                                let rgw = self.measure(&r_reg, &small_style).width;
-                                width = width.max(rgw);
-                                height += small_style.line_height + m.row_padding() / 2.0;
-                            }
-                        }
-                    }
-
-                    if feedback_items.is_empty() {
-                        let row3 = format!("💡 关键建议: {}", advice);
-                        let r3_w = self.measure(&row3, &small_style).width;
-                        width = width.max(r3_w);
-                        height += small_style.line_height + m.row_padding();
-                    } else {
-                        for item in feedback_items.iter().take(3) {
-                            let row_item = format!("💡 [{}] {}", item.label, item.explanation);
-                            let rw = self.measure(&row_item, &small_style).width;
-                            width = width.max(rw);
-                            height += small_style.line_height + m.row_padding();
-                        }
-                    }
-
-                    width += m.column_gap() * 2.0;
-                    height += small_style.line_height + m.row_padding() * 2.0;
                     if card.drill_notice.is_some() {
                         height += small_style.line_height + m.row_padding();
                     }
@@ -213,25 +147,29 @@ impl Renderer {
         // 1. Layer 3: 主条目 (Flag + 状态/主要文本 + 展开按钮)
         let flag_prefix = "🇺🇸 ";
         let flag_width = self.measure(flag_prefix, &style).width;
-        let main_text = match card.status {
-            LearningStatus::Loading => "正在推荐地道口语...",
-            LearningStatus::Failed => "暂无地道口语推荐",
+        let (main_text, has_audio) = match card.status {
+            LearningStatus::Loading => ("正在推荐地道口语……", false),
+            LearningStatus::Failed => ("暂时没有译文", false),
             LearningStatus::Ready => {
                 if let Some(prim) = &card.primary {
-                    &prim.text
+                    (prim.text.as_str(), true)
                 } else if let Some(first) = card.alternatives.first() {
-                    &first.text
+                    (first.text.as_str(), true)
                 } else {
-                    ""
+                    ("暂时没有译文", false)
                 }
             }
         };
-        let audio_icon = " 🔊";
-        let main_width = self.measure(main_text, &style).width + self.measure(audio_icon, &style).width;
-        let drill_btn = "[Try English]";
-        let drill_width = self.measure(drill_btn, &m.index_style()).width;
-        let btn_text = if card.expanded { "收起 ▴" } else { "更多译法 ▾" };
-        let btn_width = self.measure(btn_text, &m.index_style()).width;
+        let audio_width = if has_audio {
+            self.measure(" 🔊", &style).width
+        } else {
+            0.0
+        };
+        let main_width = self.measure(main_text, &style).width + audio_width;
+        let drill_btn = "Try English";
+        let drill_width = self.measure(drill_btn, &m.index_style()).width + m.px(16.0);
+        let btn_text = if card.expanded { "收起 ∧" } else { "更多译法 ∨" };
+        let btn_width = self.measure(btn_text, &m.index_style()).width + m.px(16.0);
 
         let row1_width = flag_width
             + main_width
@@ -242,45 +180,37 @@ impl Renderer {
         width = width.max(row1_width);
         height += line_height + m.row_padding() * 2.0;
 
-        // 2. Layer 4: 渐进展开列表 (2~5 个备选表达 + 标签)
+        // 2. Layer 4: 渐进展开列表 (更多译法: 1–5 条紧凑条目)
         if card.expanded && !card.alternatives.is_empty() {
             height += m.px(4.0); // 分隔留白
-            for alt in &card.alternatives {
-                let tag_str = format!("[{}] ", alt.tag);
-                let tag_w = self.measure(&tag_str, &tag_style).width;
+            for (idx, alt) in card.alternatives.iter().take(5).enumerate() {
+                let idx_str = format!("{}. ", idx + 1);
+                let idx_w = self.measure(&idx_str, &m.index_style()).width;
                 let text_w = self.measure(&alt.text, &style).width;
-                width = width.max(tag_w + text_w + m.column_gap());
+                let tag_raw = if alt.tag.is_empty() { "Natural" } else { alt.tag.as_str() };
+                let tag_w = self.measure(tag_raw, &tag_style).width + m.px(12.0);
+                let meaning_str = if alt.meaning.is_empty() {
+                    String::new()
+                } else {
+                    format!("› {}", alt.meaning)
+                };
+                let note_w = if meaning_str.is_empty() {
+                    0.0
+                } else {
+                    self.measure(&meaning_str, &small_style).width + m.column_gap()
+                };
+                let audio_w = self.measure(" 🔊", &style).width;
+                let item_w = m.padding()
+                    + idx_w
+                    + text_w
+                    + m.column_gap()
+                    + tag_w
+                    + note_w
+                    + m.column_gap()
+                    + audio_w
+                    + m.padding();
+                width = width.max(item_w);
                 height += line_height + m.row_padding();
-            }
-
-            // 3. 选中表达的详览卡片 (含义、语气、场景、频度、地道解析)
-            if let Some(sel_idx) = card.selected_index {
-                if let Some(alt) = card.alternatives.get(sel_idx) {
-                    let small_style = m.style(m.theme.index_font, m.theme.colors.pos);
-                    let detail_lines = [
-                        format!("含义: {}", alt.meaning),
-                        format!("语气: {}", alt.tone),
-                        format!("场景: {}", alt.scenario),
-                        format!("频度: {}", alt.commonality),
-                        format!("为什么地道: {}", alt.why_natural),
-                    ];
-                    height += m.px(6.0); // 详情卡片顶部间距
-                    for line in &detail_lines {
-                        let lw = self.measure(line, &small_style).width;
-                        width = width.max(lw + m.column_gap() * 2.0);
-                        height += small_style.line_height + m.px(2.0);
-                    }
-                    height += m.px(6.0); // 详情卡片底部留白
-                }
-            }
-
-            if let Some(up) = &card.upgrade {
-                let u1 = format!("✨ 进阶升级 (C1): {}", up.c1_expression);
-                let u2 = format!("💡 升级理由: {}", up.why_better);
-                let u1_w = self.measure(&u1, &small_style).width;
-                let u2_w = self.measure(&u2, &small_style).width;
-                width = width.max(u1_w + m.column_gap() * 2.0).max(u2_w + m.column_gap() * 2.0);
-                height += (small_style.line_height + m.px(2.0)) * 2.0 + m.row_padding();
             }
         }
 
@@ -297,6 +227,20 @@ impl Renderer {
         mut y: f32,
         content_width: f32,
     ) {
+        if frame.learning_mode == crate::frame::LearningMode::Daily {
+            if !frame.rows.is_empty() {
+                let badge_style = m.style(m.theme.index_font, Color::rgb(255, 255, 255));
+                let prompt_style = m.style(m.theme.index_font, m.theme.colors.gloss);
+                let bx = left + m.padding();
+                let by = y + m.row_padding() / 2.0;
+                let badge_w = m.px(20.0);
+                let badge_h = m.px(13.0);
+                canvas.fill_round_rect(bx, by + m.px(1.0), badge_w, badge_h, m.px(3.0), Color::rgb(249, 115, 22));
+                self.draw_text(canvas, "us", &badge_style, bx + m.px(4.0), by);
+                self.draw_text(canvas, "按 Ctrl+Shift+E 查看英文", &prompt_style, bx + badge_w + m.px(6.0), by);
+            }
+            return;
+        }
         let Some(card) = &frame.learning_card else {
             return;
         };
@@ -321,39 +265,61 @@ impl Renderer {
         if let Some(stage) = card.drill_stage {
             match stage {
                 crate::frame::DrillStage::Input => {
-                    let title = format!("🎯 英文回忆练习 (中文: {})", card.target_text);
-                    self.draw_text(canvas, &title, &tag_style, left + m.padding(), y);
-                    y += line_height + m.row_padding() / 2.0;
+                    let title = format!("💡 请用英语表达：{}", card.target_text);
+                    self.draw_text(canvas, &title, &active_text_style, left + m.padding(), y);
+                    y += line_height + m.row_padding();
+
+                    let box_x = left + m.padding();
+                    let box_w = content_width - m.padding() * 2.0;
+                    let box_h = line_height + m.px(10.0);
+                    let border_color = Color::rgba(128, 128, 128, 60);
+                    let bg_color = Color::rgba(255, 255, 255, 255);
+                    canvas.fill_round_rect(box_x, y, box_w, box_h, m.px(4.0), border_color);
+                    canvas.fill_round_rect(box_x + 1.0, y + 1.0, box_w - 2.0, box_h - 2.0, m.px(3.5), bg_color);
+
+                    let placeholder_style = m.style(m.theme.index_font, m.theme.colors.gloss);
+                    if card.drill_input.is_empty() {
+                        self.draw_text(
+                            canvas,
+                            "在这里输入你的英文表达...",
+                            &placeholder_style,
+                            box_x + m.px(8.0),
+                            y + m.px(4.0),
+                        );
+                    } else {
+                        let text_with_caret = format!("{}|", card.drill_input);
+                        self.draw_text(
+                            canvas,
+                            &text_with_caret,
+                            &active_text_style,
+                            box_x + m.px(8.0),
+                            y + m.px(4.0),
+                        );
+                    }
+                    y += box_h + m.row_padding();
+
+                    // 底部按钮：[对比 (Enter)] (青色实心) 与 [显示答案] (灰色边框)
+                    let btn_enter_text = "对比 (Enter)";
+                    let btn_enter_style = m.style(m.theme.index_font, Color::rgb(255, 255, 255));
+                    let btn_enter_w = self.measure(btn_enter_text, &btn_enter_style).width + m.px(20.0);
+                    let btn_h = line_height + m.px(2.0);
+
+                    canvas.fill_round_rect(box_x, y, btn_enter_w, btn_h, m.px(4.0), Color::rgb(0, 166, 153));
+                    self.draw_text(canvas, btn_enter_text, &btn_enter_style, box_x + m.px(10.0), y + m.px(2.0));
+
+                    let btn_show_x = box_x + btn_enter_w + m.column_gap();
+                    let btn_show_text = "显示答案";
+                    let btn_show_style = m.style(m.theme.index_font, m.theme.colors.text);
+                    let btn_show_w = self.measure(btn_show_text, &btn_show_style).width + m.px(20.0);
+                    canvas.fill_round_rect(btn_show_x, y, btn_show_w, btn_h, m.px(4.0), Color::rgba(128, 128, 128, 40));
+                    canvas.fill_round_rect(btn_show_x + 1.0, y + 1.0, btn_show_w - 2.0, btn_h - 2.0, m.px(3.5), Color::rgba(250, 250, 250, 255));
+                    self.draw_text(canvas, btn_show_text, &btn_show_style, btn_show_x + m.px(10.0), y + m.px(2.0));
 
                     if let Some(notice) = &card.drill_notice {
-                        let notice_style = m.style(m.theme.index_font, m.theme.colors.cloud);
-                        self.draw_text(canvas, notice, &notice_style, left + m.padding(), y);
-                        y += small_style.line_height + m.row_padding() / 2.0;
+                        y += btn_h + m.row_padding() / 2.0;
+                        let notice_style = m.style(m.theme.index_font, Color::rgb(250, 140, 22));
+                        self.draw_text(canvas, notice, &notice_style, box_x, y);
                     }
-
-                    // 输入框背景
-                    canvas.fill_round_rect(
-                        left + m.padding(),
-                        y,
-                        content_width - m.padding() * 2.0,
-                        line_height + m.px(6.0),
-                        m.px(4.0),
-                        m.theme.colors.highlight,
-                    );
-                    let input_text = format!("你的尝试: {}|", card.drill_input);
-                    self.draw_text(
-                        canvas,
-                        &input_text,
-                        &active_text_style,
-                        left + m.padding() + m.px(4.0),
-                        y + m.px(2.0),
-                    );
-                    y += line_height + m.px(8.0) + m.row_padding() / 2.0;
-
-                    // 底部按钮
-                    let btns = "[对比 (Enter)]   [看答案 (Tab)]   [退出 (Esc)]";
-                    let btn_style = m.style(m.theme.index_font, m.theme.colors.cloud);
-                    self.draw_text(canvas, btns, &btn_style, left + m.padding(), y);
                     return;
                 }
                 crate::frame::DrillStage::Comparing => {
@@ -367,12 +333,6 @@ impl Renderer {
                     return;
                 }
                 crate::frame::DrillStage::Compared => {
-                    if let Some(notice) = &card.drill_notice {
-                        let notice_style = m.style(m.theme.index_font, m.theme.colors.cloud);
-                        self.draw_text(canvas, notice, &notice_style, left + m.padding(), y);
-                        y += small_style.line_height + m.row_padding() / 2.0;
-                    }
-
                     let user_expr = card
                         .drill_attempt
                         .as_ref()
@@ -389,84 +349,73 @@ impl Renderer {
                         .map(|a| a.comparison.key_advice.as_str())
                         .unwrap_or("");
 
-                    let feedback_items = card
-                        .drill_attempt
-                        .as_ref()
-                        .map(|a| a.comparison.feedback_items.as_slice())
-                        .unwrap_or(&[]);
-                    let status = card.drill_attempt.as_ref().and_then(|a| a.comparison.status);
-                    let upgrade = card.drill_attempt.as_ref().and_then(|a| a.comparison.upgrade.as_ref());
-                    let is_b2_upgrade = status == Some(crate::frame::ComparisonStatus::ValidB2Upgrade);
+                    let total_w = content_width - m.padding() * 2.0;
+                    let card_gap = m.column_gap();
+                    let card_w = (total_w - card_gap) / 2.0;
+                    let card_h = line_height * 2.0 + m.px(12.0);
 
-                    // 1. 你的表达
-                    let r1 = if is_b2_upgrade {
-                        format!("🔵 你的表达: {} (语法正确 · B2)", user_expr)
+                    let left_card_x = left + m.padding();
+                    let right_card_x = left_card_x + card_w + card_gap;
+
+                    // 1. 左卡片：你的表达 (淡红底 #FFF1F0 + 浅红边 #FFCCC7)
+                    canvas.fill_round_rect(left_card_x, y, card_w, card_h, m.px(4.0), Color::rgb(255, 204, 199));
+                    canvas.fill_round_rect(left_card_x + 1.0, y + 1.0, card_w - 2.0, card_h - 2.0, m.px(3.5), Color::rgb(255, 241, 240));
+                    let red_title_style = m.style(m.theme.index_font, Color::rgb(207, 19, 34));
+                    self.draw_text(canvas, "❌ 你的表达", &red_title_style, left_card_x + m.px(8.0), y + m.px(4.0));
+                    self.draw_text(canvas, user_expr, &active_text_style, left_card_x + m.px(8.0), y + line_height + m.px(4.0));
+
+                    // 2. 右卡片：更自然的表达 (淡绿底 #F6FFED + 浅绿边 #B7EB8F)
+                    canvas.fill_round_rect(right_card_x, y, card_w, card_h, m.px(4.0), Color::rgb(183, 235, 143));
+                    canvas.fill_round_rect(right_card_x + 1.0, y + 1.0, card_w - 2.0, card_h - 2.0, m.px(3.5), Color::rgb(246, 255, 237));
+                    let green_title_style = m.style(m.theme.index_font, Color::rgb(56, 158, 13));
+                    self.draw_text(canvas, "✅ 更自然的表达", &green_title_style, right_card_x + m.px(8.0), y + m.px(4.0));
+                    let nat_display = format!("{} 🔊", natural_expr);
+                    self.draw_text(canvas, &nat_display, &active_text_style, right_card_x + m.px(8.0), y + line_height + m.px(4.0));
+
+                    y += card_h + m.row_padding();
+
+                    // 3. 关键建议
+                    let tip_title_style = m.style(m.theme.index_font, Color::rgb(24, 144, 255));
+                    self.draw_text(canvas, "ⓘ 关键建议", &tip_title_style, left_card_x, y);
+                    y += small_style.line_height + m.px(2.0);
+
+                    let advice_text = if !advice.is_empty() {
+                        advice
                     } else {
-                        format!("🔴 你的表达: {}", user_expr)
+                        "表达地道，用词准确。"
                     };
-                    let r1_style = if is_b2_upgrade { &tag_style } else { &active_text_style };
-                    self.draw_text(canvas, &r1, r1_style, left + m.padding(), y);
-                    y += line_height + m.row_padding() / 2.0;
+                    self.draw_text(canvas, advice_text, &small_style, left_card_x, y);
+                    y += small_style.line_height + m.row_padding();
 
-                    // 2. 更地道表达 / 高阶表达
-                    let r2 = if is_b2_upgrade {
-                        if let Some(up) = upgrade {
-                            format!("✨ 高阶表达 (C1): {}", up.c1_expression)
-                        } else {
-                            format!("🟢 地道表达: {}", natural_expr)
-                        }
-                    } else {
-                        format!("🟢 地道表达: {}", natural_expr)
-                    };
-                    self.draw_text(canvas, &r2, &tag_style, left + m.padding(), y);
-                    y += line_height + m.row_padding() / 2.0;
+                    // 4. 底部按钮：[🔄 再试一次 (R)]  [⭐ 保存到表达本 (S)]  [完成 (Enter)]
+                    let btn_h = line_height + m.px(2.0);
+                    let mut bx = left_card_x;
 
-                    // 3. 升级理由与语用差异
-                    if let Some(up) = upgrade {
-                        if is_b2_upgrade {
-                            let r_why = format!("💡 升级理由: {}", up.why_better);
-                            self.draw_text(canvas, &r_why, &small_style, left + m.padding(), y);
-                            y += small_style.line_height + m.row_padding() / 2.0;
+                    let retry_text = "🔄 再试一次 (R)";
+                    let retry_w = self.measure(retry_text, &small_style).width + m.px(16.0);
+                    canvas.fill_round_rect(bx, y, retry_w, btn_h, m.px(4.0), Color::rgba(128, 128, 128, 40));
+                    canvas.fill_round_rect(bx + 1.0, y + 1.0, retry_w - 2.0, btn_h - 2.0, m.px(3.5), Color::rgba(250, 250, 250, 255));
+                    self.draw_text(canvas, retry_text, &small_style, bx + m.px(8.0), y + m.px(2.0));
+                    bx += retry_w + m.column_gap();
 
-                            if !up.nuance_explanation.is_empty() {
-                                let r_nuance = format!("🌿 语用感知: {}", up.nuance_explanation);
-                                self.draw_text(canvas, &r_nuance, &small_style, left + m.padding(), y);
-                                y += small_style.line_height + m.row_padding() / 2.0;
-                            }
+                    let save_text = "⭐ 保存到表达本 (S)";
+                    let save_w = self.measure(save_text, &small_style).width + m.px(16.0);
+                    canvas.fill_round_rect(bx, y, save_w, btn_h, m.px(4.0), Color::rgba(128, 128, 128, 40));
+                    canvas.fill_round_rect(bx + 1.0, y + 1.0, save_w - 2.0, btn_h - 2.0, m.px(3.5), Color::rgba(250, 250, 250, 255));
+                    self.draw_text(canvas, save_text, &small_style, bx + m.px(8.0), y + m.px(2.0));
+                    bx += save_w + m.column_gap();
 
-                            if !up.register_variants.is_empty() {
-                                let r_reg = format!(
-                                    "🎭 语域风格: {}",
-                                    up.register_variants
-                                        .iter()
-                                        .map(|v| format!("[{}: {}]", v.register.label(), v.expression))
-                                        .collect::<Vec<_>>()
-                                        .join(" ")
-                                );
-                                self.draw_text(canvas, &r_reg, &tag_style, left + m.padding(), y);
-                                y += small_style.line_height + m.row_padding() / 2.0;
-                            }
-                        }
+                    let done_text = "完成 (Enter)";
+                    let done_style = m.style(m.theme.index_font, Color::rgb(255, 255, 255));
+                    let done_w = self.measure(done_text, &done_style).width + m.px(16.0);
+                    canvas.fill_round_rect(bx, y, done_w, btn_h, m.px(4.0), Color::rgb(0, 166, 153));
+                    self.draw_text(canvas, done_text, &done_style, bx + m.px(8.0), y + m.px(2.0));
+
+                    if let Some(notice) = &card.drill_notice {
+                        y += btn_h + m.row_padding() / 2.0;
+                        let notice_style = m.style(m.theme.index_font, Color::rgb(250, 140, 22));
+                        self.draw_text(canvas, notice, &notice_style, left_card_x, y);
                     }
-
-                    // 4. 结构化错误诊断 / 关键建议 (1~3条)
-                    if feedback_items.is_empty() {
-                        let r3 = format!("💡 关键建议: {}", advice);
-                        self.draw_text(canvas, &r3, &small_style, left + m.padding(), y);
-                        y += small_style.line_height + m.row_padding();
-                    } else {
-                        for item in feedback_items.iter().take(3) {
-                            let r_item = format!("💡 [{}] {}", item.label, item.explanation);
-                            self.draw_text(canvas, &r_item, &small_style, left + m.padding(), y);
-                            y += small_style.line_height + m.row_padding() / 2.0;
-                        }
-                        y += m.row_padding() / 2.0;
-                    }
-
-                    // 5. 底部按钮
-                    let btns = "[🔄 再试一次 (Tab)]   [⭐ 保存 (Ctrl+S)]   [📊 画像]   [完成 (Esc)]";
-                    let btn_style = m.style(m.theme.index_font, m.theme.colors.cloud);
-                    self.draw_text(canvas, btns, &btn_style, left + m.padding(), y);
                     return;
                 }
                 crate::frame::DrillStage::Profile => {
@@ -549,16 +498,16 @@ impl Renderer {
         let mut x = left + m.padding();
         x += self.draw_text(canvas, flag_prefix, &flag_style, x, y);
 
-        let main_text = match card.status {
-            LearningStatus::Loading => "正在推荐地道口语...",
-            LearningStatus::Failed => "暂无地道口语推荐",
+        let (main_text, has_audio) = match card.status {
+            LearningStatus::Loading => ("正在推荐地道口语……", false),
+            LearningStatus::Failed => ("暂时没有译文", false),
             LearningStatus::Ready => {
                 if let Some(prim) = &card.primary {
-                    &prim.text
+                    (prim.text.as_str(), true)
                 } else if let Some(first) = card.alternatives.first() {
-                    &first.text
+                    (first.text.as_str(), true)
                 } else {
-                    ""
+                    ("暂时没有译文", false)
                 }
             }
         };
@@ -567,39 +516,48 @@ impl Renderer {
         } else {
             &style
         };
-        self.draw_text(canvas, main_text, text_color_style, x, y);
+        x += self.draw_text(canvas, main_text, text_color_style, x, y);
 
-        // [📚 复习 (N)]、[Try English] 与「更多译法 ▾ / 收起 ▴」
-        let review_btn = if card.today_due_count > 0 {
-            format!("[📚 复习 ({})]", card.today_due_count)
-        } else {
-            "[📚 复习]".to_string()
-        };
-        let review_style = m.style(m.theme.index_font, m.theme.colors.fresh);
-        let review_size = self.measure(&review_btn, &review_style);
+        if has_audio {
+            let audio_style = m.style(m.theme.index_font, m.theme.colors.cloud);
+            self.draw_text(canvas, " 🔊", &audio_style, x, y);
+        }
 
-        let drill_btn = "[Try English]";
-        let drill_style = m.style(m.theme.index_font, m.theme.colors.fresh);
-        let drill_size = self.measure(drill_btn, &drill_style);
+        // 右侧仅保留两个按钮：[Try English] 与「更多译法 ∨ / 收起 ∧」
+        let drill_text = "Try English";
+        let drill_style = m.style(m.theme.index_font, Color::rgb(0, 166, 153));
+        let drill_w = self.measure(drill_text, &drill_style).width + m.px(12.0);
+        let btn_h = line_height;
 
-        let btn_text = if card.expanded { "收起 ▴" } else { "更多译法 ▾" };
+        let btn_text = if card.expanded { "收起 ∧" } else { "更多译法 ∨" };
         let btn_style = m.style(m.theme.index_font, m.theme.colors.cloud);
-        let btn_size = self.measure(btn_text, &btn_style);
+        let btn_w = self.measure(btn_text, &btn_style).width + m.px(12.0);
 
-        let btn_x = left + content_width - m.padding() - btn_size.width;
-        let drill_x = btn_x - m.column_gap() - drill_size.width;
-        let review_x = drill_x - m.column_gap() - review_size.width;
+        let btn_x = left + content_width - m.padding() - btn_w;
+        let drill_x = btn_x - m.column_gap() - drill_w;
 
-        self.draw_text(canvas, &review_btn, &review_style, review_x, y);
-        self.draw_text(canvas, drill_btn, &drill_style, drill_x, y);
-        self.draw_text(canvas, btn_text, &btn_style, btn_x, y);
+        // Try English button
+        canvas.fill_round_rect(drill_x, y - m.px(1.0), drill_w, btn_h, m.px(4.0), Color::rgba(0, 166, 153, 30));
+        self.draw_text(canvas, drill_text, &drill_style, drill_x + m.px(6.0), y);
+
+        // 更多译法 button
+        canvas.fill_round_rect(btn_x, y - m.px(1.0), btn_w, btn_h, m.px(4.0), Color::rgba(128, 128, 128, 20));
+        self.draw_text(canvas, btn_text, &btn_style, btn_x + m.px(6.0), y);
 
         let line_height = style.line_height.max(m.px(m.theme.annotation_font.line_height));
         y += line_height + m.row_padding();
 
-        // 2. Layer 4: 备选列表
+        // 2. Layer 4: 渐进展开列表 (更多译法: 1–5 条紧凑条目)
         if card.expanded && !card.alternatives.is_empty() {
-            for (idx, alt) in card.alternatives.iter().enumerate() {
+            canvas.fill_rect(
+                left + m.padding(),
+                y - m.row_padding() / 2.0,
+                content_width - m.padding() * 2.0,
+                1.0,
+                Color::rgba(128, 128, 128, 30),
+            );
+
+            for (idx, alt) in card.alternatives.iter().take(5).enumerate() {
                 let is_selected = card.selected_index == Some(idx);
                 let alt_y = y;
                 let row_h = line_height + m.row_padding();
@@ -617,51 +575,43 @@ impl Renderer {
                 }
 
                 let mut ax = left + m.padding() + m.px(4.0);
-                let tag_str = format!("[{}] ", alt.tag);
-                ax += self.draw_text(canvas, &tag_str, &tag_style, ax, alt_y);
-                self.draw_text(canvas, &alt.text, &active_text_style, ax, alt_y);
+
+                // Index: e.g. "1. "
+                let idx_str = format!("{}. ", idx + 1);
+                let idx_style = m.style(m.theme.index_font, m.theme.colors.cloud);
+                ax += self.draw_text(canvas, &idx_str, &idx_style, ax, alt_y);
+
+                // English text
+                ax += self.draw_text(canvas, &alt.text, &active_text_style, ax, alt_y);
+                ax += m.column_gap();
+
+                // Tag pill
+                let tag_raw = if alt.tag.is_empty() { "Natural" } else { alt.tag.as_str() };
+                let (tag_bg, tag_fg) = match tag_raw {
+                    "Natural" => (Color::rgba(82, 196, 26, 30), Color::rgb(56, 158, 13)),
+                    "Casual" => (Color::rgba(24, 144, 255, 30), Color::rgb(9, 109, 217)),
+                    "British" => (Color::rgba(114, 46, 209, 30), Color::rgb(83, 29, 171)),
+                    _ => (Color::rgba(128, 128, 128, 30), Color::rgb(100, 100, 100)),
+                };
+                let tag_font_style = m.style(m.theme.index_font, tag_fg);
+                let tag_w = self.measure(tag_raw, &tag_font_style).width + m.px(8.0);
+                let tag_h = small_style.line_height + m.px(2.0);
+                canvas.fill_round_rect(ax, alt_y + m.px(1.0), tag_w, tag_h, m.px(3.0), tag_bg);
+                self.draw_text(canvas, tag_raw, &tag_font_style, ax + m.px(4.0), alt_y + m.px(1.0));
+                ax += tag_w + m.column_gap();
+
+                // Meaning
+                if !alt.meaning.is_empty() {
+                    let meaning_str = format!("› {}", alt.meaning);
+                    ax += self.draw_text(canvas, &meaning_str, &small_style, ax, alt_y);
+                    ax += m.column_gap();
+                }
+
+                // Audio icon
+                let audio_style = m.style(m.theme.index_font, m.theme.colors.cloud);
+                self.draw_text(canvas, "🔊", &audio_style, ax, alt_y);
 
                 y += row_h;
-            }
-
-            // 3. 选中表达的详览卡片
-            if let Some(sel_idx) = card.selected_index {
-                if let Some(alt) = card.alternatives.get(sel_idx) {
-                    let small_style = m.style(m.theme.index_font, m.theme.colors.pos);
-                    let card_box_y = y + m.px(2.0);
-                    let detail_lines = [
-                        format!("含义: {}", alt.meaning),
-                        format!("语气: {}", alt.tone),
-                        format!("场景: {}", alt.scenario),
-                        format!("频度: {}", alt.commonality),
-                        format!("为什么地道: {}", alt.why_natural),
-                    ];
-                    let card_h = (small_style.line_height + m.px(2.0)) * 5.0 + m.px(8.0);
-
-                    // 卡片背景底色
-                    canvas.fill_round_rect(
-                        left + m.padding() / 2.0,
-                        card_box_y,
-                        content_width - m.padding(),
-                        card_h,
-                        m.px(6.0),
-                        Color::rgba(128, 128, 128, 20),
-                    );
-
-                    let mut dy = card_box_y + m.px(4.0);
-                    for line in &detail_lines {
-                        self.draw_text(canvas, line, &small_style, left + m.padding() + m.px(6.0), dy);
-                        dy += small_style.line_height + m.px(2.0);
-                    }
-                }
-            }
-
-            if let Some(up) = &card.upgrade {
-                let u1 = format!("✨ 进阶升级 (C1): {}", up.c1_expression);
-                let u2 = format!("💡 升级理由: {}", up.why_better);
-                self.draw_text(canvas, &u1, &tag_style, left + m.padding() + m.px(4.0), y);
-                y += small_style.line_height + m.px(2.0);
-                self.draw_text(canvas, &u2, &small_style, left + m.padding() + m.px(4.0), y);
             }
         }
     }

@@ -7,8 +7,9 @@ use std::time::Instant;
 
 use clap::Parser;
 use qingjian_render::{
-    FontLibrary, Frame, Layout, Preedit, PreeditSegment, PreeditStyle, Renderer, Row, Shadow,
-    StatusCell, Theme, Tone,
+    ComparisonResult, DrillStage, FontLibrary, Frame, Layout, LearningCard, LearningExpression,
+    LearningMode, LearningStatus, Preedit, PreeditSegment, PreeditStyle, RecallAttempt, Renderer,
+    Row, Shadow, StatusCell, Theme, Tone,
 };
 
 #[derive(Parser)]
@@ -78,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let shadow = (!args.no_shadow).then_some(Shadow::mac_panel());
 
-    let scenes: [(&str, Frame, Layout); 7] = [
+    let scenes: [(&str, Frame, Layout); 12] = [
         ("matrix-horizontal", matrix(), Layout::Horizontal),
         ("nihao-vertical", nihao(), Layout::Vertical),
         (
@@ -94,6 +95,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Layout::Horizontal,
         ),
         ("probe", probe(), Layout::Vertical),
+        ("daily-mode", scene_daily(), Layout::Horizontal),
+        ("learn-mode", scene_learn(), Layout::Horizontal),
+        ("more-translations", scene_more_translations(), Layout::Horizontal),
+        ("drill-input", scene_drill_input(), Layout::Horizontal),
+        ("drill-compare", scene_drill_compare(), Layout::Horizontal),
     ];
     for (theme_name, theme) in [("light", Theme::light()), ("dark", Theme::dark())] {
         for (scene, frame, layout) in &scenes {
@@ -114,25 +120,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Windows 的悬浮状态条：三格
-    let cells = [
-        StatusCell::text("中 · 小鹤", true),
-        StatusCell::text("，。", true),
-        StatusCell::Gear,
+    // Windows 的悬浮状态条：四格（Daily灰/Learn青/Drill橙）
+    let status_scenes: [(&str, [StatusCell; 4]); 3] = [
+        ("status-daily", [
+            StatusCell::text("中 · 小鹤", true),
+            StatusCell::text("，。", true),
+            StatusCell::text("学", false),
+            StatusCell::Gear,
+        ]),
+        ("status-learn", [
+            StatusCell::text("中 · 小鹤", true),
+            StatusCell::text("，。", true),
+            StatusCell::text("学", true),
+            StatusCell::Gear,
+        ]),
+        ("status-drill", [
+            StatusCell::text("中 · 小鹤", true),
+            StatusCell::text("，。", true),
+            StatusCell::colored("学", qingjian_render::Color::rgb(249, 115, 22)),
+            StatusCell::Gear,
+        ]),
     ];
     for (theme_name, theme) in [("light", Theme::light()), ("dark", Theme::dark())] {
-        let status = renderer.render_status(&cells, &theme, args.scale, shadow.as_ref())?;
-        let path = args.out.join(format!("status-{theme_name}.png"));
-        status.rendered.pixmap.save_png(&path)?;
-        let (w, h) = status.rendered.content_size_points();
-        println!(
-            "{:<28} {:>4.0}×{:<4.0}pt  格边界 {:?}  {}",
-            format!("status-{theme_name}"),
-            w,
-            h,
-            status.cell_edges,
-            path.display()
-        );
+        for (scene_name, cells) in &status_scenes {
+            let status = renderer.render_status(cells, &theme, args.scale, shadow.as_ref())?;
+            let path = args.out.join(format!("{scene_name}-{theme_name}.png"));
+            status.rendered.pixmap.save_png(&path)?;
+            let (w, h) = status.rendered.content_size_points();
+            println!(
+                "{:<28} {:>4.0}×{:<4.0}pt  格边界 {:?}  {}",
+                format!("{scene_name}-{theme_name}"),
+                w,
+                h,
+                status.cell_edges,
+                path.display()
+            );
+        }
     }
 
     for probe in [
@@ -408,5 +431,111 @@ fn annotated(index: usize, text: &str, annotation: &[(&str, Tone)], cloud: bool)
             .map(|(s, tone)| ((*s).to_owned(), *tone))
             .collect(),
         cloud,
+    }
+}
+
+fn scene_daily() -> Frame {
+    Frame {
+        preedit: Some(Preedit::plain("nihao", 5)),
+        rows: vec![
+            Row::plain(0, "你好"),
+            Row::plain(1, "您好"),
+            Row::plain(2, "泥好"),
+        ],
+        highlighted: Some(0),
+        learning_mode: LearningMode::Daily,
+        learning_card: None,
+        ..Default::default()
+    }
+}
+
+fn scene_learn() -> Frame {
+    Frame {
+        preedit: Some(Preedit::plain("fangsong", 8)),
+        rows: vec![
+            Row::plain(0, "放松"),
+            Row::plain(1, "放宽"),
+        ],
+        highlighted: Some(0),
+        learning_mode: LearningMode::Learn,
+        learning_card: Some(LearningCard {
+            target_text: "放松".to_owned(),
+            status: LearningStatus::Ready,
+            primary: Some(LearningExpression {
+                text: "Take it easy".to_owned(),
+                tag: "Natural".to_owned(),
+                meaning: "放轻松，别紧张".to_owned(),
+                ..Default::default()
+            }),
+            alternatives: vec![
+                LearningExpression {
+                    text: "Take it easy".to_owned(),
+                    tag: "Natural".to_owned(),
+                    meaning: "放轻松，别紧张".to_owned(),
+                    ..Default::default()
+                },
+                LearningExpression {
+                    text: "Relax".to_owned(),
+                    tag: "Casual".to_owned(),
+                    meaning: "放松点".to_owned(),
+                    ..Default::default()
+                },
+                LearningExpression {
+                    text: "Chill out".to_owned(),
+                    tag: "Casual".to_owned(),
+                    meaning: "别激动，冷静下".to_owned(),
+                    ..Default::default()
+                },
+            ],
+            expanded: false,
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+fn scene_more_translations() -> Frame {
+    let mut frame = scene_learn();
+    if let Some(card) = &mut frame.learning_card {
+        card.expanded = true;
+        card.selected_index = Some(0);
+    }
+    frame
+}
+
+fn scene_drill_input() -> Frame {
+    Frame {
+        rows: vec![Row::plain(0, "放轻松")],
+        learning_mode: LearningMode::Drill,
+        learning_card: Some(LearningCard {
+            target_text: "放轻松".to_owned(),
+            drill_stage: Some(DrillStage::Input),
+            drill_input: "Take it easy".to_owned(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+fn scene_drill_compare() -> Frame {
+    Frame {
+        rows: vec![Row::plain(0, "放轻松")],
+        learning_mode: LearningMode::Drill,
+        learning_card: Some(LearningCard {
+            target_text: "放轻松".to_owned(),
+            drill_stage: Some(DrillStage::Compared),
+            drill_input: "Relax yourself".to_owned(),
+            drill_attempt: Some(RecallAttempt {
+                user_attempt: "Relax yourself".to_owned(),
+                comparison: ComparisonResult {
+                    natural_expression: "Take it easy".to_owned(),
+                    key_advice: "口语中用 Take it easy 或 Relax 即可，加 yourself 显得生硬不自然。".to_owned(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
     }
 }

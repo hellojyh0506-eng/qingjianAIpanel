@@ -52,7 +52,7 @@ impl Default for PredictConfig {
             model: "Qwen/Qwen2.5-7B-Instruct".to_owned(),
             api_key: None,
             api_key_env: "QINGJIAN_API_KEY".to_owned(),
-            timeout_ms: 5000,
+            timeout_ms: 3000,
             debounce_ms: 150,
             lookback: 64,
             lookahead: 32,

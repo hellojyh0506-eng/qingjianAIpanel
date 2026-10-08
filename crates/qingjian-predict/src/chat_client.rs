@@ -199,13 +199,15 @@ fn host_of(base_url: &str) -> Option<String> {
         .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
 }
 
-/// 按接口地址决定 HTTP 客户端：OpenCode 带上它要求的会话头，其他服务用默认客户端。
-/// 头装不上（理论上不会）就退回默认客户端，请求照发，让服务端的报错说明问题。
+/// 按接口地址决定 HTTP 客户端：国内服务直连（绕过死代理），OpenCode 带上它要求的会话头。
 fn http_client(base_url: &str) -> reqwest::Client {
     let mut builder = reqwest::Client::builder()
-        .connect_timeout(Duration::from_millis(2500))
+        .connect_timeout(Duration::from_millis(1500))
         .pool_idle_timeout(Duration::from_secs(90))
         .tcp_keepalive(Duration::from_secs(30));
+    if is_domestic(base_url) {
+        builder = builder.no_proxy();
+    }
     if is_opencode(base_url) {
         if let Ok(value) = HeaderValue::from_str(&SESSION_ID) {
             let mut headers = HeaderMap::new();
@@ -214,6 +216,25 @@ fn http_client(base_url: &str) -> reqwest::Client {
         }
     }
     builder.build().unwrap_or_default()
+}
+
+/// 接口地址是否指向国内服务，若是则直连，避免被死代理（如 127.0.0.1:7897）拖死。
+fn is_domestic(base_url: &str) -> bool {
+    host_of(base_url).is_some_and(|host| {
+        host.ends_with(".cn")
+            || host == "deepseek.com"
+            || host.ends_with(".deepseek.com")
+            || host == "z.ai"
+            || host.ends_with(".z.ai")
+            || host == "minimaxi.com"
+            || host.ends_with(".minimaxi.com")
+            || host == "stepfun.com"
+            || host.ends_with(".stepfun.com")
+            || host == "baichuan-ai.com"
+            || host.ends_with(".baichuan-ai.com")
+            || host == "localhost"
+            || host == "127.0.0.1"
+    })
 }
 
 /// 接口地址是否指向 OpenCode（`opencode.ai` 及其子域）。
@@ -285,6 +306,18 @@ mod tests {
         assert!(!is_opencode("https://api.deepseek.com"));
         assert!(!is_opencode("https://example.com/opencode.ai"));
         assert!(!is_opencode("not a url"));
+    }
+
+    #[test]
+    fn domestic_hosts_are_recognized() {
+        assert!(is_domestic("https://api.siliconflow.cn/v1"));
+        assert!(is_domestic("https://open.bigmodel.cn/api/paas/v4"));
+        assert!(is_domestic("https://api.deepseek.com"));
+        assert!(is_domestic("https://api.z.ai/v1"));
+        assert!(is_domestic("http://127.0.0.1:11434/v1"));
+        assert!(is_domestic("http://localhost:8080/v1"));
+        assert!(!is_domestic("https://api.openai.com/v1"));
+        assert!(!is_domestic("https://opencode.ai/zen/go/v1"));
     }
 
     #[test]
