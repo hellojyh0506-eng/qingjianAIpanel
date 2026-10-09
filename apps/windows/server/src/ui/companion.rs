@@ -1,5 +1,6 @@
 //! English Assistant (学习助手伴侣窗)。
-//! 独立的轻量 Companion Panel，WS_EX_NOACTIVATE，小、白、圆角、轻阴影，绝不抢宿主焦点。
+//! 独立的轻量 Companion Panel，WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE，
+//! 支持鼠标拖动、记忆位置、动态内容自适应尺寸（AutoFit）、高 DPI 多屏适配。
 //! 包含：当前候选表达、更多地道口语、用法与高频搭配、场景示例、收藏到表达本与直达练习。
 
 use std::cell::{Cell, RefCell};
@@ -11,10 +12,12 @@ use windows::Win32::Graphics::Gdi::{
     SetBkMode, SetTextColor, TRANSPARENT, TextOutW, FW_BOLD, FW_NORMAL,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, HTCLIENT, IDC_ARROW, LoadCursorW,
-    MA_NOACTIVATE, SW_HIDE, SW_SHOWNA, ShowWindow, WM_LBUTTONDOWN, WM_MOUSEACTIVATE,
-    WM_NCHITTEST, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    CreateWindowExW, DefWindowProcW, GetWindowRect, HTCAPTION, HTCLIENT, IDC_ARROW,
+    LoadCursorW, MA_NOACTIVATE, SW_HIDE, SW_SHOWNA, SendMessageW, ShowWindow,
+    WM_EXITSIZEMOVE, WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_MOVE, WM_NCHITTEST,
+    WM_NCLBUTTONDOWN, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{PCWSTR, Result, w};
@@ -26,9 +29,6 @@ use crate::dispatch::CandidateAction;
 
 const CLASS_NAME: PCWSTR = w!("QingjianCompanionWindow");
 static CLASS: WindowClass = WindowClass::new();
-
-const COMPANION_WIDTH: i32 = 430;
-const COMPANION_HEIGHT: i32 = 280;
 
 /// 更多表达备选项
 #[derive(Debug, Clone)]
@@ -52,61 +52,41 @@ pub struct CompanionData {
     pub examples: Vec<(String, String)>,
     pub ielts_friendly: String,
     pub saved_notice: Option<String>,
+    pub is_loading: bool,
+}
+
+impl CompanionData {
+    pub fn loading(target_chinese: String, primary_english: String) -> Self {
+        Self {
+            target_chinese,
+            primary_english,
+            phonetic: String::new(),
+            explanation: String::new(),
+            active_tab: 0,
+            alternatives: Vec::new(),
+            collocations: Vec::new(),
+            examples: Vec::new(),
+            ielts_friendly: String::new(),
+            saved_notice: None,
+            is_loading: true,
+        }
+    }
 }
 
 impl Default for CompanionData {
     fn default() -> Self {
         Self {
-            target_chinese: "确实有道理".to_string(),
-            primary_english: "That makes perfect sense.".to_string(),
-            phonetic: "/meɪk sens/".to_string(),
-            explanation: "表示“有道理/讲得通，能够理解”。这是日常交流中最常用、最自然的方式。".to_string(),
+            target_chinese: String::new(),
+            primary_english: String::new(),
+            phonetic: String::new(),
+            explanation: String::new(),
             active_tab: 0,
-            alternatives: vec![
-                ExpressionVariant {
-                    text: "That totally makes sense.".to_string(),
-                    tag: "Casual".to_string(),
-                    meaning: "完全讲得通".to_string(),
-                    why_natural: "口语常用强调".to_string(),
-                },
-                ExpressionVariant {
-                    text: "I see what you mean.".to_string(),
-                    tag: "Natural".to_string(),
-                    meaning: "我明白你的意思".to_string(),
-                    why_natural: "日常沟通赞同".to_string(),
-                },
-                ExpressionVariant {
-                    text: "I get where you're coming from.".to_string(),
-                    tag: "Natural".to_string(),
-                    meaning: "我理解你的立场".to_string(),
-                    why_natural: "共情地道口语".to_string(),
-                },
-                ExpressionVariant {
-                    text: "That's a good point.".to_string(),
-                    tag: "Neutral".to_string(),
-                    meaning: "说得有道理".to_string(),
-                    why_natural: "探讨或开会通用".to_string(),
-                },
-                ExpressionVariant {
-                    text: "That makes a lot of sense.".to_string(),
-                    tag: "Stronger".to_string(),
-                    meaning: "非常有道理".to_string(),
-                    why_natural: "程度加强表达".to_string(),
-                },
-            ],
-            collocations: vec![
-                "make perfect sense".to_string(),
-                "in a way".to_string(),
-                "I see your point".to_string(),
-                "that explains it".to_string(),
-                "it adds up".to_string(),
-            ],
-            examples: vec![
-                ("That makes perfect sense.".to_string(), "确实很有道理。".to_string()),
-                ("It makes a lot of sense now.".to_string(), "现在我彻底明白了。".to_string()),
-            ],
-            ielts_friendly: "That is entirely logical and coherent.".to_string(),
+            alternatives: Vec::new(),
+            collocations: Vec::new(),
+            examples: Vec::new(),
+            ielts_friendly: String::new(),
             saved_notice: None,
+            is_loading: false,
         }
     }
 }
@@ -115,6 +95,9 @@ pub struct CompanionWindow {
     hwnd: HWND,
     data: RefCell<CompanionData>,
     last_anchor: Cell<Option<RECT>>,
+    user_pos: Cell<Option<(i32, i32)>>,
+    current_width: Cell<i32>,
+    current_height: Cell<i32>,
     dark: Cell<bool>,
     action_cb: Box<dyn Fn(CandidateAction)>,
 }
@@ -148,6 +131,9 @@ impl CompanionWindow {
             hwnd,
             data: RefCell::new(CompanionData::default()),
             last_anchor: Cell::new(None),
+            user_pos: Cell::new(None),
+            current_width: Cell::new(420),
+            current_height: Cell::new(280),
             dark: Cell::new(false),
             action_cb,
         });
@@ -189,11 +175,43 @@ impl CompanionWindow {
         self.last_anchor.set(Some(anchor));
         let dpi = unsafe { GetDpiForWindow(self.hwnd) };
         let dpi = if dpi == 0 { 96 } else { dpi };
+        let scale = dpi as f32 / 96.0;
         let margin = layered::shadow_margin(dpi);
-        let content = (COMPANION_WIDTH, COMPANION_HEIGHT);
 
-        // 优先放在候选窗右侧，若右边越界则贴在下方
-        let (pos_x, pos_y) = calculate_position(anchor, content, margin);
+        // 动态计算 AutoFit 尺寸 (Logical px 经过 DPI 缩放)
+        let logical_width = 430;
+        let logical_height = {
+            let d = self.data.borrow();
+            if d.is_loading {
+                230
+            } else {
+                match d.active_tab {
+                    0 => {
+                        // 更多译法：每条约 44px + 头部与底栏
+                        let items_h = (d.alternatives.len().clamp(2, 5) as i32) * 44;
+                        (170 + items_h).clamp(300, 440)
+                    }
+                    1 => 360, // 用法说明
+                    2 => 320, // 相关搭配
+                    3 => 300, // 场景示例
+                    _ => 300,
+                }
+            }
+        };
+
+        let content_w = (logical_width as f32 * scale).round() as i32;
+        let content_h = (logical_height as f32 * scale).round() as i32;
+        self.current_width.set(content_w);
+        self.current_height.set(content_h);
+
+        let content = (content_w, content_h);
+
+        // 位置定位：优先用户上次拖动的位置，否则智能靠近候选窗
+        let (pos_x, pos_y) = if let Some(up) = self.user_pos.get() {
+            clamp_position_to_monitor(up, content, margin)
+        } else {
+            calculate_position(anchor, content, margin)
+        };
 
         let data = self.data.borrow();
         let bg_color = if self.dark.get() {
@@ -212,7 +230,7 @@ impl CompanionWindow {
                 background: bg_color,
                 corner_radius: 12,
                 paint: &|hdc, client| {
-                    paint_companion(hdc, &data, client, self.dark.get());
+                    paint_companion(hdc, &data, client, self.dark.get(), scale);
                 },
             },
         )?;
@@ -225,164 +243,323 @@ thread_local! {
     static COMPANIONS: RefCell<std::collections::HashMap<isize, Rc<CompanionWindow>>> = RefCell::new(std::collections::HashMap::new());
 }
 
+fn clamp_position_to_monitor(pos: (i32, i32), content: (i32, i32), margin: i32) -> (i32, i32) {
+    let work = monitor::work_area_near(windows::Win32::Foundation::POINT {
+        x: pos.0,
+        y: pos.1,
+    });
+    let x = pos.0.clamp(work.left + margin, (work.right - content.0 - margin).max(work.left));
+    let y = pos.1.clamp(work.top + margin, (work.bottom - content.1 - margin).max(work.top));
+    (x, y)
+}
+
 fn calculate_position(anchor: RECT, content: (i32, i32), margin: i32) -> (i32, i32) {
     let work = monitor::work_area_near(windows::Win32::Foundation::POINT {
         x: anchor.left,
         y: anchor.top,
     });
-    // 1. 尝试放在 Candidate Window 右侧相距 8px
+    // 1. 优先尝试放在 Candidate Window 右侧相距 8px
     let right_x = anchor.right + 8;
-    let right_y = anchor.top;
     if right_x + content.0 + margin <= work.right {
-        let y = right_y.clamp(work.top + margin, work.bottom - content.1 - margin);
+        let y = anchor.top.clamp(work.top + margin, (work.bottom - content.1 - margin).max(work.top));
         return (right_x, y);
     }
     // 2. 尝试放在 Candidate Window 下方相距 8px
-    let bottom_x = anchor.left.clamp(work.top + margin, work.right - content.0 - margin);
     let bottom_y = anchor.bottom + 8;
     if bottom_y + content.1 + margin <= work.bottom {
-        return (bottom_x, bottom_y);
+        let x = anchor.left.clamp(work.left + margin, (work.right - content.0 - margin).max(work.left));
+        return (x, bottom_y);
     }
-    // 3. 兜底在工作区内保证完全可见
-    let x = (anchor.left - content.0 - 8).max(work.left + margin);
-    let y = anchor.top.clamp(work.top + margin, work.bottom - content.1 - margin);
+    // 3. 尝试放在 Candidate Window 上方相距 8px
+    let top_y = anchor.top - content.1 - 8;
+    if top_y >= work.top + margin {
+        let x = anchor.left.clamp(work.left + margin, (work.right - content.0 - margin).max(work.left));
+        return (x, top_y);
+    }
+    // 4. 尝试放在 Candidate Window 左侧相距 8px
+    let left_x = anchor.left - content.0 - 8;
+    if left_x >= work.left + margin {
+        let y = anchor.top.clamp(work.top + margin, (work.bottom - content.1 - margin).max(work.top));
+        return (left_x, y);
+    }
+    // 5. 最终兜底：在屏幕右下角安全展示，避免居中挡住输入焦点
+    let x = (work.right - content.0 - margin - 20).max(work.left + margin);
+    let y = (work.bottom - content.1 - margin - 60).max(work.top + margin);
     (x, y)
 }
 
-fn paint_companion(hdc: HDC, data: &CompanionData, client: RECT, dark: bool) {
+fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
+    COLORREF((r as u32) | ((g as u32) << 8) | ((b as u32) << 16))
+}
+
+fn paint_companion(hdc: HDC, data: &CompanionData, client: RECT, dark: bool, scale: f32) {
     unsafe { SetBkMode(hdc, TRANSPARENT) };
 
-    let text_color = if dark { COLORREF(0x00E0E0E0) } else { COLORREF(0x001F1F1F) };
-    let sub_color = if dark { COLORREF(0x00909090) } else { COLORREF(0x006B7280) };
-    let brand_color = COLORREF(0x001673F9);
-    let badge_bg = if dark { COLORREF(0x00333333) } else { COLORREF(0x00F3F4F6) };
-    let active_bg = if dark { COLORREF(0x003A404D) } else { COLORREF(0x00E0E7FF) };
+    let px = |val: i32| (val as f32 * scale).round() as i32;
 
-    let font_title = create_font(12, FW_NORMAL, false);
-    let font_target = create_font(13, FW_NORMAL, false);
-    let font_primary = create_font(16, FW_BOLD, false);
-    let font_tab = create_font(12, FW_NORMAL, false);
-    let font_body = create_font(12, FW_NORMAL, false);
-    let font_tag = create_font(11, FW_NORMAL, false);
+    let text_color = if dark { rgb(224, 224, 224) } else { rgb(31, 31, 31) };
+    let sub_color = if dark { rgb(144, 144, 144) } else { rgb(107, 114, 128) };
+    let brand_color = rgb(26, 115, 232); // Google Blue #1A73E8
+    let badge_bg = if dark { rgb(51, 51, 51) } else { rgb(243, 244, 246) };
+    let active_bg = if dark { rgb(58, 64, 77) } else { rgb(232, 240, 254) };
+    let green_color = rgb(19, 115, 51);
 
-    // 1. 顶部标题栏 (Header)
-    draw_text_gdi(hdc, font_title, sub_color, 16, 12, "🇺🇸 English Assistant · 学习助手");
-    draw_text_gdi(hdc, font_title, sub_color, client.right - 28, 12, "×");
+    let font_title = create_font(px(12), FW_NORMAL, false);
+    let font_target = create_font(px(13), FW_NORMAL, false);
+    let font_primary = create_font(px(15), FW_BOLD, false);
+    let font_tab = create_font(px(12), FW_NORMAL, false);
+    let font_body = create_font(px(12), FW_NORMAL, false);
+    let font_tag = create_font(px(11), FW_NORMAL, false);
 
-    // 2. 焦点主词条卡片区域
-    draw_text_gdi(hdc, font_target, sub_color, 16, 38, &format!("目标表达：{}", data.target_chinese));
-    let prim_w = draw_text_gdi(hdc, font_primary, brand_color, 16, 58, &data.primary_english);
-    draw_text_gdi(hdc, font_target, sub_color, 16 + prim_w + 10, 60, "🔊   📋");
+    // 1. 顶部标题栏 (可拖动区域)
+    let title_text = match data.active_tab {
+        0 => "English Assistant · 更多译法",
+        1 => "English Assistant · 用法说明",
+        2 => "English Assistant · 相关搭配",
+        3 => "English Assistant · 场景示例",
+        _ => "English Assistant · 学习助手",
+    };
+    draw_text_gdi(hdc, font_title, sub_color, px(16), px(10), title_text);
+    draw_text_gdi(hdc, font_title, sub_color, client.right - px(48), px(10), "📌");
+    draw_text_gdi(hdc, font_title, sub_color, client.right - px(22), px(10), "×");
+
+    // 2. 焦点表达信息
+    draw_text_gdi(hdc, font_target, text_color, px(16), px(34), &data.target_chinese);
+    let prim_text = if data.primary_english.is_empty() {
+        "正在分析当前表达……"
+    } else {
+        &data.primary_english
+    };
+    let prim_w = draw_text_gdi(hdc, font_primary, brand_color, px(16), px(54), prim_text);
+    if !data.primary_english.is_empty() && !data.is_loading {
+        draw_text_gdi(hdc, font_target, sub_color, px(16) + prim_w + px(8), px(56), "🔊");
+    }
 
     // 分隔线
-    let sep = RECT { left: 16, top: 88, right: client.right - 16, bottom: 89 };
-    super::candidates::view::fill_rect(hdc, sep, if dark { COLORREF(0x00333333) } else { COLORREF(0x00E5E7EB) });
+    let sep = RECT { left: px(16), top: px(80), right: client.right - px(16), bottom: px(81) };
+    super::candidates::view::fill_rect(hdc, sep, if dark { rgb(51, 51, 51) } else { rgb(229, 231, 235) });
 
-    // 3. 导航 Tab 栏
-    let tabs = ["更多译法", "用法说明", "相关搭配", "场景示例"];
-    let mut tab_x = 16;
-    for (i, name) in tabs.iter().enumerate() {
-        let is_active = data.active_tab == i;
-        let tab_w = 64;
-        let tab_rect = RECT { left: tab_x, top: 96, right: tab_x + tab_w, bottom: 120 };
-        if is_active {
-            super::candidates::view::fill_round_rect(hdc, tab_rect, active_bg, 4);
-            draw_text_gdi(hdc, font_tab, brand_color, tab_x + 8, 100, name);
+    if data.is_loading && data.alternatives.is_empty() {
+        // 加载中轻量提示
+        let load_box = RECT { left: px(16), top: px(96), right: client.right - px(16), bottom: px(160) };
+        super::candidates::view::fill_round_rect(hdc, load_box, badge_bg, 6);
+        draw_text_gdi(hdc, font_body, brand_color, px(32), px(118), "⏳ 正在分析当前表达并生成地道美式变体与用法……");
+    } else {
+        // 3. Tab 栏 (完全舒展排列 4 个选项卡，绝不挤压截断)
+        let tabs = ["更多译法", "用法说明", "相关搭配", "场景示例"];
+        let mut tab_x = px(16);
+        let tab_w = px(76);
+        let tab_h = px(26);
+        let gap = px(8);
+        for (i, name) in tabs.iter().enumerate() {
+            let is_active = data.active_tab == i;
+            let tab_rect = RECT { left: tab_x, top: px(88), right: tab_x + tab_w, bottom: px(88) + tab_h };
+            if is_active {
+                super::candidates::view::fill_round_rect(hdc, tab_rect, active_bg, 4);
+                draw_text_gdi(hdc, font_tab, brand_color, tab_x + px(12), px(93), name);
+            } else {
+                draw_text_gdi(hdc, font_tab, sub_color, tab_x + px(12), px(93), name);
+            }
+            tab_x += tab_w + gap;
+        }
+
+        // 4. 内容详情展示区 (y >= 122)
+        let content_y = px(122);
+        match data.active_tab {
+            0 => {
+                // 更多译法 (Panel 4)
+                let mut y = content_y;
+                for (idx, alt) in data.alternatives.iter().take(5).enumerate() {
+                    let idx_str = format!("{}.", idx + 1);
+                    draw_text_gdi(hdc, font_body, sub_color, px(16), y, &idx_str);
+                    let w = draw_text_gdi(hdc, font_body, text_color, px(32), y, &alt.text);
+
+                    // Register 胶囊 (Natural / Casual / Professional / Stronger / Neutral)
+                    let (badge_bg_col, badge_text_col) = match alt.tag.as_str() {
+                        "Casual" | "口语" => (rgb(254, 247, 224), rgb(176, 96, 0)),
+                        "Natural" | "地道" => (rgb(230, 244, 234), rgb(19, 115, 51)),
+                        "Neutral" | "中性" => (rgb(232, 240, 254), rgb(26, 115, 232)),
+                        "Stronger" | "强调" => (rgb(243, 232, 253), rgb(123, 31, 162)),
+                        _ => (active_bg, brand_color),
+                    };
+                    let tag_w = (alt.tag.len() as i32 * px(7) + px(12)).max(px(52));
+                    let tag_rect = RECT { left: px(32) + w + px(8), top: y - px(1), right: px(32) + w + px(8) + tag_w, bottom: y + px(15) };
+                    super::candidates::view::fill_round_rect(hdc, tag_rect, badge_bg_col, 3);
+                    draw_text_gdi(hdc, font_tag, badge_text_col, px(32) + w + px(14), y, &alt.tag);
+
+                    draw_text_gdi(hdc, font_tag, sub_color, client.right - px(32), y, "🔊");
+
+                    // 解释/地道原因行
+                    let desc = if !alt.why_natural.is_empty() {
+                        &alt.why_natural
+                    } else if !alt.meaning.is_empty() {
+                        &alt.meaning
+                    } else {
+                        "地道美式口语表达"
+                    };
+                    draw_text_gdi(hdc, font_tag, sub_color, px(32), y + px(18), desc);
+
+                    y += px(42);
+                }
+            }
+            1 => {
+                // 用法说明 (Panel 5)
+                let mut y = content_y;
+                let phonetic_str = if !data.phonetic.is_empty() {
+                    format!("/ {} /", data.phonetic.trim_matches('/'))
+                } else {
+                    String::new()
+                };
+                let title = if phonetic_str.is_empty() {
+                    format!("{}   [高频地道表达]", data.primary_english)
+                } else {
+                    format!("{}   {}   [高频搭配]", data.primary_english, phonetic_str)
+                };
+                draw_text_gdi(hdc, font_body, brand_color, px(16), y, &title);
+                y += px(22);
+
+                // 中文释义 (自动多行换行保护，绝不裁剪截断)
+                let expl = if !data.explanation.is_empty() {
+                    &data.explanation
+                } else {
+                    "日常交流与口语沟通中最自然、最符合语境的高频地道表达。"
+                };
+                let h = draw_wrapped_text_gdi(hdc, font_tag, text_color, px(16), y, client.right - px(32), px(18), expl);
+                y += h + px(8);
+
+                // 常见搭配 pills
+                draw_text_gdi(hdc, font_tag, sub_color, px(16), y, "常见搭配：");
+                y += px(18);
+                let mut cx = px(16);
+                for col in &data.collocations {
+                    let col_w = (col.len() as i32 * px(7)) + px(16);
+                    if cx + col_w > client.right - px(16) {
+                        cx = px(16);
+                        y += px(22);
+                    }
+                    let rect = RECT { left: cx, top: y, right: cx + col_w, bottom: y + px(18) };
+                    super::candidates::view::fill_round_rect(hdc, rect, badge_bg, 4);
+                    draw_text_gdi(hdc, font_tag, brand_color, cx + px(8), y + px(1), col);
+                    cx += col_w + px(6);
+                }
+                y += px(24);
+
+                // 例句 (双行清晰展示)
+                draw_text_gdi(hdc, font_tag, sub_color, px(16), y, "例句：");
+                y += px(18);
+                for (ex_en, ex_zh) in data.examples.iter().take(2) {
+                    draw_text_gdi(hdc, font_tag, text_color, px(24), y, &format!("• {}", ex_en));
+                    y += px(16);
+                    if !ex_zh.is_empty() {
+                        draw_text_gdi(hdc, font_tag, sub_color, px(32), y, ex_zh);
+                        y += px(18);
+                    }
+                }
+
+                // 雅思高分替换
+                if !data.ielts_friendly.is_empty() {
+                    draw_text_gdi(hdc, font_tag, green_color, px(16), y, &format!("雅思替换：{}", data.ielts_friendly));
+                }
+            }
+            2 => {
+                // 相关搭配 (Panel 6)
+                let mut y = content_y;
+                draw_text_gdi(hdc, font_body, brand_color, px(16), y, "常用搭配与同义表达 (Collocations & Synonyms)：");
+                y += px(22);
+
+                if data.collocations.is_empty() {
+                    draw_text_gdi(hdc, font_tag, sub_color, px(16), y, "💡 暂无专属固定搭配，该表达常作为独立口语单句使用。");
+                    y += px(22);
+                } else {
+                    let mut col_x = px(16);
+                    for col in &data.collocations {
+                        let col_w = (col.len() as i32 * px(7)) + px(16);
+                        if col_x + col_w > client.right - px(16) {
+                            col_x = px(16);
+                            y += px(22);
+                        }
+                        let rect = RECT { left: col_x, top: y, right: col_x + col_w, bottom: y + px(18) };
+                        super::candidates::view::fill_round_rect(hdc, rect, badge_bg, 4);
+                        draw_text_gdi(hdc, font_tag, brand_color, col_x + px(8), y + px(1), col);
+                        col_x += col_w + px(6);
+                    }
+                    y += px(28);
+                }
+
+                if !data.alternatives.is_empty() {
+                    let card_rect = RECT { left: px(16), top: y, right: client.right - px(16), bottom: y + px(85) };
+                    super::candidates::view::fill_round_rect(hdc, card_rect, badge_bg, 6);
+                    draw_text_gdi(hdc, font_tag, brand_color, px(24), y + px(8), "语域风格差异对照 (Register Comparison)：");
+                    let mut ry = y + px(28);
+                    for alt in data.alternatives.iter().take(2) {
+                        draw_text_gdi(hdc, font_tag, text_color, px(24), ry, &format!("• [{}] {}: {}", alt.tag, alt.text, alt.meaning));
+                        ry += px(20);
+                    }
+                    if !data.ielts_friendly.is_empty() {
+                        draw_text_gdi(hdc, font_tag, green_color, px(24), ry, &format!("• [IELTS 7+] {}", data.ielts_friendly));
+                    }
+                }
+            }
+            3 => {
+                // 场景示例
+                let mut y = content_y;
+                draw_text_gdi(hdc, font_body, text_color, px(16), y, "真实对话与语境示例 (Dialogue Scenario)：");
+                y += px(24);
+                if data.examples.is_empty() {
+                    draw_text_gdi(hdc, font_tag, sub_color, px(16), y, "💬 正在生成场景例句，可按 Ctrl+Alt+D 在 AI Assistant 中深入讨论。");
+                } else {
+                    for (ex_en, ex_zh) in data.examples.iter().take(3) {
+                        draw_text_gdi(hdc, font_tag, text_color, px(16), y, &format!("• {}", ex_en));
+                        y += px(18);
+                        if !ex_zh.is_empty() {
+                            draw_text_gdi(hdc, font_tag, sub_color, px(24), y, ex_zh);
+                            y += px(20);
+                        }
+                    }
+                    if !data.ielts_friendly.is_empty() {
+                        draw_text_gdi(hdc, font_tag, green_color, px(16), y, &format!("IELTS Speaking 进阶: {}", data.ielts_friendly));
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        // 5. 底部操作栏 (收藏与 AI 追问直达)
+        let footer_sep = RECT {
+            left: px(16),
+            top: client.bottom - px(38),
+            right: client.right - px(16),
+            bottom: client.bottom - px(37),
+        };
+        super::candidates::view::fill_rect(hdc, footer_sep, if dark { rgb(51, 51, 51) } else { rgb(229, 231, 235) });
+
+        let footer_y = client.bottom - px(32);
+        // 左侧：收藏到表达本
+        let fav_text = if let Some(notice) = &data.saved_notice {
+            notice.as_str()
         } else {
-            draw_text_gdi(hdc, font_tab, sub_color, tab_x + 8, 100, name);
-        }
-        tab_x += tab_w + 6;
+            "⭐ 收藏到表达本"
+        };
+        let fav_box = RECT {
+            left: px(16),
+            top: footer_y - px(2),
+            right: px(16) + px(128),
+            bottom: footer_y + px(24),
+        };
+        super::candidates::view::fill_round_rect(hdc, fav_box, badge_bg, 4);
+        draw_text_gdi(hdc, font_tag, if data.saved_notice.is_some() { brand_color } else { text_color }, px(24), footer_y + px(3), fav_text);
+
+        // 右侧：AI 深度追问 (Ctrl+Alt+D)
+        let ai_btn = RECT {
+            left: client.right - px(178),
+            top: footer_y - px(2),
+            right: client.right - px(16),
+            bottom: footer_y + px(24),
+        };
+        super::candidates::view::fill_round_rect(hdc, ai_btn, active_bg, 4);
+        draw_text_gdi(hdc, font_tag, brand_color, client.right - px(168), footer_y + px(3), "💬 AI 深度追问 (Ctrl+Alt+D)");
     }
 
-    // 右侧功能键：[⭐ 收藏] 与 [🚀 进入练习]
-    let save_text = if data.saved_notice.is_some() { "⭐ 已收藏" } else { "⭐ 收藏" };
-    let save_rect = RECT { left: client.right - 165, top: 96, right: client.right - 105, bottom: 120 };
-    super::candidates::view::fill_round_rect(hdc, save_rect, badge_bg, 4);
-    draw_text_gdi(hdc, font_tag, text_color, client.right - 160, 101, save_text);
-
-    let drill_rect = RECT { left: client.right - 98, top: 96, right: client.right - 16, bottom: 120 };
-    super::candidates::view::fill_round_rect(hdc, drill_rect, brand_color, 4);
-    draw_text_gdi(hdc, font_tag, COLORREF(0x00FFFFFF), client.right - 92, 101, "🚀 进入练习");
-
-    // 4. 内容详情展示区 (y = 128..265)
-    let content_y = 130;
-    match data.active_tab {
-        0 => {
-            // 更多译法
-            let mut y = content_y;
-            for (idx, alt) in data.alternatives.iter().take(4).enumerate() {
-                let idx_str = format!("{}.", idx + 1);
-                draw_text_gdi(hdc, font_body, sub_color, 16, y, &idx_str);
-                let w = draw_text_gdi(hdc, font_body, text_color, 32, y, &alt.text);
-                
-                // Register 胶囊
-                let tag_rect = RECT { left: 32 + w + 8, top: y, right: 32 + w + 8 + 50, bottom: y + 16 };
-                super::candidates::view::fill_round_rect(hdc, tag_rect, active_bg, 3);
-                draw_text_gdi(hdc, font_tag, brand_color, 32 + w + 14, y + 1, &alt.tag);
-
-                if !alt.meaning.is_empty() {
-                    draw_text_gdi(hdc, font_tag, sub_color, 32 + w + 66, y + 1, &format!("› {}", alt.meaning));
-                }
-                draw_text_gdi(hdc, font_tag, sub_color, client.right - 34, y, "🔊");
-                y += 24;
-            }
-        }
-        1 => {
-            // 用法说明
-            let mut y = content_y;
-            let title = format!("{}  {}  [高频搭配]", data.target_chinese, data.phonetic);
-            draw_text_gdi(hdc, font_body, brand_color, 16, y, &title);
-            y += 22;
-            draw_text_gdi(hdc, font_tag, text_color, 16, y, &data.explanation);
-            y += 22;
-            if let Some((ex_en, ex_zh)) = data.examples.first() {
-                draw_text_gdi(hdc, font_tag, sub_color, 16, y, &format!("例句：• {} ({})", ex_en, ex_zh));
-                y += 20;
-            }
-            if let Some((ex_en, ex_zh)) = data.examples.get(1) {
-                draw_text_gdi(hdc, font_tag, sub_color, 16, y, &format!("     • {} ({})", ex_en, ex_zh));
-                y += 20;
-            }
-            // 雅思替换说明
-            if !data.ielts_friendly.is_empty() {
-                draw_text_gdi(hdc, font_tag, COLORREF(0x000F8A5F), 16, y, &format!("雅思高分替换：{}", data.ielts_friendly));
-            }
-        }
-        2 => {
-            // 相关搭配 (Collocations)
-            let mut y = content_y;
-            draw_text_gdi(hdc, font_body, text_color, 16, y, "常用黄金搭配 (Common Collocations)：");
-            y += 24;
-            let mut col_x = 16;
-            for col in &data.collocations {
-                let col_w = (col.len() as i32 * 7) + 16;
-                if col_x + col_w > client.right - 16 {
-                    col_x = 16;
-                    y += 24;
-                }
-                let rect = RECT { left: col_x, top: y, right: col_x + col_w, bottom: y + 20 };
-                super::candidates::view::fill_round_rect(hdc, rect, badge_bg, 4);
-                draw_text_gdi(hdc, font_tag, brand_color, col_x + 8, y + 2, col);
-                col_x += col_w + 8;
-            }
-        }
-        3 => {
-            // 场景示例
-            let mut y = content_y;
-            draw_text_gdi(hdc, font_body, text_color, 16, y, "场景会话示例与语域转换：");
-            y += 24;
-            draw_text_gdi(hdc, font_tag, sub_color, 16, y, "💬 职场与生活场景：在认同对方观点或理解工作方案时使用。");
-            y += 22;
-            draw_text_gdi(hdc, font_tag, text_color, 16, y, &format!("A: If we batch requests, the latency drops by 50%."));
-            y += 20;
-            draw_text_gdi(hdc, font_tag, brand_color, 16, y, &format!("B: Exactly, that makes perfect sense."));
-            y += 22;
-            draw_text_gdi(hdc, font_tag, COLORREF(0x000F8A5F), 16, y, &format!("IELTS Speaking 替换: {}", data.ielts_friendly));
-        }
-        _ => {}
-    }
-
-    // 释放 GDI 字体
     unsafe {
         let _ = DeleteObject(font_title.into());
         let _ = DeleteObject(font_target.into());
@@ -426,48 +603,130 @@ fn draw_text_gdi(hdc: HDC, font: HFONT, color: COLORREF, x: i32, y: i32, text: &
     size.cx
 }
 
+/// 自动换行文本测量与绘制：完全杜绝文字被截断或溢出
+fn draw_wrapped_text_gdi(
+    hdc: HDC,
+    font: HFONT,
+    color: COLORREF,
+    left: i32,
+    mut y: i32,
+    max_w: i32,
+    line_h: i32,
+    text: &str,
+) -> i32 {
+    let mut current_line = String::new();
+    let mut lines = 0;
+    unsafe {
+        SelectObject(hdc, font.into());
+        SetTextColor(hdc, color);
+    }
+    for ch in text.chars() {
+        current_line.push(ch);
+        let utf16: Vec<u16> = current_line.encode_utf16().collect();
+        let mut size = SIZE::default();
+        unsafe {
+            let _ = GetTextExtentPoint32W(hdc, &utf16, &mut size);
+        }
+        if size.cx > max_w && !current_line.is_empty() {
+            current_line.pop();
+            let line_utf16: Vec<u16> = current_line.encode_utf16().collect();
+            unsafe {
+                let _ = TextOutW(hdc, left, y, &line_utf16);
+            }
+            y += line_h;
+            lines += 1;
+            current_line.clear();
+            current_line.push(ch);
+        }
+    }
+    if !current_line.is_empty() {
+        let line_utf16: Vec<u16> = current_line.encode_utf16().collect();
+        unsafe {
+            let _ = TextOutW(hdc, left, y, &line_utf16);
+        }
+        lines += 1;
+    }
+    lines * line_h
+}
+
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_MOUSEACTIVATE => {
-            // 纯阅读/学习，绝对不抢焦点，不激活窗口，防止破坏正在输入的宿主程序焦点与拼音
+            // 纯阅读/学习，绝对不抢焦点，不激活窗口，防止破坏宿主程序焦点与拼音
             LRESULT(MA_NOACTIVATE as isize)
         }
         WM_NCHITTEST => LRESULT(HTCLIENT as isize),
+        WM_MOVE | WM_EXITSIZEMOVE => {
+            let comp = COMPANIONS.with(|c| c.borrow().get(&(hwnd.0 as isize)).cloned());
+            if let Some(comp) = comp {
+                let mut rc = RECT::default();
+                if unsafe { GetWindowRect(hwnd, &mut rc) }.is_ok() {
+                    let margin = layered::shadow_margin(unsafe { GetDpiForWindow(hwnd) }.max(96));
+                    comp.user_pos.set(Some((rc.left + margin, rc.top + margin)));
+                }
+            }
+            LRESULT(0)
+        }
         WM_LBUTTONDOWN => {
             let x = (lparam.0 & 0xffff) as i16 as i32;
             let y = ((lparam.0 >> 16) & 0xffff) as i16 as i32;
             let comp = COMPANIONS.with(|c| c.borrow().get(&(hwnd.0 as isize)).cloned());
             if let Some(comp) = comp {
-                let margin = layered::shadow_margin(unsafe { GetDpiForWindow(hwnd) }.max(96));
+                let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
+                let margin = layered::shadow_margin(dpi);
+                let scale = dpi as f32 / 96.0;
+                let px = |val: i32| (val as f32 * scale).round() as i32;
+
                 let cx = x - margin;
                 let cy = y - margin;
+                let w = comp.current_width.get();
 
                 // 1. 关闭按钮 (右上角)
-                if cx >= COMPANION_WIDTH - 36 && cx <= COMPANION_WIDTH && cy <= 30 {
+                if cx >= w - px(36) && cx <= w && cy <= px(32) {
                     comp.hide();
                     return LRESULT(0);
                 }
 
-                // 2. 复制到剪贴板图标 (cx in 240..300, cy in 50..80)
-                if cy >= 50 && cy <= 80 && cx >= 180 && cx <= 280 {
+                // 2. 标题栏可拖动区域 (cy <= 32 且未点击关闭按钮) -> 原生拖动
+                if cy <= px(32) {
+                    unsafe {
+                        let _ = ReleaseCapture();
+                        let _ = SendMessageW(
+                            hwnd,
+                            WM_NCLBUTTONDOWN,
+                            Some(WPARAM(HTCAPTION as usize)),
+                            Some(LPARAM(0)),
+                        );
+                    }
+                    return LRESULT(0);
+                }
+
+                // 3. 复制到剪贴板图标 (cx in prim_w..prim_w+40, cy in 45..75)
+                if cy >= px(45) && cy <= px(75) && cx >= px(120) && cx <= px(360) {
                     let text = comp.data.borrow().primary_english.clone();
                     copy_to_clipboard(&text);
                     comp.set_saved_notice(Some("已复制到剪贴板".to_string()));
                     return LRESULT(0);
                 }
 
-                // 3. Tab 栏点击 (y in 92..124)
-                if cy >= 92 && cy <= 124 {
-                    // Tab 0..3: 每个宽度 70
-                    if cx >= 16 && cx <= 16 + 70 * 4 {
-                        let tab_idx = ((cx - 16) / 70) as usize;
+                // 4. Tab 栏点击 (cy in 80..118)
+                if cy >= px(80) && cy <= px(118) {
+                    let tab_w = px(76);
+                    let gap = px(8);
+                    if cx >= px(16) && cx <= px(16) + (tab_w + gap) * 4 {
+                        let tab_idx = ((cx - px(16)) / (tab_w + gap)) as usize;
                         if tab_idx < 4 {
                             comp.set_tab(tab_idx);
                             return LRESULT(0);
                         }
                     }
-                    // 点击 [⭐ 收藏]
-                    if cx >= COMPANION_WIDTH - 165 && cx <= COMPANION_WIDTH - 105 {
+                }
+
+                // 5. 底部操作栏点击 (靠近底边 40px)
+                let h = comp.current_height.get();
+                if cy >= h - px(40) && cy <= h {
+                    // 点击左侧 [⭐ 收藏到表达本]
+                    if cx >= px(16) && cx <= px(150) {
                         let target = comp.data.borrow().target_chinese.clone();
                         let expr = comp.data.borrow().primary_english.clone();
                         if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
@@ -478,8 +737,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         comp.set_saved_notice(Some("⭐ 已收藏到表达本".to_string()));
                         return LRESULT(0);
                     }
-                    // 点击 [🚀 进入练习]
-                    if cx >= COMPANION_WIDTH - 98 && cx <= COMPANION_WIDTH - 16 {
+                    // 点击右侧 [💡 进入练习 (Ctrl+Alt+D)]
+                    if cx >= w - px(176) && cx <= w - px(16) {
                         (comp.action_cb)(CandidateAction::StartDrillSession);
                         return LRESULT(0);
                     }

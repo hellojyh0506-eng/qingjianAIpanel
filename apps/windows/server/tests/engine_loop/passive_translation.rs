@@ -136,6 +136,7 @@ fn test_cloud_passive_translation_when_no_local_gloss_displayed_and_space_commit
         words: Vec::new(),
         sentence: Some("previously".to_string()),
         alternatives: Vec::new(),
+        ..Default::default()
     });
 
     // 触发 tick 轮询
@@ -173,6 +174,7 @@ fn test_ctrl_1_commits_passive_translation() {
         words: Vec::new(),
         sentence: Some("beforehand".to_string()),
         alternatives: Vec::new(),
+        ..Default::default()
     });
     // 轮询收到被动翻译响应
     let _ = router.handle(ClientMessage::Poll { session: SESSION });
@@ -202,6 +204,7 @@ fn test_stale_response_discarded_on_new_typing() {
         words: Vec::new(),
         sentence: Some("stale translation".to_string()),
         alternatives: Vec::new(),
+        ..Default::default()
     });
     router.tick();
 
@@ -235,6 +238,7 @@ fn test_candidate_shift_discards_stale_target_translation() {
         words: Vec::new(),
         sentence: Some("first".to_string()),
         alternatives: Vec::new(),
+        ..Default::default()
     });
     router.tick();
 
@@ -306,6 +310,7 @@ fn test_backspace_and_esc_clears_passive_translation() {
         words: Vec::new(),
         sentence: Some("previously".to_string()),
         alternatives: Vec::new(),
+        ..Default::default()
     });
     router.tick();
 
@@ -393,6 +398,7 @@ fn test_chongddren_passive_translation_strictly_binds_to_candidate_text_never_su
         words: Vec::new(),
         sentence: Some("the person charging up".to_string()),
         alternatives: Vec::new(),
+        ..Default::default()
     });
     router.tick();
 
@@ -421,6 +427,7 @@ fn test_chongddren_passive_translation_strictly_binds_to_candidate_text_never_su
         words: Vec::new(),
         sentence: Some(rogue_long_sentence.to_string()),
         alternatives: Vec::new(),
+        ..Default::default()
     });
     router.tick();
     // 再次 Poll，验证候选框绝不会挂上该异常长句
@@ -464,12 +471,12 @@ fn test_three_state_learning_mode_daily_learn_drill_switching_and_isolation() {
     open_session(&mut router, SESSION, None);
     assert_eq!(router.learning_mode(), qingjian_platform::LearningMode::Daily);
 
-    // 2. 在 Daily 模式下输入「xianqian」，确认不会主动向云端发送被动翻译请求
+    // 2. 在 Daily 模式下输入「xianqian」，确认触发快速地道英文单句翻译
     let (_, _, frame) = type_letters(&mut router, "xianqian");
     assert_eq!(frame.learning_mode, qingjian_platform::LearningMode::Daily);
     assert!(
-        requests.lock().unwrap().iter().all(|r| r.kind != PredictionKind::Translate),
-        "Daily 模式绝不能主动请求被动翻译"
+        requests.lock().unwrap().iter().any(|r| r.kind == PredictionKind::Translate),
+        "Daily 模式必须支持当前首选地道口语翻译"
     );
 
     // 3. 清空缓冲区

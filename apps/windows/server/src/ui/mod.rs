@@ -8,6 +8,7 @@ mod candidates;
 mod command;
 pub mod companion;
 pub mod drill;
+pub mod ai_assistant;
 mod layered;
 mod monitor;
 mod painter;
@@ -119,6 +120,34 @@ impl CandidateSink for UiHandle {
     fn hide_drill(&self) {
         self.post(UiCommand::DrillHide);
     }
+
+    fn show_ai_assistant(&self, anchor: Option<windows::Win32::Foundation::RECT>, initial_prompt: Option<String>) {
+        self.post(UiCommand::AiAssistantShow(Box::new((anchor, initial_prompt))));
+    }
+
+    fn hide_ai_assistant(&self) {
+        self.post(UiCommand::AiAssistantHide);
+    }
+
+    fn send_ai_chunk(&self, chunk: String) {
+        self.post(UiCommand::AiAssistantChunk(chunk));
+    }
+
+    fn send_ai_web_sources(&self, sources: Vec<qingjian_predict::SearchResult>) {
+        self.post(UiCommand::AiAssistantWebSources(sources));
+    }
+
+    fn send_ai_finish(&self, ttft_ms: u128, total_ms: u128) {
+        self.post(UiCommand::AiAssistantFinish { ttft_ms, total_ms });
+    }
+
+    fn send_ai_error(&self, error: String) {
+        self.post(UiCommand::AiAssistantError(error));
+    }
+
+    fn clone_sink(&self) -> Box<dyn CandidateSink> {
+        Box::new(self.clone())
+    }
 }
 
 impl StatusSink for UiHandle {
@@ -213,6 +242,16 @@ fn run(
             None
         }
     };
+    let ai_assistant = match ai_assistant::AiAssistantWindow::new({
+        let cb = on_candidate_rc.clone();
+        Box::new(move |action| (cb)(action))
+    }) {
+        Ok(ai) => Some(ai),
+        Err(error) => {
+            tracing::error!(%error, "建 AI Assistant 窗口失败");
+            None
+        }
+    };
     if ready.send(Some(thread_id)).is_err() {
         return;
     }
@@ -230,6 +269,7 @@ fn run(
                     status.as_ref(),
                     companion.as_ref().map(|c| c.as_ref()),
                     drill.as_ref().map(|d| d.as_ref()),
+                    ai_assistant.as_ref().map(|a| a.as_ref()),
                     &painter,
                     command,
                 );
@@ -248,6 +288,7 @@ fn apply(
     status: Option<&StatusBar>,
     companion: Option<&companion::CompanionWindow>,
     drill: Option<&drill::DrillWindow>,
+    ai_assistant: Option<&ai_assistant::AiAssistantWindow>,
     painter: &SharedPainter,
     command: UiCommand,
 ) {
@@ -300,6 +341,37 @@ fn apply(
         UiCommand::DrillHide => {
             if let Some(dr) = drill {
                 dr.hide();
+            }
+        }
+        UiCommand::AiAssistantShow(payload) => {
+            let (anchor, initial_prompt) = *payload;
+            if let Some(ai) = ai_assistant {
+                ai.show_or_focus(anchor, initial_prompt);
+            }
+        }
+        UiCommand::AiAssistantHide => {
+            if let Some(ai) = ai_assistant {
+                ai.hide();
+            }
+        }
+        UiCommand::AiAssistantChunk(chunk) => {
+            if let Some(ai) = ai_assistant {
+                ai.append_stream_chunk(&chunk);
+            }
+        }
+        UiCommand::AiAssistantWebSources(sources) => {
+            if let Some(ai) = ai_assistant {
+                ai.set_web_sources(sources);
+            }
+        }
+        UiCommand::AiAssistantFinish { ttft_ms, total_ms } => {
+            if let Some(ai) = ai_assistant {
+                ai.finish_stream(ttft_ms, total_ms);
+            }
+        }
+        UiCommand::AiAssistantError(error) => {
+            if let Some(ai) = ai_assistant {
+                ai.set_stream_error(&error);
             }
         }
     }

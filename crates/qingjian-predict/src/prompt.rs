@@ -132,26 +132,37 @@ Output JSON format strictly:
 /// 深度英语学习与伴侣助手提示：用于在用户主动查看更多表达与用法时展开
 #[allow(dead_code)]
 pub const DEEP_LEARN_SYSTEM_PROMPT: &str = "\
-You are an expert American English expression and IELTS coach.
-Generate a structured learning expansion for the Chinese expression and its English translation.
-Provide:
-1. phonetic: IPA phonetic transcription of the key phrase/word
-2. explanation: concise Chinese explanation of nuance, tone, and usage
-3. alternatives: 3-5 real-world spoken variants with genuine register differences (Natural, Casual, Professional, Stronger, Neutral)
-4. collocations: 3-5 high-frequency collocations
-5. examples: 2-3 short realistic spoken examples
-6. ielts_friendly: an IELTS-appropriate alternative
+You are an expert American English expression coach.
+Generate a structured learning expansion specifically for the provided Chinese candidate and its translation.
+
+Rules:
+1. primary_english: The single most natural spoken American English expression.
+2. phonetic: Accurate IPA transcription of the key phrase/expression.
+3. explanation: Concise Chinese explanation focusing on nuance, tone, context, and why it is natural. Avoid textbook cliches.
+4. alternatives: 2-5 real-world spoken variants with genuine differences. Each item must have:
+   - text: English phrase
+   - tag: Natural | Casual | Neutral | Professional | Stronger
+   - meaning: Chinese meaning
+   - why_natural: Brief explanation of when/why to use it
+5. collocations: 2-4 GENUINE high-frequency collocations or real conversational phrasing directly related to this concept.
+   - For a verb/noun phrase: natural verb-noun, adjective-noun, or preposition collocations.
+   - For a clause/sentence: typical conversation lead-ins or natural variations (e.g. for 'make sense' -> 'make a lot of sense', 'in a sense', 'hard to make sense of').
+   - NEVER mechanically prepend dummy words like 'use ...' or 'really ...'.
+   - If no natural collocations exist, return an empty array [].
+6. examples: 2-3 realistic spoken examples in format: 'English sentence | 中文例句'.
+7. ielts_friendly: An IELTS Speaking Band 7+ natural idiom or precise phrasing IF genuinely appropriate; otherwise null.
 
 Output JSON format strictly:
 {
+  \"primary_english\": \"most natural spoken expression\",
   \"phonetic\": \"/ipa/\",
-  \"explanation\": \"中文释义与地道用法说明\",
+  \"explanation\": \"地道用法说明与语境剖析\",
   \"alternatives\": [
     {\"text\": \"variant\", \"tag\": \"Casual|Natural|Professional|Stronger|Neutral\", \"meaning\": \"中文含义\", \"why_natural\": \"地道原因\"}
   ],
   \"collocations\": [\"collocation 1\", \"collocation 2\"],
-  \"examples\": [\"example 1\", \"example 2\"],
-  \"ielts_friendly\": \"IELTS friendly expression\"
+  \"examples\": [\"English example 1 | 中文例句 1\", \"English example 2 | 中文例句 2\"],
+  \"ielts_friendly\": \"optional IELTS phrasing or null\"
 }";
 
 pub fn system_prompt(request: &PredictionRequest) -> &'static str {
@@ -160,6 +171,7 @@ pub fn system_prompt(request: &PredictionRequest) -> &'static str {
         PredictionKind::Question => QUESTION_SYSTEM_PROMPT,
         PredictionKind::Translate => TRANSLATE_SYSTEM_PROMPT,
         PredictionKind::Compare => COMPARE_SYSTEM_PROMPT,
+        PredictionKind::DeepLearn => DEEP_LEARN_SYSTEM_PROMPT,
     }
 }
 
@@ -216,6 +228,13 @@ struct CompareMessage<'a> {
 }
 
 pub fn user_prompt(request: &PredictionRequest) -> String {
+    if request.kind == PredictionKind::DeepLearn {
+        return serde_json::to_string(&serde_json::json!({
+            "chinese": &request.text,
+            "primary_english": &request.reference,
+        }))
+        .unwrap_or_default();
+    }
     if request.kind == PredictionKind::Compare {
         return serde_json::to_string(&CompareMessage {
             prompt: &request.text,
@@ -266,12 +285,30 @@ pub struct Reply {
 
     /// 针对当前候选的翻译表达备选与细览。
     pub alternatives: Vec<PredictionAlternative>,
+
+    /// 深度口语学习：音标
+    pub phonetic: Option<String>,
+
+    /// 深度口语学习：释义与用法
+    pub explanation: Option<String>,
+
+    /// 深度口语学习：高频搭配
+    pub collocations: Vec<String>,
+
+    /// 深度口语学习：例句
+    pub examples: Vec<String>,
+
+    /// 深度口语学习：雅思/正式替换
+    pub ielts_friendly: Option<String>,
 }
 
 impl Reply {
     /// 什么都没给：没有词也没有整句。
     pub fn is_empty(&self) -> bool {
-        self.words.is_empty() && self.sentence.is_none() && self.alternatives.is_empty()
+        self.words.is_empty()
+            && self.sentence.is_none()
+            && self.alternatives.is_empty()
+            && self.explanation.is_none()
     }
 }
 
@@ -288,6 +325,14 @@ struct RawReply {
 
     /// 翻译模式的多语域表达。
     alternatives: Vec<RawAlternative>,
+
+    /// 深度口语学习字段
+    primary_english: Option<String>,
+    phonetic: Option<String>,
+    explanation: Option<String>,
+    collocations: Vec<String>,
+    examples: Vec<String>,
+    ielts_friendly: Option<String>,
 
     /// 主动回忆对比模式：评估状态
     status: Option<String>,
@@ -384,6 +429,63 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
     if request.kind == PredictionKind::Question {
         return parse_answers(raw.answers, request.max_items);
     }
+    if request.kind == PredictionKind::DeepLearn {
+        let mut alternatives = Vec::new();
+        for alt in raw.alternatives {
+            let alt_text = strip_translation_prefix(alt.text.trim());
+            if alt_text.is_empty() {
+                continue;
+            }
+            let display_meaning = if !alt.meaning.trim().is_empty() {
+                alt.meaning.trim().to_owned()
+            } else if let Some(n) = &alt.note {
+                let nt = n.trim();
+                if !nt.is_empty() {
+                    nt.to_owned()
+                } else {
+                    request.text.clone()
+                }
+            } else {
+                request.text.clone()
+            };
+            alternatives.push(PredictionAlternative {
+                text: alt_text,
+                tag: if alt.tag.trim().is_empty() {
+                    "Natural".to_owned()
+                } else {
+                    alt.tag.trim().to_owned()
+                },
+                meaning: display_meaning.clone(),
+                tone: if !alt.tone.trim().is_empty() {
+                    alt.tone.trim().to_owned()
+                } else {
+                    "Casual".to_owned()
+                },
+                scenario: alt.scenario.trim().to_owned(),
+                commonality: alt.commonality.trim().to_owned(),
+                why_natural: if !alt.why_natural.trim().is_empty() {
+                    alt.why_natural.trim().to_owned()
+                } else {
+                    display_meaning
+                },
+            });
+        }
+        let primary_eng = raw
+            .primary_english
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
+            .or_else(|| alternatives.first().map(|a| a.text.clone()));
+        return Reply {
+            words: Vec::new(),
+            sentence: primary_eng,
+            alternatives,
+            phonetic: raw.phonetic.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()),
+            explanation: raw.explanation.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()),
+            collocations: raw.collocations.into_iter().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect(),
+            examples: raw.examples.into_iter().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect(),
+            ielts_friendly: raw.ielts_friendly.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()),
+        };
+    }
     if request.kind == PredictionKind::Compare {
         let key_advice = raw
             .short_feedback
@@ -461,6 +563,7 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
             words: Vec::new(),
             sentence: key_advice,
             alternatives,
+            ..Default::default()
         };
     }
     if request.kind == PredictionKind::Translate {
@@ -524,6 +627,7 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
                 words: Vec::new(),
                 sentence: Some(clean_s),
                 alternatives,
+                ..Default::default()
             };
         }
         return Reply::default();

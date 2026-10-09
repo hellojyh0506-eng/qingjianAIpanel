@@ -11,7 +11,7 @@ use windows::Win32::Graphics::Gdi::{
 };
 
 use super::RenderData;
-use super::theme::Theme;
+use super::theme::{Theme, rgb};
 
 /// 云端候选词前的小云朵（macOS 用 SF Symbol `cloud`）。
 const CLOUD_GLYPH: &str = "☁";
@@ -80,9 +80,11 @@ fn horizontal_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
         width += theme.column_gap + measure(hdc, theme.index_font, footer).cx;
     }
     let mut height = row_height;
-    if let Some((annotation_width, annotation_height)) = highlighted_annotation_size(hdc, data) {
-        width = width.max(annotation_width);
-        height += annotation_height;
+    if data.learning_card.is_none() {
+        if let Some((annotation_width, annotation_height)) = highlighted_annotation_size(hdc, data) {
+            width = width.max(annotation_width);
+            height += annotation_height;
+        }
     }
     (width, height)
 }
@@ -344,18 +346,20 @@ fn draw_horizontal(hdc: HDC, data: &RenderData, y: i32, width: i32) {
             footer,
         );
     }
-    if let Some(row) = data.rows.get(data.highlight) {
-        let mut x = theme.padding + highlight_inset;
-        let top = y + row_height + theme.row_padding / 2;
-        for (segment, tone) in &row.annotation {
-            x += draw_text(
-                hdc,
-                theme.annotation_font,
-                tone_color(theme, *tone),
-                x,
-                top,
-                segment,
-            );
+    if data.learning_card.is_none() {
+        if let Some(row) = data.rows.get(data.highlight) {
+            let mut x = theme.padding + highlight_inset;
+            let top = y + row_height + theme.row_padding / 2;
+            for (segment, tone) in &row.annotation {
+                x += draw_text(
+                    hdc,
+                    theme.annotation_font,
+                    tone_color(theme, *tone),
+                    x,
+                    top,
+                    segment,
+                );
+            }
         }
     }
 }
@@ -546,7 +550,7 @@ fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
     let theme = &data.theme;
     let line_h = line_height(hdc, theme.annotation_font);
 
-    let flag_w = measure(hdc, theme.annotation_font, "🇺🇸 ").cx;
+    let flag_w = 22;
     let (main_text, has_audio) = match card.status {
         qingjian_render::LearningStatus::Loading => ("正在推荐地道口语……", false),
         qingjian_render::LearningStatus::Failed => ("暂时没有译文", false),
@@ -563,25 +567,35 @@ fn learning_card_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
     let audio_w = if has_audio { measure(hdc, theme.annotation_font, " 🔊").cx } else { 0 };
     let main_w = measure(hdc, theme.annotation_font, main_text).cx + audio_w;
 
-    let is_daily = data.learning_mode == qingjian_platform::LearningMode::Daily;
     let is_learn = data.learning_mode == qingjian_platform::LearningMode::Learn;
-    let is_drill = data.learning_mode == qingjian_platform::LearningMode::Drill;
 
-    let width = if is_daily {
-        flag_w + main_w + theme.column_gap * 2
-    } else if is_learn {
-        let btn_text = "📖 打开学习助手 (Ctrl+Alt+E)";
+    let width = if is_learn {
+        let btn_text = "📖 学习助手(Ctrl+Alt+E)";
         let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
         flag_w + main_w + theme.column_gap * 3 + btn_w
-    } else if is_drill {
-        let btn_text = "💡 进入练习 (Ctrl+Alt+D)";
-        measure(hdc, theme.index_font, btn_text).cx + 24
     } else {
         flag_w + main_w + theme.column_gap * 2
     };
 
     let height = line_h + theme.row_padding * 2;
     (width, height)
+}
+
+fn draw_mini_flag_gdi(hdc: HDC, x: i32, y: i32) -> i32 {
+    let w = 16;
+    let h = 11;
+    let flag_rect = RECT { left: x, top: y, right: x + w, bottom: y + h };
+    fill_round_rect(hdc, flag_rect, rgb(179, 25, 66), 2);
+    // White stripe 1
+    let s1 = RECT { left: x, top: y + 3, right: x + w, bottom: y + 5 };
+    fill_rect(hdc, s1, rgb(255, 255, 255));
+    // White stripe 2
+    let s2 = RECT { left: x, top: y + 6, right: x + w, bottom: y + 8 };
+    fill_rect(hdc, s2, rgb(255, 255, 255));
+    // Blue canton
+    let canton = RECT { left: x, top: y, right: x + 7, bottom: y + 6 };
+    fill_round_rect(hdc, canton, rgb(10, 49, 97), 2);
+    w + 6
 }
 
 /// GDI 下绘制轻量英语学习卡片。
@@ -603,20 +617,9 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
     let mut x = theme.padding;
 
     let is_learn = data.learning_mode == qingjian_platform::LearningMode::Learn;
-    let is_drill = data.learning_mode == qingjian_platform::LearningMode::Drill;
 
-    // Drill 模式直接呈现主动输出练习入口
-    if is_drill {
-        let btn_text = "💡 进入练习 (Ctrl+Alt+D)";
-        let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
-        let btn_rect = RECT { left: theme.padding, top: y - 1, right: theme.padding + btn_w, bottom: y + line_h };
-        fill_round_rect(hdc, btn_rect, theme.highlight, 4);
-        draw_text(hdc, theme.index_font, COLORREF(0x001673f9), theme.padding + 8, y, btn_text);
-        return;
-    }
-
-    // 🇺🇸 国旗前缀
-    x += draw_text(hdc, theme.annotation_font, theme.fresh_color, x, y, "🇺🇸 ");
+    // 绘制精致矢量微标，彻底消除 "us" 退化
+    x += draw_mini_flag_gdi(hdc, x, y + (line_h - 11) / 2);
 
     // 核心口语表达
     let (main_text, has_audio) = match card.status {
@@ -643,12 +646,12 @@ fn draw_learning_card(hdc: HDC, data: &RenderData, mut y: i32, content_width: i3
     }
 
     if is_learn {
-        let btn_text = "📖 打开学习助手 (Ctrl+Alt+E)";
+        let btn_text = "📖 学习助手(Ctrl+Alt+E)";
         let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
         let btn_x = content_width - theme.padding - btn_w;
         let btn_rect = RECT { left: btn_x, top: y - 1, right: btn_x + btn_w, bottom: y + line_h };
         fill_round_rect(hdc, btn_rect, theme.highlight, 4);
-        draw_text(hdc, theme.index_font, theme.fresh_color, btn_x + 8, y, btn_text);
+        draw_text(hdc, theme.index_font, theme.gloss_color, btn_x + 8, y, btn_text);
     }
 }
 
@@ -686,7 +689,7 @@ pub(super) fn hit_test_learning_card(
     let is_drill = data.learning_mode == qingjian_platform::LearningMode::Drill;
 
     if is_learn {
-        let btn_text = "📖 打开学习助手 (Ctrl+Alt+E)";
+        let btn_text = "📖 学习助手(Ctrl+Alt+E)";
         let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
         let btn_x = content_w - theme.padding - btn_w;
         if x >= btn_x - 8 && x <= content_w {

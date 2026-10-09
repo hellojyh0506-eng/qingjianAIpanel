@@ -1,5 +1,7 @@
 //! 按消息类型分派：会话开关、按键、轮询、失焦上屏、选区 / 光标矩形 / 中英模式的通知。
 
+use std::time::Instant;
+
 use qingjian_platform::protocol::{
     ClientMessage, Frame, KeyEvent, KeyOutcome, PROTOCOL_VERSION, SESSION_OPENED_SINCE,
     ServerMessage, SessionId,
@@ -177,7 +179,14 @@ impl Router {
             };
         }
         if self.matches_learning_expand_combo(&event) {
-            self.open_assistant();
+            let now = Instant::now();
+            if now.duration_since(self.last_assistant_toggle_time) > std::time::Duration::from_millis(100) {
+                self.last_assistant_toggle_time = now;
+                self.toggle_assistant();
+                tracing::info!(open = self.assistant_open, "快捷键 Ctrl+Alt+E 单次触发切换学习助手");
+            } else {
+                tracing::debug!("忽略 Ctrl+Alt+E 按键连击 (key repeat)");
+            }
             let shown = self.self_drawn_frame();
             self.reconcile_candidates(&shown);
             return ServerMessage::KeyResult {
@@ -187,8 +196,26 @@ impl Router {
                 frame: self.current_frame(),
             };
         }
-        if self.matches_learning_drill_combo(&event) {
-            self.start_drill_session();
+        if self.assistant_open && event.virtual_key == super::key::ESCAPE {
+            self.close_assistant();
+            let shown = self.self_drawn_frame();
+            self.reconcile_candidates(&shown);
+            return ServerMessage::KeyResult {
+                session,
+                outcome: KeyOutcome::Consumed,
+                commit: None,
+                frame: self.current_frame(),
+            };
+        }
+        if self.matches_ai_assistant_combo(&event) {
+            let now = Instant::now();
+            if now.duration_since(self.last_ai_assistant_toggle_time) > std::time::Duration::from_millis(100) {
+                self.last_ai_assistant_toggle_time = now;
+                self.toggle_ai_assistant();
+                tracing::info!(open = self.ai_assistant_open, "快捷键 Ctrl+Alt+D 单次触发切换 AI 对话助手");
+            } else {
+                tracing::debug!("忽略 Ctrl+Alt+D 按键连击 (key repeat)");
+            }
             let shown = self.self_drawn_frame();
             self.reconcile_candidates(&shown);
             return ServerMessage::KeyResult {

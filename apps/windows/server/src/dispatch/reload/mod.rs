@@ -226,6 +226,7 @@ impl Router {
         if config.predict != reload.applied_predict {
             attach_cloud(&mut self.engine, &config.predict);
             reload.applied_predict = config.predict.clone();
+            self.config.predict = config.predict.clone();
         }
         let language = assembly::learning_language(config);
         if language != reload.applied_language

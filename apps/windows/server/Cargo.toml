@@ -32,6 +32,8 @@ tracing-subscriber.workspace = true
 tracing-appender.workspace = true
 toml_edit.workspace = true
 jiff.workspace = true
+uuid.workspace = true
+tokio = { workspace = true, features = ["sync", "macros", "rt-multi-thread"] }
 
 [dev-dependencies]
 serde_json.workspace = true

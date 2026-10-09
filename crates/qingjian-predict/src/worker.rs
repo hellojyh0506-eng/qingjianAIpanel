@@ -73,7 +73,7 @@ impl Worker {
             // 对比请求（主动提交）零延迟；候选翻译请求采用紧凑防抖 (50ms)，常规拼音联想保留标准防抖
             let mut req = request;
             let effective_debounce = match req.kind {
-                qingjian_core::PredictionKind::Compare => Duration::from_millis(0),
+                qingjian_core::PredictionKind::Compare | qingjian_core::PredictionKind::DeepLearn => Duration::from_millis(0),
                 qingjian_core::PredictionKind::Translate => Duration::from_millis(50).min(self.debounce),
                 _ => self.debounce,
             };
@@ -103,46 +103,53 @@ impl Worker {
             }
 
             let start = Instant::now();
-            tokio::select! {
-                newer = self.requests.recv() => {
-                    match newer {
-                        Some(n) => {
-                            tracing::info!(
-                                interrupted_seq = req.sequence,
-                                new_seq = n.sequence,
-                                "新按键/候选到达，立刻打断在途网络请求"
-                            );
-                            latest_request = Some(n);
-                            continue;
-                        }
-                        None => return Ok(()),
-                    }
-                }
-                res = self.client.complete(&req) => {
-                    match res {
-                        Ok(reply) => {
-                            tracing::info!(
-                                sequence = req.sequence,
-                                elapsed_ms = start.elapsed().as_millis(),
-                                words = reply.words.len(),
-                                sentence = reply.sentence.is_some(),
-                                "联想完成"
-                            );
-                            if !reply.is_empty() {
-                                self.cache.insert(key, reply.clone());
+            let is_critical = req.kind == qingjian_core::PredictionKind::DeepLearn
+                || req.kind == qingjian_core::PredictionKind::Compare;
+
+            let res = if is_critical {
+                self.client.complete(&req).await
+            } else {
+                tokio::select! {
+                    newer = self.requests.recv() => {
+                        match newer {
+                            Some(n) => {
+                                tracing::info!(
+                                    interrupted_seq = req.sequence,
+                                    new_seq = n.sequence,
+                                    "新按键/候选到达，立刻打断在途网络请求"
+                                );
+                                latest_request = Some(n);
+                                continue;
                             }
-                            self.reply(req.sequence, reply);
-                        }
-                        Err(error) => {
-                            tracing::warn!(
-                                sequence = req.sequence,
-                                elapsed_ms = start.elapsed().as_millis(),
-                                %error,
-                                "联想失败，下发空兜底通知"
-                            );
-                            self.reply(req.sequence, Reply::default());
+                            None => return Ok(()),
                         }
                     }
+                    res = self.client.complete(&req) => res,
+                }
+            };
+
+            match res {
+                Ok(reply) => {
+                    tracing::info!(
+                        sequence = req.sequence,
+                        elapsed_ms = start.elapsed().as_millis(),
+                        words = reply.words.len(),
+                        sentence = reply.sentence.is_some(),
+                        "联想完成"
+                    );
+                    if !reply.is_empty() {
+                        self.cache.insert(key, reply.clone());
+                    }
+                    self.reply(req.sequence, reply);
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        sequence = req.sequence,
+                        elapsed_ms = start.elapsed().as_millis(),
+                        %error,
+                        "联想失败，下发空兜底通知"
+                    );
+                    self.reply(req.sequence, Reply::default());
                 }
             }
         }
@@ -156,6 +163,11 @@ impl Worker {
             words: reply.words,
             sentence: reply.sentence,
             alternatives: reply.alternatives,
+            phonetic: reply.phonetic,
+            explanation: reply.explanation,
+            collocations: reply.collocations,
+            examples: reply.examples,
+            ielts_friendly: reply.ielts_friendly,
         });
     }
 }

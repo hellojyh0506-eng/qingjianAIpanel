@@ -357,7 +357,7 @@ fn is_learning_shortcut(event: &KeyEvent) -> bool {
     let is_d = vk == 0x44 || ch == Some('d');
 
     if chord.ctrl && chord.shift && !chord.alt && !chord.win {
-        return is_e || is_t || is_r || is_l;
+        return is_t || is_r || is_l;
     }
     if chord.ctrl && chord.alt && !chord.shift && !chord.win {
         return is_l || is_d || is_e || is_r;

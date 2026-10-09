@@ -235,6 +235,108 @@ impl Router {
             );
             return;
         }
+        if self.engine.last_prediction_kind() == PredictionKind::DeepLearn {
+            tracing::info!(
+                seq = prediction.sequence,
+                alts = prediction.alternatives.len(),
+                "收到 DeepLearn 深度解析数据，回填学习助手"
+            );
+            let rect = self.last_rect.unwrap_or(qingjian_platform::protocol::ScreenRect {
+                left: 200,
+                top: 200,
+                right: 400,
+                bottom: 230,
+            });
+
+            let target_text = self
+                .passive_learning_card
+                .as_ref()
+                .map(|c| c.target_text.clone())
+                .or_else(|| self.passive_translation_target.clone())
+                .unwrap_or_else(|| "当前表达".to_string());
+
+            let primary_text = prediction
+                .sentence
+                .clone()
+                .or_else(|| prediction.alternatives.first().map(|a| a.text.clone()))
+                .or_else(|| {
+                    self.passive_learning_card
+                        .as_ref()
+                        .and_then(|c| c.primary.as_ref().map(|p| p.text.clone()))
+                })
+                .or_else(|| self.passive_translation.clone())
+                .or_else(|| {
+                    self.engine.translate_word(&target_text).and_then(|t| {
+                        t.senses().first().map(|s| s.text.clone())
+                    })
+                })
+                .unwrap_or_else(|| target_text.clone());
+
+            let mut data = crate::ui::companion::CompanionData::default();
+            data.target_chinese = target_text.clone();
+            data.primary_english = primary_text.clone();
+            data.is_loading = false;
+            data.phonetic = prediction.phonetic.clone().unwrap_or_default();
+            data.explanation = prediction.explanation.clone().unwrap_or_else(|| {
+                format!("用于日常交流中表达“{}”的地道美式口语。", target_text)
+            });
+            data.collocations = prediction.collocations.clone();
+            data.ielts_friendly = prediction.ielts_friendly.clone().unwrap_or_default();
+
+            data.alternatives = prediction
+                .alternatives
+                .iter()
+                .map(|alt| crate::ui::companion::ExpressionVariant {
+                    text: alt.text.clone(),
+                    tag: if alt.tag.is_empty() { "Natural".to_string() } else { alt.tag.clone() },
+                    meaning: alt.meaning.clone(),
+                    why_natural: alt.why_natural.clone(),
+                })
+                .collect();
+
+            if data.alternatives.is_empty() && !primary_text.is_empty() {
+                data.alternatives.push(crate::ui::companion::ExpressionVariant {
+                    text: primary_text.clone(),
+                    tag: "Natural".to_string(),
+                    meaning: target_text.clone(),
+                    why_natural: "日常高频地道表达".to_string(),
+                });
+            }
+
+            data.examples = prediction
+                .examples
+                .iter()
+                .map(|ex| {
+                    if let Some((en, zh)) = ex.split_once('|') {
+                        (en.trim().to_string(), zh.trim().to_string())
+                    } else if let Some((en, zh)) = ex.split_once('—') {
+                        (en.trim().to_string(), zh.trim().to_string())
+                    } else if let Some((en, zh)) = ex.split_once('-') {
+                        (en.trim().to_string(), zh.trim().to_string())
+                    } else {
+                        (ex.trim().to_string(), String::new())
+                    }
+                })
+                .collect();
+
+            if data.examples.is_empty() && !primary_text.is_empty() {
+                data.examples.push((primary_text.clone(), target_text.clone()));
+            }
+
+            if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                let vault = qingjian_learning::LearningVault::open(&user_dir);
+                for saved in vault.saved_expressions() {
+                    if saved.prompt == target_text {
+                        if !data.collocations.contains(&saved.expression) {
+                            data.collocations.push(saved.expression.clone());
+                        }
+                    }
+                }
+            }
+
+            self.candidates.show_companion(data, rect);
+            return;
+        }
         if self.engine.last_prediction_kind() == PredictionKind::Translate {
             // Generation ID 校验：丢弃过期请求返回的结果，防止 Candidate 快速变化时的覆盖竞态
             if self.generation_id != 0 && prediction.sequence != self.generation_id {
@@ -443,10 +545,32 @@ impl Router {
         self.passive_translation_target = Some(target.clone());
         if self.engine.prediction_enabled() {
             let due = self.today_due_count();
+
+            // 优先从本地离线词典获取即时兜底，实现 0ms 瞬间显示，消除等待空白
+            let mut offline_expr = None;
+            if let Some(local_trans) = self.engine.translate_word(&target) {
+                if let Some(first_sense) = local_trans.senses().first() {
+                    offline_expr = Some(qingjian_platform::protocol::LearningExpression {
+                        text: first_sense.text.clone(),
+                        tag: "Natural".to_string(),
+                        meaning: target.clone(),
+                        tone: "Casual".to_string(),
+                        scenario: "Daily".to_string(),
+                        commonality: "Common".to_string(),
+                        why_natural: "Local glossary".to_string(),
+                    });
+                }
+            }
+            let initial_state = if offline_expr.is_some() {
+                qingjian_platform::protocol::LearningState::Ready
+            } else {
+                qingjian_platform::protocol::LearningState::Loading
+            };
+
             self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
                 target_text: target.clone(),
-                state: qingjian_platform::protocol::LearningState::Loading,
-                primary: None,
+                state: initial_state,
+                primary: offline_expr,
                 alternatives: Vec::new(),
                 expanded: preserve_expanded,
                 selected_index: None,

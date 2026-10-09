@@ -59,4 +59,26 @@ pub enum CandidateAction {
 
     /// 退出 Drill / Review 面板
     Finish,
+
+    /// 打开独立 AI Assistant 对话窗口
+    OpenAiAssistant,
+
+    /// 关闭独立 AI Assistant 对话窗口
+    CloseAiAssistant,
+
+    /// 发起 AI 流式对话问答
+    AiChatSend {
+        prompt: String,
+        fast_mode: bool,
+        web_search: bool,
+        session_id: String,
+    },
+
+    /// 停止当前正在生成的流式请求
+    AiChatStop {
+        session_id: String,
+    },
+
+    /// 开始全新对话会话
+    AiChatNewSession,
 }

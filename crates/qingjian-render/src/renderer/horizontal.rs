@@ -21,11 +21,13 @@ impl Renderer {
             width += m.column_gap() + self.measure(footer, &m.index_style()).width;
         }
         let mut height = row_height;
-        if let Some((annotation_width, annotation_height)) =
-            self.highlighted_annotation_size(frame, m)
-        {
-            width = width.max(annotation_width);
-            height += annotation_height;
+        if frame.learning_card.is_none() {
+            if let Some((annotation_width, annotation_height)) =
+                self.highlighted_annotation_size(frame, m)
+            {
+                width = width.max(annotation_width);
+                height += annotation_height;
+            }
         }
         (width, height)
     }
@@ -128,12 +130,14 @@ impl Renderer {
             );
         }
         // 高亮候选的译文
-        if let Some(row) = frame.highlighted.and_then(|i| frame.rows.get(i)) {
-            let mut x = left + m.padding() + inset;
-            let annotation_top = y + row_height + m.row_padding() / 2.0;
-            for (segment, tone) in &row.annotation {
-                let style = m.annotation_style(m.tone_color(*tone));
-                x += self.draw_text(canvas, segment, &style, x, annotation_top);
+        if frame.learning_card.is_none() {
+            if let Some(row) = frame.highlighted.and_then(|i| frame.rows.get(i)) {
+                let mut x = left + m.padding() + inset;
+                let annotation_top = y + row_height + m.row_padding() / 2.0;
+                for (segment, tone) in &row.annotation {
+                    let style = m.annotation_style(m.tone_color(*tone));
+                    x += self.draw_text(canvas, segment, &style, x, annotation_top);
+                }
             }
         }
     }

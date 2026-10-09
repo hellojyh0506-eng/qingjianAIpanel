@@ -43,6 +43,37 @@ pub trait CandidateSink: Send {
 
     /// 收起 Drill 窗口
     fn hide_drill(&self) {}
+
+    /// 打开 / 聚焦 AI Assistant 独立对话窗口
+    fn show_ai_assistant(&self, anchor: Option<windows::Win32::Foundation::RECT>, initial_prompt: Option<String>) {
+        let _ = (anchor, initial_prompt);
+    }
+
+    /// 收起 AI Assistant 对话窗口
+    fn hide_ai_assistant(&self) {}
+
+    /// 发送流式文本增量到 AI Assistant 窗口
+    fn send_ai_chunk(&self, chunk: String) {
+        let _ = chunk;
+    }
+
+    /// 发送联网搜索结果到 AI Assistant 窗口
+    fn send_ai_web_sources(&self, sources: Vec<qingjian_predict::SearchResult>) {
+        let _ = sources;
+    }
+
+    /// 发送流式生成结束通知到 AI Assistant 窗口
+    fn send_ai_finish(&self, ttft_ms: u128, total_ms: u128) {
+        let _ = (ttft_ms, total_ms);
+    }
+
+    /// 发送流式生成异常通知到 AI Assistant 窗口
+    fn send_ai_error(&self, error: String) {
+        let _ = error;
+    }
+
+    /// 克隆一个 Sink 发送端
+    fn clone_sink(&self) -> Box<dyn CandidateSink>;
 }
 
 /// 不画候选窗口的空实现。
@@ -54,4 +85,8 @@ impl CandidateSink for NoopSink {
     fn hide(&self) {}
 
     fn configure(&self, _settings: RenderSettings) {}
+
+    fn clone_sink(&self) -> Box<dyn CandidateSink> {
+        Box::new(NoopSink)
+    }
 }

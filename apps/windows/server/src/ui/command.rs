@@ -37,4 +37,22 @@ pub(super) enum UiCommand {
 
     /// 收起 Drill 窗口。
     DrillHide,
+
+    /// 显示 / 聚焦 AI Assistant 独立对话窗口 (anchor, initial_prompt)
+    AiAssistantShow(Box<(Option<windows::Win32::Foundation::RECT>, Option<String>)>),
+
+    /// 收起 AI Assistant 对话窗口
+    AiAssistantHide,
+
+    /// 流式增量内容到达
+    AiAssistantChunk(String),
+
+    /// 真实网络搜索结果到达
+    AiAssistantWebSources(Vec<qingjian_predict::SearchResult>),
+
+    /// 流式生成结束
+    AiAssistantFinish { ttft_ms: u128, total_ms: u128 },
+
+    /// 流式生成异常
+    AiAssistantError(String),
 }

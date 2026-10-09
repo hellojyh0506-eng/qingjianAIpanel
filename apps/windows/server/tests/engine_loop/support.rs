@@ -321,6 +321,10 @@ impl CandidateSink for RecordingCandidates {
     fn hide(&self) {}
 
     fn configure(&self, _settings: RenderSettings) {}
+
+    fn clone_sink(&self) -> Box<dyn CandidateSink> {
+        Box::new(self.clone())
+    }
 }
 
 pub fn rect() -> ScreenRect {

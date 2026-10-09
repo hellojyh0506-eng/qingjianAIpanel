@@ -9,5 +9,5 @@ pub mod ipc;
 pub mod ui;
 
 pub use assembly::{AssemblySpec, LanguageModelFiles};
-pub use dispatch::{Router, RouterConfig};
+pub use dispatch::{CandidateAction, Router, RouterConfig};
 pub use error::ServerError;

@@ -26,10 +26,28 @@ pub struct Prediction {
 
     /// 针对当前候选的自然表达建议与细览（翻译模式下产出）。
     pub alternatives: Vec<PredictionAlternative>,
+
+    /// 深度口语学习：音标
+    pub phonetic: Option<String>,
+
+    /// 深度口语学习：释义与地道用法说明
+    pub explanation: Option<String>,
+
+    /// 深度口语学习：高频搭配
+    pub collocations: Vec<String>,
+
+    /// 深度口语学习：例句
+    pub examples: Vec<String>,
+
+    /// 深度口语学习：雅思/正式替换
+    pub ielts_friendly: Option<String>,
 }
 
 impl Prediction {
     pub fn is_empty(&self) -> bool {
-        self.words.is_empty() && self.sentence.is_none() && self.alternatives.is_empty()
+        self.words.is_empty()
+            && self.sentence.is_none()
+            && self.alternatives.is_empty()
+            && self.explanation.is_none()
     }
 }

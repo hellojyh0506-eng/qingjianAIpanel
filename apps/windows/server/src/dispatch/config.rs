@@ -100,6 +100,9 @@ pub struct RouterConfig {
 
     /// 展开/收起候选卡片「更多译法」（`[shortcut] toggle_learning_expand`）。
     pub toggle_learning_expand: KeyCombo,
+
+    /// 云联想与 AI 对话模型配置（`[predict]`）。
+    pub predict: qingjian_predict::PredictConfig,
 }
 
 impl RouterConfig {
@@ -153,6 +156,7 @@ impl From<&Config> for RouterConfig {
             learning_mode: config.general.learning_mode,
             toggle_learning_mode: config.shortcut.toggle_learning_mode,
             toggle_learning_expand: config.shortcut.toggle_learning_expand,
+            predict: config.predict.clone(),
         }
     }
 }

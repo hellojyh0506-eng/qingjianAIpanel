@@ -100,7 +100,7 @@ fn test_p1_three_state_cycle_and_isolation() {
     // 1. 默认启动即为 Daily 模式
     assert_eq!(router.learning_mode(), LearningMode::Daily);
 
-    // 2. Daily 模式下键入「xianqian」，确认绝不发出被动翻译请求
+    // 2. Daily 模式下键入「xianqian」，确认发出快速地道英文单句翻译
     for c in "xianqian".chars() {
         router.handle(ClientMessage::Key {
             session,
@@ -108,8 +108,8 @@ fn test_p1_three_state_cycle_and_isolation() {
         });
     }
     assert!(
-        requests.lock().unwrap().iter().all(|r| r.kind != PredictionKind::Translate),
-        "Daily 模式绝不能向外部大模型发送被动翻译请求"
+        requests.lock().unwrap().iter().any(|r| r.kind == PredictionKind::Translate),
+        "Daily 模式支持快速地道英文单句翻译"
     );
 
     // 空格提交首选词并清空
@@ -151,6 +151,7 @@ fn test_p1_three_state_cycle_and_isolation() {
         words: Vec::new(),
         sentence: Some("previously".to_string()),
         alternatives: Vec::new(),
+        ..Default::default()
     });
     router.tick();
 

@@ -128,13 +128,31 @@ impl AiService {
         self.client.complete(&request).await
     }
 
-    /// 3. 生成更多口语变体与语气说明。
+    /// 3. 生成更多口语变体与语气说明（深度学习伴侣助手）。
     pub async fn generate_expression_variants(
         &self,
         chinese_text: &str,
-        _primary: &str,
+        primary: &str,
     ) -> Result<Reply, PredictError> {
-        self.translate_candidate(chinese_text).await
+        let request = PredictionRequest {
+            sequence: 0,
+            kind: PredictionKind::DeepLearn,
+            before: String::new(),
+            after: String::new(),
+            pinyin: String::new(),
+            letters: String::new(),
+            syllables: 0,
+            candidates: Vec::new(),
+            guess: String::new(),
+            current_expression: primary.trim().to_owned(),
+            max_items: 5,
+            want_sentence: true,
+            text: chinese_text.trim().to_owned(),
+            target_language: "en".to_owned(),
+            user_attempt: String::new(),
+            reference: primary.trim().to_owned(),
+        };
+        self.client.complete(&request).await
     }
 
     /// 4. 英文输入诊断：直通模式下的不自然表达轻量诊断。

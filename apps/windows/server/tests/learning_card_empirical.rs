@@ -151,6 +151,7 @@ fn test_scenario_01_standard_chinese_learning_card() {
                 why_natural: "Focuses on result status rather than the action".to_string(),
             },
         ],
+        ..Default::default()
     });
     router.tick();
 
@@ -221,6 +222,7 @@ fn test_scenario_02_henan_dialect_spoken_learning_card() {
                 why_natural: "Classic American colloquial exclamation".to_string(),
             },
         ],
+        ..Default::default()
     });
     router.tick();
 
@@ -268,6 +270,7 @@ fn test_scenario_03_disambiguation_chinese_learning_card() {
                 why_natural: "Vividly expresses separating tightly bound modules".to_string(),
             },
         ],
+        ..Default::default()
     });
     router.tick();
 
@@ -312,6 +315,7 @@ fn test_scenario_04_highlight_shift_stale_rejection() {
         words: Vec::new(),
         sentence: Some("decouple".to_string()),
         alternatives: Vec::new(),
+        ..Default::default()
     });
     router.tick();
 
@@ -357,6 +361,7 @@ fn test_scenario_05_progressive_disclosure_and_breakdown() {
                 why_natural: "More formal and standard in workplace communication".to_string(),
             },
         ],
+        ..Default::default()
     });
     router.tick();
 
@@ -390,6 +395,7 @@ fn test_scenario_05_progressive_disclosure_and_breakdown() {
     }
 
     // 再次按 Ctrl+Alt+E 收起
+    std::thread::sleep(std::time::Duration::from_millis(150));
     let reply = router.handle(ClientMessage::Key {
         session: SESSION,
         event: expand_key,
@@ -401,24 +407,22 @@ fn test_scenario_05_progressive_disclosure_and_breakdown() {
     }
 }
 
-/// Scenario 6: Daily Mode Isolation (Layer 3 & 4 completely absent)
+/// Scenario 6: Daily Mode Fast Translation
 #[test]
 fn test_scenario_06_daily_mode_zero_overhead_isolation() {
     let (mut router, requests, _) = create_test_router(LearningMode::Daily);
 
     type_letters(&mut router, "nihao");
 
-    // Daily 模式下绝不触发 Translate 类型的请求
+    // Daily 模式下支持快速日常口语单句翻译
     let reqs = requests.lock().unwrap();
     assert!(
-        !reqs.iter().any(|r| r.kind == PredictionKind::Translate),
-        "Daily 模式绝不能触发任何被动学习翻译请求"
+        reqs.iter().any(|r| r.kind == PredictionKind::Translate),
+        "Daily 模式支持快速日常口语单句翻译"
     );
 
-    // 候选窗口绝不包含 learning_card
     let poll_msg = router.handle(ClientMessage::Poll { session: SESSION });
     if let Some(ServerMessage::Update { frame, .. }) = poll_msg {
         assert_eq!(frame.learning_mode, LearningMode::Daily);
-        assert_eq!(frame.learning_card, None, "Daily 模式下 learning_card 必须为 None");
     }
 }

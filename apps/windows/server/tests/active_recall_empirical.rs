@@ -200,23 +200,11 @@ fn test_scenario_05_empty_input_rejection_no_fake_comparison() {
 
     type_letters(&mut router, "mang");
 
-    // Manually trigger drill mode via Ctrl+Alt+D
-    let drill_key = KeyEvent::new(
-        'D' as u32,
-        Some('D'),
-        KeyModifiers {
-            ctrl: true,
-            alt: true,
-            ..Default::default()
-        },
-    );
-    let reply = router.handle(ClientMessage::Key {
-        session: SESSION,
-        event: drill_key,
-    });
+    // Manually trigger drill mode via StartDrillSession action
+    router.handle_candidate_action(qingjian_windows_server::CandidateAction::StartDrillSession);
+    let poll_msg = router.handle(ClientMessage::Poll { session: SESSION });
 
-    if let Some(ServerMessage::KeyResult { frame, outcome, .. }) = reply {
-        assert_eq!(outcome, KeyOutcome::Consumed);
+    if let Some(ServerMessage::Update { frame, .. }) = poll_msg {
         let card = frame.learning_card.expect("Card must exist in Learn mode");
         assert_eq!(card.drill_stage, Some(DrillStage::Input));
         assert_eq!(card.drill_input, "");
@@ -285,20 +273,8 @@ fn test_scenario_07_drill_composition_isolation() {
 
     type_letters(&mut router, "mang");
 
-    // Enter drill mode
-    let drill_key = KeyEvent::new(
-        'D' as u32,
-        Some('D'),
-        KeyModifiers {
-            ctrl: true,
-            alt: true,
-            ..Default::default()
-        },
-    );
-    router.handle(ClientMessage::Key {
-        session: SESSION,
-        event: drill_key,
-    });
+    // Enter drill mode via StartDrillSession action
+    router.handle_candidate_action(qingjian_windows_server::CandidateAction::StartDrillSession);
 
     // Check preedit before typing English in drill mode
     let pre_msg = router.handle(ClientMessage::Poll { session: SESSION });

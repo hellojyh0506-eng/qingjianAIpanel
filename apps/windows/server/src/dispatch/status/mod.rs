@@ -123,7 +123,7 @@ impl Router {
         is_configured || is_ctrl_shift_l
     }
 
-    /// 快捷键展开/收起候选卡片「更多译法」或日常模式查看英文（默认 Ctrl+Alt+E 或 Ctrl+Shift+E）。
+    /// 快捷键展开/收起学习助手（默认 Ctrl+Alt+E）。
     pub(super) fn matches_learning_expand_combo(&self, event: &qingjian_platform::protocol::KeyEvent) -> bool {
         let chord = event.modifiers.chord();
         let combo = self.config.toggle_learning_expand;
@@ -132,30 +132,30 @@ impl Router {
         let is_configured = is_key
             && chord == qingjian_platform::protocol::KeyModifiers::from(combo.modifiers);
         let is_e = event.character.map(|c| c.to_ascii_lowercase()) == Some('e') || event.virtual_key == 0x45;
-        let is_ctrl_shift_e = is_e
+        let is_ctrl_alt_e = is_e
             && chord.ctrl
-            && chord.shift
-            && !chord.alt
+            && chord.alt
+            && !chord.shift
             && !chord.win;
-        is_configured || is_ctrl_shift_e
+        is_configured || is_ctrl_alt_e
     }
 
-    /// 快捷键触发当前高亮候选的 Active Recall 练习（默认 Ctrl+Alt+D 或 Ctrl+Shift+T）。
-    pub(super) fn matches_learning_drill_combo(&self, event: &qingjian_platform::protocol::KeyEvent) -> bool {
+    /// 快捷键打开/关闭独立 AI Assistant 对话窗口（默认 Ctrl+Alt+D）。
+    pub(super) fn matches_ai_assistant_combo(&self, event: &qingjian_platform::protocol::KeyEvent) -> bool {
         let chord = event.modifiers.chord();
         let is_d = event.character.map(|c| c.to_ascii_lowercase()) == Some('d') || event.virtual_key == 0x44;
-        let is_t = event.character.map(|c| c.to_ascii_lowercase()) == Some('t') || event.virtual_key == 0x54;
         let is_ctrl_alt_d = is_d
             && chord.ctrl
             && chord.alt
             && !chord.shift
             && !chord.win;
-        let is_ctrl_shift_t = is_t
-            && chord.ctrl
-            && chord.shift
-            && !chord.alt
-            && !chord.win;
-        is_ctrl_alt_d || is_ctrl_shift_t
+        is_ctrl_alt_d
+    }
+
+    /// 快捷键触发当前高亮候选的 Active Recall 练习（别名）
+    #[allow(dead_code)]
+    pub(super) fn matches_learning_drill_combo(&self, event: &qingjian_platform::protocol::KeyEvent) -> bool {
+        self.matches_ai_assistant_combo(event)
     }
 
     /// 快捷键触发 FSRS 今日复习队列（默认 Ctrl+Alt+R 或 Ctrl+Shift+R）。

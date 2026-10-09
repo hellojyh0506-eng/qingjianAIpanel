@@ -15,7 +15,7 @@ impl Renderer {
         let style = m.annotation_style(m.theme.colors.gloss);
         let line_height = style.line_height.max(m.px(m.theme.annotation_font.line_height));
 
-        let flag_width = self.measure("🇺🇸 ", &style).width;
+        let flag_width = m.px(22.0);
         let (main_text, has_audio) = match card.status {
             LearningStatus::Loading => ("正在推荐地道口语……", false),
             LearningStatus::Failed => ("暂时没有译文", false),
@@ -36,19 +36,12 @@ impl Renderer {
         };
         let main_width = self.measure(main_text, &style).width + audio_width;
 
-        let is_daily = frame.learning_mode == crate::frame::LearningMode::Daily;
         let is_learn = frame.learning_mode == crate::frame::LearningMode::Learn;
-        let is_drill = frame.learning_mode == crate::frame::LearningMode::Drill;
 
-        let width = if is_daily {
-            flag_width + main_width + m.column_gap() * 2.0
-        } else if is_learn {
-            let btn_text = "📖 打开学习助手 (Ctrl+Alt+E)";
+        let width = if is_learn {
+            let btn_text = "📖 学习助手(Ctrl+Alt+E)";
             let btn_width = self.measure(btn_text, &m.index_style()).width + m.px(16.0);
             flag_width + main_width + m.column_gap() * 3.0 + btn_width
-        } else if is_drill {
-            let btn_text = "💡 进入练习 (Ctrl+Alt+D)";
-            self.measure(btn_text, &m.index_style()).width + m.px(24.0)
         } else {
             flag_width + main_width + m.column_gap() * 2.0
         };
@@ -88,21 +81,18 @@ impl Renderer {
         let mut x = left + m.padding();
 
         let is_learn = frame.learning_mode == crate::frame::LearningMode::Learn;
-        let is_drill = frame.learning_mode == crate::frame::LearningMode::Drill;
 
-        if is_drill {
-            let btn_text = "💡 进入练习 (Ctrl+Alt+D)";
-            let btn_style = m.style(m.theme.index_font, Color::rgb(22, 115, 249));
-            let btn_w = self.measure(btn_text, &btn_style).width + m.px(16.0);
-            let btn_h = line_height;
-            canvas.fill_round_rect(left + m.padding(), y - m.px(1.0), btn_w, btn_h, m.px(4.0), m.theme.colors.highlight);
-            self.draw_text(canvas, btn_text, &btn_style, left + m.padding() + m.px(8.0), y);
-            return;
-        }
-
-        // 🇺🇸 国旗前缀
-        let flag_style = m.style(m.theme.annotation_font, m.theme.colors.fresh);
-        x += self.draw_text(canvas, "🇺🇸 ", &flag_style, x, y);
+        // 🇺🇸 国旗前缀：矢量绘制精致美国国旗微标，彻底解决 Windows 无 Emoji 国旗导致退化成 "us" 的问题
+        let flag_w = m.px(16.0);
+        let flag_h = m.px(11.0);
+        let flag_y = y + (line_height - flag_h) / 2.0;
+        // 红白底纹
+        canvas.fill_round_rect(x, flag_y, flag_w, flag_h, m.px(1.5), Color::rgb(179, 25, 66));
+        canvas.fill_rect(x, flag_y + flag_h * 2.0 / 7.0, flag_w, flag_h / 7.0, Color::rgb(255, 255, 255));
+        canvas.fill_rect(x, flag_y + flag_h * 4.0 / 7.0, flag_w, flag_h / 7.0, Color::rgb(255, 255, 255));
+        // 蓝底
+        canvas.fill_rect(x, flag_y, flag_w * 0.45, flag_h * 4.0 / 7.0, Color::rgb(10, 49, 97));
+        x += flag_w + m.px(6.0);
 
         // 主表达
         let (main_text, has_audio) = match card.status {
@@ -131,8 +121,8 @@ impl Renderer {
         }
 
         if is_learn {
-            let btn_text = "📖 打开学习助手 (Ctrl+Alt+E)";
-            let btn_style = m.style(m.theme.index_font, m.theme.colors.fresh);
+            let btn_text = "📖 学习助手(Ctrl+Alt+E)";
+            let btn_style = m.style(m.theme.index_font, m.theme.colors.gloss);
             let btn_w = self.measure(btn_text, &btn_style).width + m.px(16.0);
             let btn_x = left + content_width - m.padding() - btn_w;
             let btn_h = line_height;

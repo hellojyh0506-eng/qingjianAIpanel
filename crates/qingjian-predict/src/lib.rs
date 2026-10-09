@@ -16,6 +16,9 @@ mod gloss;
 mod prompt;
 mod worker;
 
+pub mod stream_client;
+pub mod web_search;
+
 pub use ai_service::{AiMetrics, AiService};
 pub use cloud_predictor::CloudPredictor;
 pub use config::PredictConfig;
@@ -23,4 +26,6 @@ pub use connection::{ConnectionReport, ConnectionTest};
 pub use error::PredictError;
 pub use gloss::CloudGlossFiller;
 pub use prompt::{COMPARE_SYSTEM_PROMPT, TRANSLATE_SYSTEM_PROMPT};
+pub use stream_client::{ChatMessage, StreamChatClient, StreamEvent};
+pub use web_search::{SearchResult, execute_web_search};
 

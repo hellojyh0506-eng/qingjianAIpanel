@@ -71,6 +71,7 @@ mod tests {
             words: Vec::new(),
             sentence: Some(s.to_owned()),
             alternatives: Vec::new(),
+            ..Default::default()
         };
         let mut cache = PredictionCache::with_capacity(2);
         cache.insert("a".into(), reply("1"));

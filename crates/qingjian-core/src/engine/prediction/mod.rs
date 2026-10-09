@@ -226,6 +226,40 @@ impl Engine {
         Some(self.prediction_sequence)
     }
 
+    /// 深度口语学习展开请求：为用户提供音标、地道释义、多语域口语变体、搭配与例句。
+    pub fn request_deep_learn(
+        &mut self,
+        chinese: &str,
+        primary_english: &str,
+    ) -> Option<u64> {
+        let chinese = chinese.trim();
+        if !self.predictor.is_enabled() || self.private || chinese.is_empty() {
+            return None;
+        }
+        self.prediction_sequence += 1;
+        let request = PredictionRequest {
+            sequence: self.prediction_sequence,
+            kind: PredictionKind::DeepLearn,
+            before: String::new(),
+            after: String::new(),
+            pinyin: String::new(),
+            letters: String::new(),
+            syllables: 0,
+            candidates: Vec::new(),
+            guess: String::new(),
+            current_expression: primary_english.to_owned(),
+            max_items: 5,
+            want_sentence: true,
+            text: chinese.to_owned(),
+            target_language: "en".to_owned(),
+            user_attempt: String::new(),
+            reference: primary_english.to_owned(),
+        };
+        self.last_prediction_kind = PredictionKind::DeepLearn;
+        self.predictor.submit(request);
+        Some(self.prediction_sequence)
+    }
+
     /// 作废正在飞的联想（用户清空了拼音、关掉了联想框）。
     pub fn cancel_prediction(&mut self) {
         self.prediction_sequence += 1;
@@ -235,7 +269,9 @@ impl Engine {
     /// 结果可能是空的（模型没给出可用条目），壳据此停止等待。
     pub fn poll_prediction(&mut self) -> Option<Prediction> {
         while let Some(mut prediction) = self.predictor.poll() {
-            if prediction.sequence == self.prediction_sequence {
+            let is_learning = self.last_prediction_kind == PredictionKind::DeepLearn
+                || self.last_prediction_kind == PredictionKind::Compare;
+            if prediction.sequence == self.prediction_sequence || is_learning {
                 // 问字的答案、翻译的译文和敲的拼音本来就对不上，只有组句联想的云端词要校验
                 if self.last_prediction_kind == PredictionKind::Question {
                     let guess = &self.last_question_guess;

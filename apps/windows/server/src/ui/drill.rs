@@ -10,11 +10,12 @@ use windows::Win32::Graphics::Gdi::{
     SetBkMode, SetTextColor, TRANSPARENT, TextOutW, FW_BOLD, FW_NORMAL,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, HTCLIENT, IDC_ARROW, LoadCursorW,
-    SW_HIDE, SW_SHOW, ShowWindow, WM_CHAR, WM_LBUTTONDOWN,
-    WM_NCHITTEST, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, HTCAPTION, HTCLIENT, IDC_ARROW, LoadCursorW,
+    SW_HIDE, SW_SHOW, SendMessageW, ShowWindow, WM_CHAR, WM_LBUTTONDOWN,
+    WM_NCHITTEST, WM_NCLBUTTONDOWN, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{PCWSTR, Result, w};
 
@@ -471,6 +472,20 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 // 关闭按钮
                 if cx >= DRILL_WIDTH - 36 && cx <= DRILL_WIDTH && cy <= 30 {
                     win.hide();
+                    return LRESULT(0);
+                }
+
+                // 标题栏拖动
+                if cy <= 30 {
+                    unsafe {
+                        let _ = ReleaseCapture();
+                        let _ = SendMessageW(
+                            hwnd,
+                            WM_NCLBUTTONDOWN,
+                            Some(WPARAM(HTCAPTION as usize)),
+                            Some(LPARAM(0)),
+                        );
+                    }
                     return LRESULT(0);
                 }
 

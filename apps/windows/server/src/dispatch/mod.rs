@@ -19,8 +19,11 @@ mod recall;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use qingjian_predict::{ChatMessage, StreamChatClient, StreamEvent, execute_web_search};
 use qingjian_core::Engine;
 use qingjian_platform::LocalModelConfig;
 use qingjian_platform::protocol::{
@@ -146,6 +149,27 @@ pub struct Router {
 
     /// 重排的防抖 / 轮询进行态。
     rescore: RescoreState,
+
+    /// 学习助手伴侣窗当前是否展开
+    pub(crate) assistant_open: bool,
+
+    /// 上次切换助手的时间戳（防按键连击 repeat）
+    pub(crate) last_assistant_toggle_time: Instant,
+
+    /// 独立 AI Assistant 对话窗口当前是否展开
+    pub(crate) ai_assistant_open: bool,
+
+    /// 上次切换 AI 对话助手的时间戳（防按键连击 repeat）
+    pub(crate) last_ai_assistant_toggle_time: Instant,
+
+    /// 运行流式网络请求与联网搜索的多线程 Tokio Runtime
+    pub(crate) ai_runtime: Arc<tokio::runtime::Runtime>,
+
+    /// AI Assistant 多轮对话历史记录
+    pub(crate) ai_messages: Arc<Mutex<Vec<ChatMessage>>>,
+
+    /// AI Assistant 流式中止信号
+    pub(crate) ai_stop_signal: Arc<AtomicBool>,
 }
 
 impl Router {
@@ -168,7 +192,7 @@ impl Router {
             previous_learning_mode: config.learning_mode,
             translation_start_time: None,
             compare_start_time: None,
-            daily_show_english: false,
+            daily_show_english: true,
             generation_id: 0,
             pending_selection: None,
             selection_seq: 0,
@@ -189,7 +213,79 @@ impl Router {
             model_loader: None,
             applied_model: LocalModelConfig::default(),
             rescore: RescoreState::default(),
+            assistant_open: false,
+            last_assistant_toggle_time: Instant::now() - std::time::Duration::from_secs(10),
+            ai_assistant_open: false,
+            last_ai_assistant_toggle_time: Instant::now() - std::time::Duration::from_secs(10),
+            ai_runtime: Arc::new(
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()
+                    .unwrap_or_else(|_| tokio::runtime::Runtime::new().expect("启动 Tokio 运行时失败"))
+            ),
+            ai_messages: Arc::new(Mutex::new(Vec::new())),
+            ai_stop_signal: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// 单键切换独立 AI Assistant 对话窗口（Ctrl+Alt+D）
+    pub(crate) fn toggle_ai_assistant(&mut self) {
+        if self.ai_assistant_open {
+            self.close_ai_assistant();
+        } else {
+            self.open_ai_assistant();
+        }
+    }
+
+    /// 打开 / 聚焦独立 AI Assistant 对话窗口
+    pub(crate) fn open_ai_assistant(&mut self) {
+        self.ai_assistant_open = true;
+        let anchor = self.last_rect.map(|r| windows::Win32::Foundation::RECT {
+            left: r.left,
+            top: r.top,
+            right: r.right,
+            bottom: r.bottom,
+        });
+        let initial_prompt = self
+            .passive_learning_card
+            .as_ref()
+            .map(|c| c.target_text.clone())
+            .or_else(|| self.passive_translation_target.clone())
+            .or_else(|| self.layout_candidate(self.highlight).map(|c| c.text));
+        self.candidates.show_ai_assistant(anchor, initial_prompt);
+    }
+
+    /// 关闭独立 AI Assistant 对话窗口
+    pub(crate) fn close_ai_assistant(&mut self) {
+        self.ai_assistant_open = false;
+        self.candidates.hide_ai_assistant();
+    }
+
+    pub fn is_ai_assistant_open(&self) -> bool {
+        self.ai_assistant_open
+    }
+
+    pub fn set_last_ai_assistant_toggle_time(&mut self, time: Instant) {
+        self.last_ai_assistant_toggle_time = time;
+    }
+
+    pub fn is_composing(&self) -> bool {
+        self.composing()
+    }
+
+    pub fn ai_messages_count(&self) -> usize {
+        self.ai_messages.lock().map(|m| m.len()).unwrap_or(0)
+    }
+
+    pub fn push_ai_message(&self, msg: ChatMessage) {
+        if let Ok(mut m) = self.ai_messages.lock() {
+            m.push(msg);
+        }
+    }
+
+    pub fn is_ai_stop_signaled(&self) -> bool {
+        self.ai_stop_signal.load(Ordering::Relaxed)
     }
 
     /// 当前英语学习模式。
@@ -197,8 +293,21 @@ impl Router {
         self.learning_mode
     }
 
+    /// 单键切换独立 English Assistant（打开/关闭学习助手）
+    pub(crate) fn toggle_assistant(&mut self) {
+        if self.assistant_open {
+            self.close_assistant();
+        } else {
+            self.open_assistant();
+        }
+    }
+
     /// 打开独立 English Assistant（学习助手伴侣窗）
     pub(crate) fn open_assistant(&mut self) {
+        self.assistant_open = true;
+        if let Some(card) = &mut self.passive_learning_card {
+            card.expanded = true;
+        }
         let rect = self.last_rect.unwrap_or(qingjian_platform::protocol::ScreenRect {
             left: 200,
             top: 200,
@@ -213,7 +322,7 @@ impl Router {
             .or_else(|| self.passive_translation_target.clone())
             .or_else(|| self.layout_candidate(self.highlight).map(|c| c.text))
             .or_else(|| self.layout_candidate(0).map(|c| c.text))
-            .unwrap_or_else(|| "确实有道理".to_string());
+            .unwrap_or_else(|| "当前表达".to_string());
 
         let primary_text = self
             .passive_learning_card
@@ -225,14 +334,13 @@ impl Router {
                     t.senses().first().map(|s| s.text.clone())
                 })
             })
-            .unwrap_or_else(|| "That makes perfect sense.".to_string());
+            .unwrap_or_default();
 
-        let mut data = crate::ui::companion::CompanionData::default();
-        data.target_chinese = target_text.clone();
-        data.primary_english = primary_text.clone();
+        let mut data = crate::ui::companion::CompanionData::loading(target_text.clone(), primary_text.clone());
 
         if let Some(card) = &self.passive_learning_card {
             if !card.alternatives.is_empty() {
+                data.is_loading = false;
                 data.alternatives = card
                     .alternatives
                     .iter()
@@ -246,17 +354,6 @@ impl Router {
             }
         }
 
-        if data.alternatives.is_empty() {
-            data.alternatives = vec![
-                crate::ui::companion::ExpressionVariant {
-                    text: primary_text.clone(),
-                    tag: "Natural".to_string(),
-                    meaning: target_text.clone(),
-                    why_natural: "最自然口语表达".to_string(),
-                },
-            ];
-        }
-
         if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
             let vault = qingjian_learning::LearningVault::open(&user_dir);
             for saved in vault.saved_expressions() {
@@ -267,10 +364,17 @@ impl Router {
         }
 
         self.candidates.show_companion(data, rect);
+
+        // 向 AI 发送真实 DeepLearn 深度解析请求
+        self.engine.request_deep_learn(&target_text, &primary_text);
     }
 
     /// 关闭独立 English Assistant
     pub(crate) fn close_assistant(&mut self) {
+        self.assistant_open = false;
+        if let Some(card) = &mut self.passive_learning_card {
+            card.expanded = false;
+        }
         self.candidates.hide_companion();
     }
 
@@ -304,12 +408,36 @@ impl Router {
             })
             .unwrap_or_else(|| "That makes perfect sense.".to_string());
 
+        let mut card = self.passive_learning_card.take().unwrap_or_else(|| {
+            qingjian_platform::protocol::LearningCardFrame {
+                target_text: target_text.clone(),
+                state: qingjian_platform::protocol::LearningState::Ready,
+                primary: Some(qingjian_platform::protocol::LearningExpression {
+                    text: reference_str.clone(),
+                    tag: "Natural".to_string(),
+                    meaning: target_text.clone(),
+                    tone: "Casual".to_string(),
+                    scenario: String::new(),
+                    commonality: "High".to_string(),
+                    why_natural: "地道日常口语表达".to_string(),
+                }),
+                ..Default::default()
+            }
+        });
+        card.drill_stage = Some(qingjian_platform::protocol::DrillStage::Input);
+        card.drill_input.clear();
+        self.passive_learning_card = Some(card);
+
         self.candidates.hide_companion();
         self.candidates.start_drill(target_text, reference_str, rect);
     }
 
     /// 结束 Drill 练习会话：收起 Drill 练习窗口。
     pub(crate) fn end_drill_session(&mut self) {
+        if let Some(card) = &mut self.passive_learning_card {
+            card.drill_stage = None;
+            card.drill_input.clear();
+        }
         self.candidates.hide_drill();
     }
 
@@ -588,6 +716,140 @@ impl Router {
             }
             CandidateAction::Finish => {
                 self.end_drill_session();
+            }
+            CandidateAction::OpenAiAssistant => {
+                self.open_ai_assistant();
+            }
+            CandidateAction::CloseAiAssistant => {
+                self.close_ai_assistant();
+            }
+            CandidateAction::AiChatNewSession => {
+                self.ai_stop_signal.store(true, Ordering::Relaxed);
+                self.ai_stop_signal = Arc::new(AtomicBool::new(false));
+                if let Ok(mut msgs) = self.ai_messages.lock() {
+                    msgs.clear();
+                }
+            }
+            CandidateAction::AiChatStop { session_id: _ } => {
+                self.ai_stop_signal.store(true, Ordering::Relaxed);
+            }
+            CandidateAction::AiChatSend { prompt, fast_mode, web_search, session_id: _ } => {
+                self.ai_stop_signal.store(true, Ordering::Relaxed);
+                let stop_signal = Arc::new(AtomicBool::new(false));
+                self.ai_stop_signal = stop_signal.clone();
+
+                if let Ok(mut msgs) = self.ai_messages.lock() {
+                    msgs.push(ChatMessage {
+                        role: "user".to_string(),
+                        content: prompt.clone(),
+                    });
+                }
+
+                let base_url = self.config.predict.base_url.clone();
+                let model = self.config.predict.model.clone();
+                let api_key_opt = self.config.predict.resolve_api_key();
+
+                let Some(api_key) = api_key_opt else {
+                    self.candidates.send_ai_error(
+                        "未配置 API Key。请在 %APPDATA%\\Qingjian\\config.toml 中设置 [predict] api_key 或设置环境变量 QINGJIAN_API_KEY。".to_string()
+                    );
+                    return;
+                };
+
+                let (max_tokens, system_prompt) = if fast_mode {
+                    (
+                        512,
+                        "你是青简输入法内置的 AI 智能助手。你的当前工作模式是【快速回答】。请直接、精炼、准确地回答用户问题，直击核心本质与落地用法，避免多余冗长铺垫。"
+                    )
+                } else {
+                    (
+                        2048,
+                        "你是青简输入法内置的 AI 智能助手。你的当前工作模式是【深度回答】。请深入透彻地分析用户的问题，提供多维度的地道表达剖析、语法语境对比、边界条件分析与详尽可落地的中英对照与代码/例句。"
+                    )
+                };
+
+                let mut messages = Vec::new();
+                messages.push(ChatMessage {
+                    role: "system".to_string(),
+                    content: system_prompt.to_string(),
+                });
+
+                if let Ok(msgs) = self.ai_messages.lock() {
+                    let start = msgs.len().saturating_sub(10);
+                    for m in &msgs[start..] {
+                        messages.push(m.clone());
+                    }
+                }
+
+                let sink = self.candidates.clone_sink();
+                let client = StreamChatClient::new(base_url, api_key, model);
+                let history_arc = self.ai_messages.clone();
+
+                self.ai_runtime.spawn(async move {
+                    if web_search {
+                        match execute_web_search(&prompt, 3).await {
+                            Ok(sources) => {
+                                if !sources.is_empty() {
+                                    sink.send_ai_web_sources(sources.clone());
+                                    let mut web_context = String::from("\n\n[联网检索实时结果]:\n");
+                                    for (i, s) in sources.iter().enumerate() {
+                                        web_context.push_str(&format!("{}. 标题: {}\nURL: {}\n摘要: {}\n\n", i + 1, s.title, s.url, s.description));
+                                    }
+                                    if let Some(last) = messages.last_mut() {
+                                        last.content.push_str(&web_context);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "联网搜索不可用，继续纯模型生成");
+                            }
+                        }
+                    }
+
+                    if stop_signal.load(Ordering::Relaxed) {
+                        return;
+                    }
+
+                    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<StreamEvent>(64);
+                    let chat_stop = stop_signal.clone();
+
+                    tokio::spawn(async move {
+                        client.stream_chat(messages, max_tokens, event_tx, chat_stop).await;
+                    });
+
+                    let mut full_response = String::new();
+
+                    while let Some(event) = event_rx.recv().await {
+                        if stop_signal.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        match event {
+                            StreamEvent::Delta(chunk) => {
+                                full_response.push_str(&chunk);
+                                sink.send_ai_chunk(chunk);
+                            }
+                            StreamEvent::WebSources(sources) => {
+                                sink.send_ai_web_sources(sources);
+                            }
+                            StreamEvent::Done { ttft_ms, total_ms } => {
+                                sink.send_ai_finish(ttft_ms, total_ms);
+                                if !full_response.is_empty() {
+                                    if let Ok(mut hist) = history_arc.lock() {
+                                        hist.push(ChatMessage {
+                                            role: "assistant".to_string(),
+                                            content: full_response.clone(),
+                                        });
+                                    }
+                                }
+                                break;
+                            }
+                            StreamEvent::Error(err) => {
+                                sink.send_ai_error(err);
+                                break;
+                            }
+                        }
+                    }
+                });
             }
         }
         let shown = self.self_drawn_frame();
