@@ -26,7 +26,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     ActivateKeyboardLayout, GetFocus, LoadKeyboardLayoutW, MapVirtualKeyW, SendInput, SetFocus,
     ACTIVATE_KEYBOARD_LAYOUT_FLAGS, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
     KLF_ACTIVATE, MAP_VIRTUAL_KEY_TYPE,
-    VK_ESCAPE, VK_OEM_MINUS, VK_OEM_PERIOD, VK_OEM_PLUS, VK_SHIFT, VK_SPACE,
+    VK_CONTROL, VK_ESCAPE, VK_MENU, VK_OEM_MINUS, VK_OEM_PERIOD, VK_OEM_PLUS, VK_SHIFT, VK_SPACE,
 };
 use windows::Win32::UI::TextServices::{
     CLSID_TF_InputProcessorProfiles, CLSID_TF_ThreadMgr, ITfInputProcessorProfiles, ITfThreadMgr,
@@ -565,6 +565,10 @@ fn test_real_windows_host_keyboard_validation_end_to_end() {
             host.clear_edit();
             host.clear_records();
             host.pump_messages(Duration::from_millis(50));
+            send_raw_vk(VK_SHIFT.0, true);
+            send_raw_vk(VK_CONTROL.0, true);
+            send_raw_vk(VK_MENU.0, true);
+            host.pump_messages(Duration::from_millis(20));
 
             println!("[REAL-EMPIRICAL] 正在通过 Windows SendInput 向宿主 EDIT 控件物理发送键击: '{}'", input_str);
             type_system_string(&host, input_str);

@@ -41,8 +41,28 @@ impl Router {
         }
         self.pending_selection = None;
         let text = text.trim();
-        if text.is_empty() || !self.engine.prediction_enabled() {
-            tracing::info!("翻译选中文字：没有可读的选区（或云服务已关）");
+        if text.is_empty() {
+            tracing::info!("翻译选中文字：没有可读的选区");
+            self.notice = Some("💡 请先用鼠标选中文字，再按快捷键翻译".to_string());
+            let frame = self.self_drawn_frame();
+            self.reconcile_candidates(&frame);
+            return empty;
+        }
+        if !self.engine.prediction_enabled() {
+            if let Some(entry) = self.engine.translate_word(text) {
+                if let Some(sense) = entry.senses().first() {
+                    self.last_rect = Some(rect);
+                    self.last_translation_source = Some(text.to_string());
+                    self.translation = Some(Translation { result: Some(sense.text.clone()) });
+                    let frame = self.self_drawn_frame();
+                    self.reconcile_candidates(&frame);
+                    return empty;
+                }
+            }
+            tracing::info!("翻译选中文字：云服务未开启且本地词典无匹配");
+            self.notice = Some("⚠️ 云端预测/翻译服务未开启".to_string());
+            let frame = self.self_drawn_frame();
+            self.reconcile_candidates(&frame);
             return empty;
         }
         self.last_rect = Some(rect);

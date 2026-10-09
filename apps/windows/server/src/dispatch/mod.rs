@@ -245,7 +245,8 @@ impl Router {
     /// 打开 / 聚焦独立 AI Assistant 对话窗口
     pub(crate) fn open_ai_assistant(&mut self) {
         self.ai_assistant_open = true;
-        let anchor = self.last_rect.map(|r| windows::Win32::Foundation::RECT {
+        self.notice = Some("💬 已开启 AI 对话助手 (Ctrl+Alt+D)".to_string());
+        let anchor = self.effective_display_rect().map(|r| windows::Win32::Foundation::RECT {
             left: r.left,
             top: r.top,
             right: r.right,
@@ -265,6 +266,7 @@ impl Router {
         self.ai_assistant_open = false;
         self.ai_stop_signal.store(true, Ordering::Relaxed);
         self.candidates.hide_ai_assistant();
+        self.notice = Some("已关闭 AI 对话助手".to_string());
     }
 
     pub fn is_ai_assistant_open(&self) -> bool {
@@ -273,6 +275,23 @@ impl Router {
 
     pub fn set_last_ai_assistant_toggle_time(&mut self, time: Instant) {
         self.last_ai_assistant_toggle_time = time;
+    }
+
+    pub fn is_assistant_open(&self) -> bool {
+        self.assistant_open
+    }
+
+    pub fn set_last_assistant_toggle_time(&mut self, time: Instant) {
+        self.last_assistant_toggle_time = time;
+    }
+
+    pub fn set_pending_selection(&mut self, session: SessionId, req: u64) {
+        self.focused = Some(session);
+        self.pending_selection = Some(req);
+    }
+
+    pub fn active_frame(&self) -> Frame {
+        self.self_drawn_frame()
     }
 
     pub fn is_composing(&self) -> bool {
@@ -314,10 +333,11 @@ impl Router {
     /// 打开独立 English Assistant（学习助手伴侣窗）
     pub(crate) fn open_assistant(&mut self) {
         self.assistant_open = true;
+        self.notice = Some("📖 已开启 English Assistant (Ctrl+Alt+E)".to_string());
         if let Some(card) = &mut self.passive_learning_card {
             card.expanded = true;
         }
-        let rect = self.last_rect.unwrap_or(qingjian_platform::protocol::ScreenRect {
+        let rect = self.effective_display_rect().unwrap_or(qingjian_platform::protocol::ScreenRect {
             left: 200,
             top: 200,
             right: 400,
@@ -392,6 +412,7 @@ impl Router {
             card.expanded = false;
         }
         self.candidates.hide_companion();
+        self.notice = Some("已收起 English Assistant".to_string());
     }
 
     /// 开启 Drill 练习会话：弹出独立 Drill 练习窗口。

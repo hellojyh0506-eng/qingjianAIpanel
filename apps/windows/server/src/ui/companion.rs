@@ -713,6 +713,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 // 1. 关闭按钮 (右上角)
                 if cx >= w - px(30) && cx <= w && cy <= px(32) {
                     comp.hide();
+                    (comp.action_cb)(CandidateAction::CloseAssistant);
                     return LRESULT(0);
                 }
 

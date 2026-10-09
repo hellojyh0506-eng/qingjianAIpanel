@@ -310,6 +310,165 @@ fn test_ai_assistant_boost_command() {
     assert_eq!(last.unwrap().content, "/boost");
 }
 
+#[test]
+fn test_companion_toggle_and_close_button_sync() {
+    let mut router = create_test_router();
 
+    let companion_hotkey = KeyEvent::new(
+        'E' as u32,
+        Some('e'),
+        KeyModifiers {
+            ctrl: true,
+            alt: true,
+            ..Default::default()
+        },
+    );
 
+    // 1. 第一次按快捷键 Ctrl+Alt+E：打开伴侣窗
+    let reply = router.handle(ClientMessage::Key {
+        session: SESSION,
+        event: companion_hotkey,
+    });
+    if let Some(ServerMessage::KeyResult { frame, outcome, .. }) = reply {
+        assert_eq!(outcome, KeyOutcome::Consumed);
+        assert!(frame.notice.as_deref().unwrap_or("").contains("English Assistant"), "开启必须带屏幕提示");
+    }
 
+    // 2. 模拟用户点击伴侣窗右上角的关闭按钮 (CloseAssistant)
+    router.handle_candidate_action(CandidateAction::CloseAssistant);
+
+    // 3. 再次按快捷键 Ctrl+Alt+E：必须单次即可重新打开，绝不需要按两次
+    router.set_last_assistant_toggle_time(std::time::Instant::now() - std::time::Duration::from_millis(150));
+    let reply = router.handle(ClientMessage::Key {
+        session: SESSION,
+        event: companion_hotkey,
+    });
+    if let Some(ServerMessage::KeyResult { frame, outcome, .. }) = reply {
+        assert_eq!(outcome, KeyOutcome::Consumed);
+        assert!(frame.notice.as_deref().unwrap_or("").contains("开启"), "再次按下必须单次触发重新打开");
+    }
+
+    // 4. 再次按快捷键 Ctrl+Alt+E：单次触发关闭
+    router.set_last_assistant_toggle_time(std::time::Instant::now() - std::time::Duration::from_millis(150));
+    let reply = router.handle(ClientMessage::Key {
+        session: SESSION,
+        event: companion_hotkey,
+    });
+    if let Some(ServerMessage::KeyResult { frame, outcome, .. }) = reply {
+        assert_eq!(outcome, KeyOutcome::Consumed);
+        assert!(frame.notice.as_deref().unwrap_or("").contains("收起"), "再次按下必须单次触发收起");
+    }
+}
+
+#[test]
+fn test_shortcut_toast_notices_and_feedback() {
+    let mut router = create_test_router();
+
+    // 1. Ctrl+Alt+L 切换英语学习模式：必须产出屏幕反馈气泡
+    let mode_hotkey = KeyEvent::new(
+        'L' as u32,
+        Some('l'),
+        KeyModifiers {
+            ctrl: true,
+            alt: true,
+            ..Default::default()
+        },
+    );
+    let reply = router.handle(ClientMessage::Key {
+        session: SESSION,
+        event: mode_hotkey,
+    });
+    if let Some(ServerMessage::KeyResult { frame, outcome, .. }) = reply {
+        assert_eq!(outcome, KeyOutcome::Consumed);
+        assert!(frame.notice.as_deref().unwrap_or("").contains("已切换至"), "模式切换必须给用户提示");
+    } else {
+        panic!("Ctrl+Alt+L 必须返回 KeyResult");
+    }
+
+    // 2. 单击 Shift 切中英：必须产出中英切换屏幕气泡
+    let _ = router.handle(ClientMessage::ModeChanged {
+        session: SESSION,
+        english: true,
+    });
+    let frame_en = router.active_frame();
+    assert!(frame_en.notice.as_deref().unwrap_or("").contains("英"), "切英文模式必须带英提示");
+
+    let _ = router.handle(ClientMessage::ModeChanged {
+        session: SESSION,
+        english: false,
+    });
+    let frame_zh = router.active_frame();
+    assert!(frame_zh.notice.as_deref().unwrap_or("").contains("中"), "切中文模式必须带中提示");
+
+    // 3. Ctrl+Alt+T 选区翻译在无选区时：必须提示选中文字而不是无反应
+    router.set_pending_selection(SESSION, 999);
+    let _ = router.handle(ClientMessage::Selection {
+        session: SESSION,
+        request: 999,
+        text: "".to_string(),
+        rect: qingjian_platform::protocol::ScreenRect {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        },
+    });
+    let frame_sel = router.active_frame();
+    assert!(frame_sel.notice.as_deref().unwrap_or("").contains("选中文字"), "空选区必须提示用户先划词");
+
+    // 4. Ctrl+Alt+R 快捷键在非打字态下：必须有反馈气泡（提示待复习数量或暂无到期复习）
+    let review_hotkey = KeyEvent::new(
+        'R' as u32,
+        Some('r'),
+        KeyModifiers {
+            ctrl: true,
+            alt: true,
+            ..Default::default()
+        },
+    );
+    let reply_r = router.handle(ClientMessage::Key {
+        session: SESSION,
+        event: review_hotkey,
+    });
+    if let Some(ServerMessage::KeyResult { frame, outcome, .. }) = reply_r {
+        assert_eq!(outcome, KeyOutcome::Consumed);
+        assert!(frame.notice.is_some(), "非组句态下按 Ctrl+Alt+R 必须给予屏幕反馈提示");
+    } else {
+        panic!("Ctrl+Alt+R 必须返回 KeyResult");
+    }
+
+    // 5. Ctrl+Alt+D AI助手快捷键切换与关闭按钮状态机双向同步
+    let ai_hotkey = KeyEvent::new(
+        'D' as u32,
+        Some('d'),
+        KeyModifiers {
+            ctrl: true,
+            alt: true,
+            ..Default::default()
+        },
+    );
+    let reply_ai = router.handle(ClientMessage::Key {
+        session: SESSION,
+        event: ai_hotkey,
+    });
+    if let Some(ServerMessage::KeyResult { frame, outcome, .. }) = reply_ai {
+        assert_eq!(outcome, KeyOutcome::Consumed);
+        assert!(router.is_ai_assistant_open(), "按 Ctrl+Alt+D 必须开启 AI 助手");
+        assert!(frame.notice.as_deref().unwrap_or("").contains("AI 对话助手"), "开启必须带提示");
+    }
+
+    // 点击 AI 窗口右上角关闭
+    router.handle_candidate_action(CandidateAction::CloseAiAssistant);
+    assert!(!router.is_ai_assistant_open(), "点击关闭必须同步置为关闭状态");
+
+    // 再次按 Ctrl+Alt+D：单次即重新打开
+    router.set_last_ai_assistant_toggle_time(std::time::Instant::now() - std::time::Duration::from_millis(150));
+    let reply_ai2 = router.handle(ClientMessage::Key {
+        session: SESSION,
+        event: ai_hotkey,
+    });
+    if let Some(ServerMessage::KeyResult { outcome, .. }) = reply_ai2 {
+        assert_eq!(outcome, KeyOutcome::Consumed);
+        assert!(router.is_ai_assistant_open(), "再次按下必须单次触发重新打开");
+    }
+}

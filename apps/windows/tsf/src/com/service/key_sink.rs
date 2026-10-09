@@ -87,6 +87,20 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             let event = preserved::drill_event(self.mode_state.english());
             return Ok(self.forward_key(pic, event).into());
         }
+        if guid == preserved::GUID_LEARNING_MODE_TOGGLE {
+            if self.keyboard_disabled(&pic) {
+                return Ok(FALSE);
+            }
+            let event = preserved::mode_toggle_event(self.mode_state.english());
+            return Ok(self.forward_key(pic, event).into());
+        }
+        if guid == preserved::GUID_LEARNING_REVIEW {
+            if self.keyboard_disabled(&pic) {
+                return Ok(FALSE);
+            }
+            let event = preserved::review_event(self.mode_state.english());
+            return Ok(self.forward_key(pic, event).into());
+        }
         if guid != preserved::GUID_TRANSLATE || self.keyboard_disabled(&pic) {
             return Ok(FALSE);
         }
@@ -360,7 +374,7 @@ fn is_learning_shortcut(event: &KeyEvent) -> bool {
         return is_e || is_t || is_r || is_l;
     }
     if chord.ctrl && chord.alt && !chord.shift && !chord.win {
-        return is_l || is_d || is_e || is_r;
+        return is_l || is_d || is_e || is_r || is_t;
     }
     false
 }

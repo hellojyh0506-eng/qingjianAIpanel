@@ -14,7 +14,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 
 use qingjian_platform::{SwitchKey, SwitchKeys};
 
-#[cfg(windows)]
+#[cfg(all(windows, not(test)))]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, VK_LWIN, VK_MENU, VK_RWIN,
 };
@@ -73,8 +73,8 @@ impl KeyTap {
 }
 
 /// 检查除了目标单键之外，是否有其它修饰键（Ctrl/Alt/Win/Shift）正被按下。
-fn is_other_modifier_down(key: SwitchKey) -> bool {
-    #[cfg(windows)]
+fn is_other_modifier_down(#[allow(unused_variables)] key: SwitchKey) -> bool {
+    #[cfg(all(windows, not(test)))]
     unsafe {
         let is_down = |code: u16| -> bool {
             (GetKeyState(i32::from(code)) as u16 & 0x8000) != 0
@@ -89,7 +89,7 @@ fn is_other_modifier_down(key: SwitchKey) -> bool {
             SwitchKey::CtrlAltSpace => false,
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(any(not(windows), test))]
     false
 }
 

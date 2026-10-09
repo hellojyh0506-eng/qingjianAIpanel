@@ -20,7 +20,10 @@ impl Router {
     pub(super) fn handle_mode_changed(&mut self, english: bool) {
         self.english = english && self.config.english_mode;
         self.ime_active = true;
+        self.notice = Some(if self.english { "英 (Shift)".to_string() } else { "中 (Shift)".to_string() });
         self.reconcile_status();
+        let shown = self.self_drawn_frame();
+        self.reconcile_candidates(&shown);
     }
 
     /// 有 DLL 来取模式：青简是当前输入法。
@@ -49,7 +52,10 @@ impl Router {
                     return;
                 }
                 self.english = !self.english;
+                self.notice = Some(if self.english { "英".to_string() } else { "中".to_string() });
                 tracing::debug!(english = self.english, "状态条：切换中英模式");
+                let shown = self.self_drawn_frame();
+                self.reconcile_candidates(&shown);
             }
             StatusEvent::TogglePunctuation => {
                 // 中英各记一份，切的是当前模式那份；还没报过模式时按中文算。

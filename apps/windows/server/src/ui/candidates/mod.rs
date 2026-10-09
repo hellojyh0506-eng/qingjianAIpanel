@@ -15,10 +15,10 @@ use windows::Win32::Foundation::{E_INVALIDARG, HWND, LPARAM, LRESULT, POINT, REC
 use windows::Win32::Graphics::Gdi::{GetDC, ReleaseDC};
 use windows::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, HTCLIENT, IDC_ARROW, LoadCursorW,
-    MA_NOACTIVATE, SW_HIDE, SW_SHOWNA, ShowWindow, WM_LBUTTONDOWN, WM_MOUSEACTIVATE,
-    WM_NCHITTEST, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, HTCLIENT, IDC_ARROW, KillTimer,
+    LoadCursorW, MA_NOACTIVATE, SW_HIDE, SW_SHOWNA, SetTimer, ShowWindow, WM_LBUTTONDOWN,
+    WM_MOUSEACTIVATE, WM_NCHITTEST, WM_TIMER, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{Error, PCWSTR, Result, w};
 
@@ -38,6 +38,9 @@ static CLASS: WindowClass = WindowClass::new();
 
 /// 光标行与候选窗之间的间隙（逻辑像素）。
 const CARET_GAP: i32 = 2;
+
+/// 纯提示（Toast Notice）自动淡出定时器标识。
+const TIMER_NOTICE_ID: usize = 0x8899;
 
 /// 按外观模式解析深浅；`System` 读系统主题。
 pub(super) fn resolve_dark(mode: ThemeMode) -> bool {
@@ -122,6 +125,19 @@ impl CandidateWindowInner {
         match &updated {
             Ok(()) => {
                 let _ = unsafe { ShowWindow(self.hwnd, SW_SHOWNA) };
+                let is_pure_notice = {
+                    let data = self.data.borrow();
+                    data.notice.is_some() && data.rows.is_empty() && data.preedit.is_empty()
+                };
+                if is_pure_notice {
+                    unsafe {
+                        let _ = SetTimer(Some(self.hwnd), TIMER_NOTICE_ID, 1800, None);
+                    }
+                } else {
+                    unsafe {
+                        let _ = KillTimer(Some(self.hwnd), TIMER_NOTICE_ID);
+                    }
+                }
             }
             Err(error) => {
                 tracing::error!(%error, "候选窗口绘制/贴图失败");
@@ -156,6 +172,9 @@ impl CandidateWindowInner {
     }
 
     fn hide(&self) {
+        unsafe {
+            let _ = KillTimer(Some(self.hwnd), TIMER_NOTICE_ID);
+        }
         let _ = unsafe { ShowWindow(self.hwnd, SW_HIDE) };
     }
 
@@ -328,6 +347,18 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 let x = (lparam.0 & 0xFFFF) as i16 as i32;
                 let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
                 inner.on_lbutton_down(x, y);
+            }
+            LRESULT(0)
+        }
+        WM_TIMER => {
+            if wparam.0 == TIMER_NOTICE_ID {
+                unsafe {
+                    let _ = KillTimer(Some(hwnd), TIMER_NOTICE_ID);
+                }
+                if let Some(inner) = candidate_window_of(hwnd) {
+                    inner.hide();
+                }
+                return LRESULT(0);
             }
             LRESULT(0)
         }

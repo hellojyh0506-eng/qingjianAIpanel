@@ -162,10 +162,18 @@ impl Router {
                 frame: self.current_frame(),
             };
         }
-        if self.engine.composition().is_empty()
-            && self.engine.prediction_enabled()
-            && self.matches_translate_combo(&event)
-        {
+        if self.matches_translate_combo(&event) {
+            if !self.engine.composition().is_empty() {
+                self.notice = Some("💡 当前正在输入拼音，请先上屏或取消后再划词翻译".to_string());
+                let shown = self.self_drawn_frame();
+                self.reconcile_candidates(&shown);
+                return ServerMessage::KeyResult {
+                    session,
+                    outcome: KeyOutcome::Consumed,
+                    commit: None,
+                    frame: self.current_frame(),
+                };
+            }
             self.selection_seq += 1;
             self.pending_selection = Some(self.selection_seq);
             tracing::debug!(
@@ -225,15 +233,57 @@ impl Router {
                 frame: self.current_frame(),
             };
         }
-        if self.composing() && self.matches_learning_review_combo(&event) {
+        if self.matches_learning_review_combo(&event) {
+            let due_count = if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
+                let vault = qingjian_learning::LearningVault::open(&user_dir);
+                let now = jiff::Zoned::now().timestamp().as_second();
+                vault.today_due_reviews(now).len()
+            } else {
+                0
+            };
+            if !self.composing() {
+                if due_count == 0 {
+                    self.notice = Some("🎉 今日暂无到期复习！记忆状态良好。".to_string());
+                } else {
+                    self.notice = Some(format!("📚 今日待复习卡片: {} 张 (打字时按 Ctrl+Alt+R 即可开展复习)", due_count));
+                }
+                let shown = self.self_drawn_frame();
+                self.reconcile_candidates(&shown);
+                return ServerMessage::KeyResult {
+                    session,
+                    outcome: KeyOutcome::Consumed,
+                    commit: None,
+                    frame: self.current_frame(),
+                };
+            }
+            if due_count == 0 {
+                self.notice = Some("🎉 今日暂无到期复习！记忆状态良好。".to_string());
+                let shown = self.self_drawn_frame();
+                self.reconcile_candidates(&shown);
+                return ServerMessage::KeyResult {
+                    session,
+                    outcome: KeyOutcome::Consumed,
+                    commit: None,
+                    frame: self.current_frame(),
+                };
+            }
+            if self.passive_learning_card.is_none() {
+                let target = self
+                    .layout_candidate(self.highlight)
+                    .map(|c| c.text)
+                    .unwrap_or_else(|| "当前表达".to_string());
+                self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
+                    target_text: target,
+                    state: qingjian_platform::protocol::LearningState::Ready,
+                    ..Default::default()
+                });
+            }
             if let Some(card) = self.passive_learning_card.as_mut() {
                 if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
                     let vault = qingjian_learning::LearningVault::open(&user_dir);
                     let now = jiff::Zoned::now().timestamp().as_second();
                     let due_list = vault.today_due_reviews(now);
-                    if due_list.is_empty() {
-                        card.drill_notice = Some("🎉 今日暂无到期复习！记忆状态良好。".to_string());
-                    } else {
+                    if !due_list.is_empty() {
                         let first = due_list[0];
                         card.drill_stage = Some(qingjian_platform::protocol::DrillStage::Review);
                         card.today_due_count = due_list.len();
