@@ -48,11 +48,11 @@ impl Default for PredictConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            base_url: "https://api.kilo.ai/api/gateway".to_owned(),
-            model: "kilo-auto/free".to_owned(),
+            base_url: "https://api.siliconflow.cn/v1".to_owned(),
+            model: "Qwen/Qwen2.5-7B-Instruct".to_owned(),
             api_key: None,
-            api_key_env: "KILO_API_KEY".to_owned(),
-            timeout_ms: 8000,
+            api_key_env: "QINGJIAN_API_KEY".to_owned(),
+            timeout_ms: 3000,
             debounce_ms: 150,
             lookback: 64,
             lookahead: 32,

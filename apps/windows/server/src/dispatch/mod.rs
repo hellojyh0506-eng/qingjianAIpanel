@@ -753,22 +753,21 @@ impl Router {
                     });
                 }
 
-                let base_url = self.config.predict.base_url.clone();
-                let model = self.config.predict.model.clone();
-                let api_key_opt = self.config.predict.resolve_api_key();
-
-                let api_key = match api_key_opt {
-                    Some(key) => key,
-                    None => {
-                        if base_url.contains("kilo.ai") || model.starts_with("kilo-") || model == "auto" {
-                            String::new()
-                        } else {
-                            self.candidates.send_ai_error(
-                                "未配置 API Key。请在 %APPDATA%\\Qingjian\\config.toml 中设置 [predict] api_key 或设置环境变量 QINGJIAN_API_KEY。".to_string()
-                            );
-                            return;
-                        }
-                    }
+                // AI 对话独立面板接入高级 AI：默认接入 Kilo Gateway 免费 auto 模型；
+                // 彻底与输入法打字实时联想/快速翻译的 SiliconFlow Qwen 分离，互不抢占、互不干扰。
+                let (base_url, model, api_key) = if let Ok(custom_url) = std::env::var("QINGJIAN_AI_BASE_URL") {
+                    let m = std::env::var("QINGJIAN_AI_MODEL").unwrap_or_else(|_| "kilo-auto/free".to_string());
+                    let k = std::env::var("QINGJIAN_AI_API_KEY")
+                        .or_else(|_| std::env::var("KILO_API_KEY"))
+                        .unwrap_or_default();
+                    (custom_url, m, k)
+                } else {
+                    let k = std::env::var("KILO_API_KEY").unwrap_or_default();
+                    (
+                        "https://api.kilo.ai/api/gateway".to_string(),
+                        "kilo-auto/free".to_string(),
+                        k,
+                    )
                 };
 
                 let (max_tokens, system_prompt) = if fast_mode {
