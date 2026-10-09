@@ -162,6 +162,8 @@ pub(super) fn describe_predict_error(error: &PredictError) -> String {
         PredictError::Encode(error) => format!("请求编码失败：{error}"),
         PredictError::Runtime(error) => format!("起不了后台线程：{error}"),
         PredictError::Api(error) => format!("请求失败：{error}"),
+        PredictError::Gateway(status, message) => format!("网关错误 ({status})：{message}"),
+        PredictError::Http(error) => format!("网络请求失败：{error}"),
     }
 }
 

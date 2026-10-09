@@ -685,10 +685,16 @@ pub(super) fn hit_test_learning_card(
     } else {
         preferred_size(hdc, data).cx
     };
-    let is_learn = data.learning_mode == qingjian_platform::LearningMode::Learn;
     let is_drill = data.learning_mode == qingjian_platform::LearningMode::Drill;
 
-    if is_learn {
+    if is_drill {
+        let btn_text = "💡 进入练习 (Ctrl+Alt+D)";
+        let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
+        if x >= theme.padding - 8 && x <= theme.padding + btn_w + 16 {
+            return Some(CandidateAction::StartDrillSession);
+        }
+        return Some(CandidateAction::StartDrillSession);
+    } else {
         let btn_text = "📖 学习助手(Ctrl+Alt+E)";
         let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
         let btn_x = content_w - theme.padding - btn_w;
@@ -696,16 +702,7 @@ pub(super) fn hit_test_learning_card(
             return Some(CandidateAction::OpenAssistant);
         }
         return Some(CandidateAction::OpenAssistant);
-    } else if is_drill {
-        let btn_text = "💡 进入练习 (Ctrl+Alt+D)";
-        let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
-        if x >= theme.padding - 8 && x <= theme.padding + btn_w + 16 {
-            return Some(CandidateAction::StartDrillSession);
-        }
-        return Some(CandidateAction::StartDrillSession);
     }
-
-    None
 }
 
 #[cfg(test)]

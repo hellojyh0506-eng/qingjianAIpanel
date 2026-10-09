@@ -14,11 +14,11 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetWindowRect, HTCAPTION, HTCLIENT, IDC_ARROW,
+    BringWindowToTop, CreateWindowExW, DefWindowProcW, GetWindowRect, HTCAPTION, HTCLIENT, IDC_ARROW,
     LoadCursorW, MA_NOACTIVATE, SW_HIDE, SW_SHOWNA, SendMessageW, ShowWindow,
     WM_EXITSIZEMOVE, WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_MOVE, WM_NCHITTEST,
     WM_NCLBUTTONDOWN, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_POPUP,
+    WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{PCWSTR, Result, w};
 
@@ -114,7 +114,7 @@ impl CompanionWindow {
         })?;
         let hwnd = unsafe {
             CreateWindowExW(
-                WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED,
+                WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TOPMOST,
                 CLASS_NAME,
                 w!("Qingjian English Assistant"),
                 WS_POPUP,
@@ -136,7 +136,7 @@ impl CompanionWindow {
             current_width: Cell::new(420),
             current_height: Cell::new(280),
             dark: Cell::new(false),
-            is_pinned: Cell::new(false),
+            is_pinned: Cell::new(true),
             action_cb,
         });
         COMPANIONS.with(|c| c.borrow_mut().insert(hwnd.0 as isize, Rc::clone(&instance)));
@@ -250,6 +250,9 @@ impl CompanionWindow {
                     | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
                     | windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE,
             );
+            if is_pinned {
+                let _ = BringWindowToTop(self.hwnd);
+            }
             let _ = ShowWindow(self.hwnd, SW_SHOWNA);
         }
         Ok(())
@@ -701,6 +704,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 let cy = y - margin;
                 let w = comp.current_width.get();
 
+                if comp.is_pinned.get() {
+                    unsafe {
+                        let _ = windows::Win32::UI::WindowsAndMessaging::BringWindowToTop(hwnd);
+                    }
+                }
+
                 // 1. 关闭按钮 (右上角)
                 if cx >= w - px(30) && cx <= w && cy <= px(32) {
                     comp.hide();
@@ -724,6 +733,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                                 | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
                                 | windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE,
                         );
+                        if pinned {
+                            let _ = windows::Win32::UI::WindowsAndMessaging::BringWindowToTop(hwnd);
+                        }
                     }
                     if let Some(anchor) = comp.last_anchor.get() {
                         let _ = comp.show_at(anchor);
@@ -745,12 +757,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     return LRESULT(0);
                 }
 
-                // 3. 复制到剪贴板图标 (cx in prim_w..prim_w+40, cy in 45..75)
-                if cy >= px(45) && cy <= px(75) && cx >= px(120) && cx <= px(360) {
+                // 3. 复制主表达 (点击英文表达或扬声器图标)
+                if cy >= px(45) && cy <= px(78) && cx >= px(16) && cx <= w - px(32) {
                     let text = comp.data.borrow().primary_english.clone();
-                    copy_to_clipboard(&text);
-                    comp.set_saved_notice(Some("已复制到剪贴板".to_string()));
-                    return LRESULT(0);
+                    if !text.is_empty() {
+                        copy_to_clipboard(&text);
+                        comp.set_saved_notice(Some("已复制到剪贴板".to_string()));
+                        return LRESULT(0);
+                    }
                 }
 
                 // 4. Tab 栏点击 (cy in 80..118)
@@ -781,9 +795,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         comp.set_saved_notice(Some("⭐ 已收藏到表达本".to_string()));
                         return LRESULT(0);
                     }
-                    // 点击右侧 [💡 进入练习 (Ctrl+Alt+D)]
-                    if cx >= w - px(176) && cx <= w - px(16) {
-                        (comp.action_cb)(CandidateAction::StartDrillSession);
+                    // 点击右侧 [💬 AI 深度追问 (Ctrl+Alt+D)]
+                    if cx >= w - px(180) && cx <= w - px(16) {
+                        (comp.action_cb)(CandidateAction::OpenAiAssistant);
                         return LRESULT(0);
                     }
                 }

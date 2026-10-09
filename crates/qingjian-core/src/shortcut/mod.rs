@@ -65,8 +65,21 @@ pub fn candidates(input: &str, expression: char, now: &Zoned) -> Vec<Candidate> 
         "rq" => date_forms(now),
         "sj" => time_forms(now),
         "xq" => weekday_forms(now),
+        "boost" => vec![
+            "🚀 [Boost] 智能纠错与云联想极速增强模式已就绪".to_string(),
+            "🚀 [Boost] 自适应超时·指数退避·多字段容错已启用".to_string(),
+        ],
         _ => match input.strip_prefix(expression) {
-            Some(body) => expression_forms(body),
+            Some(body) => {
+                if body == "boost" {
+                    vec![
+                        "🚀 [Boost] 智能纠错与云联想极速增强模式已就绪".to_string(),
+                        "🚀 [Boost] 自适应超时·指数退避·多字段容错已启用".to_string(),
+                    ]
+                } else {
+                    expression_forms(body)
+                }
+            }
             None => Vec::new(),
         },
     };

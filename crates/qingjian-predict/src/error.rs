@@ -27,4 +27,7 @@ pub enum PredictError {
     #[error("failed to encode request: {0}")]
     Encode(#[from] serde_json::Error),
 
+    #[error("API gateway returned status {0}: {1}")]
+    Gateway(u16, String),
+
 }

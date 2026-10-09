@@ -77,6 +77,57 @@ impl StreamChatClient {
         }
     }
 
+    /// 快速探测端点联通性与网络握手耗时
+    pub async fn probe(&self) -> Result<(u16, u128), String> {
+        let t_start = Instant::now();
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        if !self.api_key.trim().is_empty() {
+            if let Ok(val) = HeaderValue::from_str(&format!("Bearer {}", self.api_key.trim())) {
+                headers.insert(AUTHORIZATION, val);
+            }
+        } else if self.base_url.contains("kilo.ai") {
+            headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer "));
+        }
+
+        if self.base_url.contains("kilo.ai") {
+            headers.insert("User-Agent", HeaderValue::from_static("opencode-kilo-provider/7.8.8"));
+            headers.insert("X-KILOCODE-EDITORNAME", HeaderValue::from_static("Kilo CLI 7.8.8"));
+            headers.insert("X-KILOCODE-MACHINEID", HeaderValue::from_static("DESKTOP-FOMGFJO"));
+        }
+
+        let effective_model = if self.model == "auto" {
+            "kilo-auto/free"
+        } else {
+            &self.model
+        };
+
+        let messages = [ChatMessage {
+            role: "user".to_string(),
+            content: "ping".to_string(),
+        }];
+
+        let body = ChatCompletionStreamRequest {
+            model: effective_model,
+            messages: &messages,
+            stream: false,
+            max_tokens: 2,
+            temperature: 0.1,
+        };
+
+        let req = self.http.post(&url).headers(headers).json(&body);
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) => return Err(e.to_string()),
+        };
+
+        let status = resp.status().as_u16();
+        let latency_ms = t_start.elapsed().as_millis();
+        Ok((status, latency_ms))
+    }
+
     /// 发起流式对话并逐段发送事件。支持通过 stop_signal 立即中止。
     pub async fn stream_chat(
         &self,

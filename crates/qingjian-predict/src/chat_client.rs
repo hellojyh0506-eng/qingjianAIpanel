@@ -78,8 +78,15 @@ impl ChatClient {
             qingjian_core::PredictionKind::Compare => COMPARE_MAX_TOKENS,
             qingjian_core::PredictionKind::DeepLearn => DEEP_LEARN_MAX_TOKENS,
         };
+        // 自适应超时：口语翻译与对比评测保证充足响应时间，深度口语学习保留完整思考空间
+        let effective_timeout = match request.kind {
+            qingjian_core::PredictionKind::Translate => self.timeout.max(Duration::from_millis(8000)),
+            qingjian_core::PredictionKind::DeepLearn => self.timeout.max(Duration::from_millis(15000)),
+            qingjian_core::PredictionKind::Compare => self.timeout.max(Duration::from_millis(10000)),
+            _ => self.timeout,
+        };
         let content = self
-            .chat(prompt::system_prompt(request), &user, max_tokens)
+            .chat_with_timeout(prompt::system_prompt(request), &user, max_tokens, effective_timeout)
             .await?;
         let t_val = std::time::Instant::now();
         let reply = prompt::parse_reply(&content, request);
@@ -94,6 +101,17 @@ impl ChatClient {
         system: &str,
         user: &str,
         max_tokens: u32,
+    ) -> Result<String, PredictError> {
+        self.chat_with_timeout(system, user, max_tokens, self.timeout).await
+    }
+
+    /// 支持自定义超时与自动故障重试的请求执行器
+    pub async fn chat_with_timeout(
+        &self,
+        system: &str,
+        user: &str,
+        max_tokens: u32,
+        timeout: Duration,
     ) -> Result<String, PredictError> {
         let t_start = std::time::Instant::now();
         let messages: Vec<ChatCompletionRequestMessage> = vec![
@@ -119,86 +137,149 @@ impl ChatClient {
             self.thinking_switch.disable(&mut body);
         }
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        let t_http_start = std::time::Instant::now();
-        let mut req = self.http.post(&url);
-        if !self.api_key.trim().is_empty() {
-            req = req.header("Authorization", format!("Bearer {}", self.api_key.trim()));
-        } else if self.base_url.contains("kilo.ai") {
-            req = req.header("Authorization", "Bearer ");
-        }
-        let req = req.json(&body);
-        let resp = tokio::time::timeout(self.timeout, req.send())
-            .await
-            .map_err(|_| PredictError::Timeout(self.timeout.as_millis() as u64))??;
-        let first_byte_ms = t_http_start.elapsed().as_millis();
-        let status = resp.status();
-        let raw_text = resp.text().await?;
-        let http_ms = t_http_start.elapsed().as_millis();
-        let t_parse_start = std::time::Instant::now();
-        let raw: serde_json::Value = serde_json::from_str(&raw_text)?;
-        let response: CreateChatCompletionResponse = serde_json::from_value(raw.clone())?;
-        let parse_ms = t_parse_start.elapsed().as_millis();
-        let cut_off = response
-            .choices
-            .iter()
-            .any(|choice| choice.finish_reason == Some(FinishReason::Length));
-        let content = response
-            .choices
-            .into_iter()
-            .inspect(
-                |choice| tracing::debug!(finish_reason = ?choice.finish_reason, "联想回复结束原因"),
-            )
-            .find_map(|choice| choice.message.content.filter(|c| !c.trim().is_empty()))
-            .or_else(|| {
-                raw.get("choices")
-                    .and_then(|c| c.get(0))
-                    .and_then(|c0| c0.get("message"))
-                    .and_then(|m| m.get("reasoning"))
-                    .and_then(|r| r.as_str())
-                    .filter(|s| !s.trim().is_empty())
-                    .map(|s| s.to_string())
-            })
-            .ok_or_else(|| {
-                // 正文为空时原因五花八门（思考占满额度、模型名不对、接口字段不标准），留下原始响应才查得了
-                tracing::warn!(model = %self.model, response = %truncated(&raw), "接口回复里没有正文");
-                if cut_off {
-                    PredictError::BudgetExhausted
-                } else {
-                    PredictError::EmptyReply
+
+        // 最大尝试次数：3 次 (2 次自动退避重试)
+        let max_attempts = 3;
+        let mut last_err = None;
+
+        for attempt in 0..max_attempts {
+            if attempt > 0 {
+                let backoff = Duration::from_millis(250 * attempt as u64);
+                tracing::warn!(attempt, delay_ms = backoff.as_millis(), "正在进行LLM网关自动重试...");
+                tokio::time::sleep(backoff).await;
+            }
+
+            let t_http_start = std::time::Instant::now();
+            let mut req = self.http.post(&url);
+            if !self.api_key.trim().is_empty() {
+                req = req.header("Authorization", format!("Bearer {}", self.api_key.trim()));
+            } else if self.base_url.contains("kilo.ai") {
+                req = req.header("Authorization", "Bearer ");
+            }
+            let req = req.json(&body);
+            let send_res = tokio::time::timeout(timeout, req.send()).await;
+            let resp = match send_res {
+                Ok(Ok(r)) => r,
+                Ok(Err(e)) => {
+                    tracing::warn!(attempt, %e, "HTTP请求发送失败");
+                    last_err = Some(PredictError::Http(e));
+                    continue;
                 }
-            })?;
-        let request_id = raw
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let provider = if self.base_url.contains("kilo.ai") {
-            "Kilo Gateway"
-        } else if self.base_url.contains("siliconflow") {
-            "SiliconFlow"
-        } else if self.base_url.contains("deepseek") {
-            "DeepSeek"
-        } else if self.base_url.contains("openai") {
-            "OpenAI"
-        } else {
-            "OpenAI Compatible"
-        };
-        let total_ms = t_start.elapsed().as_millis();
-        tracing::info!(
-            provider = %provider,
-            endpoint = %self.base_url,
-            model = %self.model,
-            request_id = %request_id,
-            first_byte_ms = first_byte_ms,
-            http_ms = http_ms,
-            parse_ms = parse_ms,
-            total_ms = total_ms,
-            status = %status,
-            content_chars = content.len(),
-            "HTTP完成与耗时分解"
-        );
-        tracing::debug!(%content, "模型回复");
-        Ok(content)
+                Err(_) => {
+                    tracing::warn!(attempt, timeout_ms = timeout.as_millis(), "HTTP请求超时");
+                    last_err = Some(PredictError::Timeout(timeout.as_millis() as u64));
+                    continue;
+                }
+            };
+
+            let first_byte_ms = t_http_start.elapsed().as_millis();
+            let status = resp.status();
+            let raw_text = match resp.text().await {
+                Ok(t) => t,
+                Err(e) => {
+                    last_err = Some(PredictError::Http(e));
+                    continue;
+                }
+            };
+            let http_ms = t_http_start.elapsed().as_millis();
+
+            // 若遇到 429 (限流) 或 5xx (网关故障)，进行重试
+            if !status.is_success() {
+                let code = status.as_u16();
+                tracing::warn!(attempt, status = code, response = %raw_text, "LLM网关返回非成功状态码");
+                let err_msg = serde_json::from_str::<serde_json::Value>(&raw_text)
+                    .ok()
+                    .and_then(|v| v.get("error").cloned())
+                    .map(|e| e.get("message").and_then(|m| m.as_str()).unwrap_or(&e.to_string()).to_string())
+                    .unwrap_or_else(|| format!("HTTP status {code}: {raw_text}"));
+
+                last_err = Some(PredictError::Gateway(code, err_msg));
+                if (code == 429 || code >= 500) && attempt + 1 < max_attempts {
+                    continue;
+                }
+                break;
+            }
+
+            let t_parse_start = std::time::Instant::now();
+            let raw: serde_json::Value = match serde_json::from_str(&raw_text) {
+                Ok(r) => r,
+                Err(e) => {
+                    last_err = Some(PredictError::Encode(e));
+                    continue;
+                }
+            };
+            let response: Option<CreateChatCompletionResponse> = serde_json::from_value(raw.clone()).ok();
+            let parse_ms = t_parse_start.elapsed().as_millis();
+            let cut_off = response.as_ref().map_or(false, |r| {
+                r.choices.iter().any(|choice| choice.finish_reason == Some(FinishReason::Length))
+            });
+            let content = response
+                .and_then(|r| {
+                    r.choices
+                        .into_iter()
+                        .inspect(
+                            |choice| tracing::debug!(finish_reason = ?choice.finish_reason, "联想回复结束原因"),
+                        )
+                        .find_map(|choice| choice.message.content.filter(|c| !c.trim().is_empty()))
+                })
+                .or_else(|| {
+                    let msg = raw.get("choices")
+                        .and_then(|c| c.get(0))
+                        .and_then(|c0| c0.get("message"));
+                    msg.and_then(|m| m.get("content"))
+                        .and_then(|c| c.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(|s| s.to_string())
+                        .or_else(|| {
+                            msg.and_then(|m| m.get("reasoning_content").or_else(|| m.get("reasoning")))
+                                .and_then(|r| r.as_str())
+                                .filter(|s| !s.trim().is_empty())
+                                .map(|s| s.to_string())
+                        })
+                })
+                .ok_or_else(|| {
+                    tracing::warn!(model = %self.model, response = %truncated(&raw), "接口回复里没有正文");
+                    if cut_off {
+                        PredictError::BudgetExhausted
+                    } else {
+                        PredictError::EmptyReply
+                    }
+                })?;
+            let request_id = raw
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let provider = if self.base_url.contains("kilo.ai") {
+                "Kilo Gateway"
+            } else if self.base_url.contains("siliconflow") {
+                "SiliconFlow"
+            } else if self.base_url.contains("deepseek") {
+                "DeepSeek"
+            } else if self.base_url.contains("openai") {
+                "OpenAI"
+            } else {
+                "OpenAI Compatible"
+            };
+            let total_ms = t_start.elapsed().as_millis();
+            tracing::info!(
+                provider = %provider,
+                endpoint = %self.base_url,
+                model = %self.model,
+                request_id = %request_id,
+                first_byte_ms = first_byte_ms,
+                http_ms = http_ms,
+                parse_ms = parse_ms,
+                total_ms = total_ms,
+                status = %status,
+                content_chars = content.len(),
+                "HTTP完成与耗时分解"
+            );
+            tracing::debug!(%content, "模型回复");
+            return Ok(content);
+        }
+
+        Err(last_err.unwrap_or(PredictError::EmptyReply))
     }
 }
 

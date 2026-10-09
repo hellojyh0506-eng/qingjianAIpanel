@@ -100,39 +100,39 @@ impl Router {
         }
 
         // 超时防冻结守护：
-        // 1. 被动翻译超时保护 (>1500ms): 本地离线词典兜底，消除等待空白
+        // 1. 被动翻译弹性守护：
+        //    - 1500ms 后若本地离线词典有收录，先呈现离线释义消除等待空白，但不打断可能稍后到达的丰富云端译文；
+        //    - 若本地离线词典无收录，保留充足云端等待时间（最高 8000ms），绝不因 1.5s 匆忙断定失败。
         if let Some(start) = self.translation_start_time {
-            if start.elapsed().as_millis() > 1500 {
-                if let Some(card) = self.passive_learning_card.as_mut() {
-                    if card.state == qingjian_platform::protocol::LearningState::Loading {
-                        tracing::warn!(target = ?self.passive_translation_target, "被动翻译请求超时 (>1500ms)，触发本地离线词典兜底");
-                        if let Some(target) = &self.passive_translation_target {
-                            if let Some(local_trans) = self.engine.translate_word(target) {
-                                if let Some(first_sense) = local_trans.senses().first() {
-                                    let offline_text = first_sense.text.clone();
-                                    card.primary = Some(qingjian_platform::protocol::LearningExpression {
-                                        text: offline_text.clone(),
-                                        tag: "Offline".to_string(),
-                                        meaning: target.clone(),
-                                        tone: "Standard".to_string(),
-                                        scenario: "General".to_string(),
-                                        commonality: "Common".to_string(),
-                                        why_natural: "Offline glossary fallback".to_string(),
-                                    });
-                                    card.state = qingjian_platform::protocol::LearningState::Ready;
-                                    self.passive_translation = Some(offline_text);
-                                } else {
-                                    card.state = qingjian_platform::protocol::LearningState::Failed;
-                                }
-                            } else {
-                                card.state = qingjian_platform::protocol::LearningState::Failed;
-                            }
-                        } else {
+            let elapsed = start.elapsed().as_millis();
+            if let Some(card) = self.passive_learning_card.as_mut() {
+                if card.state == qingjian_platform::protocol::LearningState::Loading {
+                    if elapsed > 1500 {
+                        let offline = self.passive_translation_target.as_deref().and_then(|target| {
+                            self.engine.translate_word(target).and_then(|t| t.senses().first().map(|s| (s.text.clone(), target.to_string())))
+                        });
+                        if let Some((offline_text, target)) = offline {
+                            tracing::info!(target = %target, "被动翻译暂时等待中，优先展示本地离线词典释义");
+                            card.primary = Some(qingjian_platform::protocol::LearningExpression {
+                                text: offline_text.clone(),
+                                tag: "Offline".to_string(),
+                                meaning: target,
+                                tone: "Standard".to_string(),
+                                scenario: "General".to_string(),
+                                commonality: "Common".to_string(),
+                                why_natural: "Offline glossary fallback".to_string(),
+                            });
+                            card.state = qingjian_platform::protocol::LearningState::Ready;
+                            self.passive_translation = Some(offline_text);
+                            let shown = self.self_drawn_frame();
+                            self.reconcile_candidates(&shown);
+                        } else if elapsed > 8000 {
+                            tracing::warn!(target = ?self.passive_translation_target, "被动翻译请求超时 (>8000ms)，置为Failed");
                             card.state = qingjian_platform::protocol::LearningState::Failed;
+                            self.translation_start_time = None;
+                            let shown = self.self_drawn_frame();
+                            self.reconcile_candidates(&shown);
                         }
-                        self.translation_start_time = None;
-                        let shown = self.self_drawn_frame();
-                        self.reconcile_candidates(&shown);
                     }
                 }
             }
@@ -153,10 +153,30 @@ impl Router {
             }
         }
 
+        // 2. 选区翻译超时守护 (>8000ms)
+        if self.translation.is_some() {
+            if let Some(start) = self.translation_start_time {
+                if start.elapsed().as_millis() > 8000 {
+                    tracing::warn!("选区翻译请求超时 (>8000ms)，触发离线兜底");
+                    let offline = self.last_translation_source.as_deref().and_then(|src| {
+                        self.engine.translate_word(src).and_then(|t| t.senses().first().map(|s| s.text.clone()))
+                    });
+                    if let Some(translation) = self.translation.as_mut() {
+                        translation.result = offline.or_else(|| Some("翻译响应超时，请重试".to_string()));
+                    }
+                    self.translation_start_time = None;
+                    let shown = self.self_drawn_frame();
+                    self.reconcile_candidates(&shown);
+                    return;
+                }
+            }
+        }
+
         let Some(prediction) = self.engine.poll_prediction() else {
             return;
         };
         if self.translation.is_some() {
+            self.translation_start_time = None;
             match prediction.sentence {
                 Some(text) => {
                     if let Some(translation) = self.translation.as_mut() {
@@ -164,10 +184,17 @@ impl Router {
                     }
                 }
                 None => {
-                    tracing::info!("翻译选中文字：云端没有给出译文");
-                    self.translation = None;
+                    tracing::info!("翻译选中文字：云端没有给出译文，尝试本地离线词典兜底");
+                    let offline = self.last_translation_source.as_deref().and_then(|src| {
+                        self.engine.translate_word(src).and_then(|t| t.senses().first().map(|s| s.text.clone()))
+                    });
+                    if let Some(translation) = self.translation.as_mut() {
+                        translation.result = offline.or_else(|| Some("未能获取译文，请重试".to_string()));
+                    }
                 }
             }
+            let shown = self.self_drawn_frame();
+            self.reconcile_candidates(&shown);
             return;
         }
         if self.engine.last_prediction_kind() == PredictionKind::Compare {

@@ -301,7 +301,9 @@ fn apply(
         UiCommand::Hide => {
             window.hide();
             if let Some(comp) = companion {
-                comp.hide();
+                if !comp.is_pinned.get() {
+                    comp.hide();
+                }
             }
         }
         UiCommand::StatusShow(view) => {
@@ -324,7 +326,9 @@ fn apply(
         }
         UiCommand::CompanionHide => {
             if let Some(comp) = companion {
-                comp.hide();
+                if !comp.is_pinned.get() {
+                    comp.hide();
+                }
             }
         }
         UiCommand::DrillStart(payload) => {

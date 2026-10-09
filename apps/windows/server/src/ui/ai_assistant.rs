@@ -14,12 +14,12 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetWindowRect, IDC_ARROW, LoadCursorW,
+    BringWindowToTop, CreateWindowExW, DefWindowProcW, GetWindowRect, IDC_ARROW, LoadCursorW,
     SW_HIDE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SetForegroundWindow, SetWindowPos, ShowWindow,
     IsIconic, WM_CHAR, WM_DESTROY, WM_EXITSIZEMOVE, WM_MOVE, WM_LBUTTONDOWN, WM_LBUTTONDBLCLK,
     WM_MOUSEACTIVATE, WM_MOUSEWHEEL, WM_NCHITTEST, WM_NCLBUTTONDOWN, WNDCLASSEXW, CS_DBLCLKS,
-    WS_EX_LAYERED, WS_EX_APPWINDOW, WS_POPUP, HWND_TOPMOST, HWND_NOTOPMOST, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_NOACTIVATE, MA_NOACTIVATE, SendMessageW, HTCAPTION, HTCLIENT,
+    WS_EX_LAYERED, WS_EX_APPWINDOW, WS_EX_TOPMOST, WS_POPUP, HWND_TOPMOST, HWND_NOTOPMOST, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOACTIVATE, MA_ACTIVATE, SendMessageW, HTCAPTION, HTCLIENT,
 };
 use windows::core::{PCWSTR, Result, w};
 
@@ -93,7 +93,7 @@ impl Default for AiAssistantData {
             web_search_enabled: false,
             state: StreamingState::Idle,
             error_message: None,
-            is_pinned: false,
+            is_pinned: true,
         }
     }
 }
@@ -127,7 +127,7 @@ impl AiAssistantWindow {
         })?;
         let hwnd = unsafe {
             CreateWindowExW(
-                WS_EX_APPWINDOW | WS_EX_LAYERED,
+                WS_EX_APPWINDOW | WS_EX_LAYERED | WS_EX_TOPMOST,
                 CLASS_NAME,
                 w!("Qingjian AI"),
                 WS_POPUP,
@@ -178,8 +178,15 @@ impl AiAssistantWindow {
             } else {
                 let _ = ShowWindow(self.hwnd, SW_SHOW);
             }
-            let _ = SetFocus(Some(self.hwnd));
+            let _ = SetWindowPos(
+                self.hwnd,
+                Some(HWND_TOPMOST),
+                0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE,
+            );
+            let _ = BringWindowToTop(self.hwnd);
             let _ = SetForegroundWindow(self.hwnd);
+            let _ = SetFocus(Some(self.hwnd));
         }
     }
 
@@ -490,6 +497,9 @@ impl AiAssistantWindow {
                 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
             );
+            if is_pinned {
+                let _ = BringWindowToTop(self.hwnd);
+            }
         }
         Ok(())
     }
@@ -986,7 +996,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 
 unsafe fn wndproc_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
-        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        WM_MOUSEACTIVATE => LRESULT(MA_ACTIVATE as isize),
         WM_NCHITTEST => LRESULT(HTCLIENT as isize),
         WM_DESTROY => {
             AI_WINDOWS.with(|w| w.borrow_mut().remove(&(hwnd.0 as isize)));
@@ -1091,7 +1101,7 @@ unsafe fn wndproc_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) ->
 
                     // 1.1 关闭 ✕
                     let b1_x = w - mr - btn_w;
-                    if cx >= b1_x && cx <= w - mr {
+                    if cx >= b1_x {
                         win.close_and_notify();
                         return LRESULT(0);
                     }
@@ -1142,6 +1152,14 @@ unsafe fn wndproc_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) ->
                 // 2. 底部控制条点击 (cy in h - px(52) .. h - px(10))
                 let bar_y = h - px(44);
                 if cy >= bar_y - px(4) && cy <= bar_y + px(32) {
+                    // 2.0 [+] 清除输入框文本
+                    let plus_x = px(16);
+                    if cx >= plus_x && cx <= plus_x + px(28) {
+                        win.data.borrow_mut().input_text.clear();
+                        let _ = win.render_and_show(win.last_anchor.get());
+                        return LRESULT(0);
+                    }
+
                     // 2.1 发送/停止按钮点击
                     let send_x = w - px(48);
                     if cx >= send_x - px(4) && cx <= send_x + px(36) {

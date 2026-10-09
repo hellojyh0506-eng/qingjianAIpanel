@@ -70,11 +70,12 @@ impl Worker {
             };
 
             // 防抖窗口：在 debounce 期间持续收新请求，仅保留最新
-            // 对比请求（主动提交）零延迟；候选翻译请求采用紧凑防抖 (50ms)，常规拼音联想保留标准防抖
+            // 对比请求与翻译请求（主动提交）零延迟；常规拼音联想保留标准防抖
             let mut req = request;
             let effective_debounce = match req.kind {
-                qingjian_core::PredictionKind::Compare | qingjian_core::PredictionKind::DeepLearn => Duration::from_millis(0),
-                qingjian_core::PredictionKind::Translate => Duration::from_millis(50).min(self.debounce),
+                qingjian_core::PredictionKind::Compare
+                | qingjian_core::PredictionKind::DeepLearn
+                | qingjian_core::PredictionKind::Translate => Duration::from_millis(0),
                 _ => self.debounce,
             };
             if !effective_debounce.is_zero() {
@@ -104,7 +105,8 @@ impl Worker {
 
             let start = Instant::now();
             let is_critical = req.kind == qingjian_core::PredictionKind::DeepLearn
-                || req.kind == qingjian_core::PredictionKind::Compare;
+                || req.kind == qingjian_core::PredictionKind::Compare
+                || req.kind == qingjian_core::PredictionKind::Translate;
 
             let res = if is_critical {
                 self.client.complete(&req).await

@@ -170,11 +170,42 @@ Output JSON format strictly:
   \"ielts_friendly\": \"optional IELTS phrasing or null\"
 }";
 
+pub const TRANSLATE_TO_CHINESE_SYSTEM_PROMPT: &str = "\
+You are an expert bilingual translation coach.
+
+Translate the provided foreign text into natural, accurate, fluent contemporary Chinese.
+
+Rules:
+- Preserve the authentic intended meaning, nuance, and pragmatic force.
+- Avoid stiff, robotic word-for-word machine translation; use idiomatic Chinese phrasing.
+- Provide the single best primary Chinese translation in 'sentence', and when appropriate, provide 2-3 genuine alternative Chinese translations in 'alternatives' with distinct nuances, tags, and explanations.
+
+Output JSON format strictly:
+{
+  \"sentence\": \"最佳自然中文译文\",
+  \"alternatives\": [
+    {
+      \"text\": \"可选替代中文表述\",
+      \"tag\": \"Direct | Nuanced | Casual | Idiomatic | Professional | Natural\",
+      \"meaning\": \"侧重点与语境\",
+      \"tone\": \"语气说明\",
+      \"scenario\": \"适用场景\",
+      \"why_natural\": \"地道原因及区别\"
+    }
+  ]
+}";
+
 pub fn system_prompt(request: &PredictionRequest) -> &'static str {
     match request.kind {
         PredictionKind::Compose => SYSTEM_PROMPT,
         PredictionKind::Question => QUESTION_SYSTEM_PROMPT,
-        PredictionKind::Translate => TRANSLATE_SYSTEM_PROMPT,
+        PredictionKind::Translate => {
+            if request.target_language == "zh" {
+                TRANSLATE_TO_CHINESE_SYSTEM_PROMPT
+            } else {
+                TRANSLATE_SYSTEM_PROMPT
+            }
+        }
         PredictionKind::Compare => COMPARE_SYSTEM_PROMPT,
         PredictionKind::DeepLearn => DEEP_LEARN_SYSTEM_PROMPT,
     }
@@ -324,6 +355,10 @@ struct RawReply {
     words: Vec<RawWord>,
 
     sentence: Option<String>,
+    translation: Option<String>,
+    translated_text: Option<String>,
+    result: Option<String>,
+    target_text: Option<String>,
 
     /// 问字模式的答案。
     answers: Vec<RawWord>,
@@ -508,7 +543,21 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
     let json_str = extract_json_str(content);
     let raw: RawReply = match serde_json::from_str(json_str) {
         Ok(raw) => raw,
-        Err(_) => return Reply::default(),
+        Err(_) => {
+            if request.kind == PredictionKind::Translate {
+                let clean = strip_translation_prefix(content.trim());
+                let clean = clean.trim_matches(|c| c == '\"' || c == '`' || c == '\'').trim();
+                if !clean.is_empty() && (request.target_language != "en" || is_valid_english_translation(clean)) {
+                    return Reply {
+                        words: Vec::new(),
+                        sentence: Some(clean.to_string()),
+                        alternatives: synthesize_fallback_alternatives(&request.text, clean),
+                        ..Default::default()
+                    };
+                }
+            }
+            return Reply::default();
+        }
     };
     if request.kind == PredictionKind::Question {
         return parse_answers(raw.answers, request.max_items);
@@ -713,6 +762,12 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
     if request.kind == PredictionKind::Translate {
         let sentence = raw
             .sentence
+            .or(raw.translation)
+            .or(raw.translated_text)
+            .or(raw.result)
+            .or(raw.primary_english)
+            .or(raw.target_text)
+            .or_else(|| raw.alternatives.first().map(|a| a.text.clone()))
             .map(|s| s.trim().to_owned())
             .filter(|s| !s.is_empty());
 
@@ -805,12 +860,20 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
     let first_local = request.candidates.first().map(String::as_str);
     for word in raw.words {
         let text = clean(&word.text);
-        let syllables: Vec<String> = word
-            .pinyin
-            .split(|c: char| c.is_whitespace() || c == '\'')
+        let clean_pinyin = strip_pinyin_tones(&word.pinyin);
+        let mut syllables: Vec<String> = clean_pinyin
+            .split(|c: char| c.is_whitespace() || c == '\'' || c == '-')
             .filter(|s| !s.is_empty())
             .map(|s| s.to_ascii_lowercase())
             .collect();
+        if syllables.len() != text.chars().count() && text.chars().count() > 1 {
+            let combined = syllables.join("");
+            if let Ok(segs) = qingjian_core::parser::segment(&combined) {
+                if let Some(matching) = segs.iter().find(|s| s.syllables.len() == text.chars().count()) {
+                    syllables = matching.syllables.iter().map(|s| s.text.clone()).collect();
+                }
+            }
+        }
         if text.is_empty()
             || syllables.is_empty()
             || Some(text.as_str()) == first_local
@@ -878,6 +941,12 @@ pub fn is_coherent_continuation(curr: &str, candidate: &str) -> bool {
             || curr == "乖乖嘞"
             || curr == "乖乖"
             || curr == "我日他哥"
+            || curr == "你好"
+            || curr == "您好"
+            || curr == "谢谢"
+            || curr == "多谢"
+            || curr == "麻烦"
+            || curr == "请问"
         {
             return true;
         }
@@ -960,9 +1029,37 @@ fn strip_translation_prefix(s: &str) -> String {
     cleaned.to_string()
 }
 
+/// 去除拼音中的声调标注与数字声调，统一音节字母表示
+pub fn strip_pinyin_tones(pinyin: &str) -> String {
+    let mut result = String::with_capacity(pinyin.len());
+    for c in pinyin.chars() {
+        match c {
+            'ā' | 'á' | 'ǎ' | 'à' => result.push('a'),
+            'ē' | 'é' | 'ě' | 'è' | 'ê' => result.push('e'),
+            'ī' | 'í' | 'ǐ' | 'ì' => result.push('i'),
+            'ō' | 'ó' | 'ǒ' | 'ò' => result.push('o'),
+            'ū' | 'ú' | 'ǔ' | 'ù' => result.push('u'),
+            'ǖ' | 'ǘ' | 'ǚ' | 'ǜ' | 'ü' => result.push('v'),
+            'Ā' | 'Á' | 'Ǎ' | 'À' => result.push('a'),
+            'Ē' | 'É' | 'Ě' | 'È' | 'Ê' => result.push('e'),
+            'Ī' | 'Í' | 'Ǐ' | 'Ì' => result.push('i'),
+            'Ō' | 'Ó' | 'Ǒ' | 'Ò' => result.push('o'),
+            'Ū' | 'Ú' | 'Ǔ' | 'Ù' => result.push('u'),
+            'Ǖ' | 'Ǘ' | 'Ǚ' | 'Ǜ' | 'Ü' => result.push('v'),
+            '1'..='5' => {}
+            other => result.push(other),
+        }
+    }
+    result
+        .replace("jv", "ju")
+        .replace("qv", "qu")
+        .replace("xv", "xu")
+        .replace("yv", "yu")
+}
+
 fn is_valid_english_translation(s: &str) -> bool {
     let trimmed = s.trim();
-    if trimmed.is_empty() || trimmed.len() > 150 {
+    if trimmed.is_empty() || trimmed.len() > 4096 {
         return false;
     }
     let has_cjk = trimmed.chars().any(|c| {
@@ -1482,6 +1579,30 @@ mod tests {
         assert_eq!(parsed.alternatives[2].text, "Did you even think this through?");
         assert_eq!(parsed.alternatives[2].tag, "Nuanced");
         assert!(parsed.explanation.is_some());
+    }
+
+    #[test]
+    fn test_strip_pinyin_tones() {
+        assert_eq!(strip_pinyin_tones("hénán"), "henan");
+        assert_eq!(strip_pinyin_tones("lǚ"), "lv");
+        assert_eq!(strip_pinyin_tones("jǘ"), "ju");
+        assert_eq!(strip_pinyin_tones("he2 nan2"), "he nan");
+        assert_eq!(strip_pinyin_tones("zhāng'tāo"), "zhang'tao");
+    }
+
+    #[test]
+    fn test_long_translation_accepted() {
+        let mut translate = request("", false);
+        translate.kind = PredictionKind::Translate;
+        translate.text = "这是一段很长很长的文本测试".to_owned();
+        translate.target_language = "en".to_owned();
+
+        let long_en = "This is a comprehensive and detailed paragraph that easily exceeds one hundred and fifty characters in length, demonstrating that the new translation validation engine allows realistic, full-sentence spoken translations without prematurely clipping them.";
+        assert!(long_en.len() > 150);
+        assert!(long_en.len() < 4096);
+        let reply_json = format!(r#"{{"sentence": "{}"}}"#, long_en);
+        let parsed = parse_reply(&reply_json, &translate);
+        assert_eq!(parsed.sentence.as_deref(), Some(long_en));
     }
 }
 

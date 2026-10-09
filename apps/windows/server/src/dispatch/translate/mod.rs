@@ -46,7 +46,9 @@ impl Router {
             return empty;
         }
         self.last_rect = Some(rect);
+        self.last_translation_source = Some(text.to_string());
         self.translation = Some(Translation { result: None });
+        self.translation_start_time = Some(std::time::Instant::now());
         self.engine.request_translation(text);
         tracing::debug!(chars = text.chars().count(), "翻译选中文字：已发翻译请求");
         let frame = self.self_drawn_frame();
