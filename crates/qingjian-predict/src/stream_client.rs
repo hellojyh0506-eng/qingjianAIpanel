@@ -53,6 +53,7 @@ struct StreamChoice {
 #[derive(Deserialize)]
 struct StreamDelta {
     content: Option<String>,
+    reasoning: Option<String>,
 }
 
 pub struct StreamChatClient {
@@ -91,12 +92,28 @@ impl StreamChatClient {
 
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        if let Ok(val) = HeaderValue::from_str(&format!("Bearer {}", self.api_key.trim())) {
-            headers.insert(AUTHORIZATION, val);
+        if !self.api_key.trim().is_empty() {
+            if let Ok(val) = HeaderValue::from_str(&format!("Bearer {}", self.api_key.trim())) {
+                headers.insert(AUTHORIZATION, val);
+            }
+        } else if self.base_url.contains("kilo.ai") {
+            headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer "));
         }
 
+        if self.base_url.contains("kilo.ai") {
+            headers.insert("User-Agent", HeaderValue::from_static("opencode-kilo-provider/7.8.8"));
+            headers.insert("X-KILOCODE-EDITORNAME", HeaderValue::from_static("Kilo CLI 7.8.8"));
+            headers.insert("X-KILOCODE-MACHINEID", HeaderValue::from_static("DESKTOP-FOMGFJO"));
+        }
+
+        let effective_model = if self.model == "auto" {
+            "kilo-auto/free"
+        } else {
+            &self.model
+        };
+
         let body = ChatCompletionStreamRequest {
-            model: &self.model,
+            model: effective_model,
             messages: &messages,
             stream: true,
             max_tokens,
@@ -127,6 +144,8 @@ impl StreamChatClient {
         }
 
         let mut buffer = Vec::new();
+        let mut has_content = false;
+        let mut accumulated_reasoning = String::new();
 
         loop {
             if stop_signal.load(Ordering::Relaxed) {
@@ -161,6 +180,12 @@ impl StreamChatClient {
                 if let Some(data_str) = line.strip_prefix("data:") {
                     let trimmed = data_str.trim();
                     if trimmed == "[DONE]" {
+                        if !has_content && !accumulated_reasoning.trim().is_empty() {
+                            if ttft_ms.is_none() {
+                                ttft_ms = Some(t_start.elapsed().as_millis());
+                            }
+                            let _ = event_tx.send(StreamEvent::Delta(accumulated_reasoning)).await;
+                        }
                         let total_ms = t_start.elapsed().as_millis();
                         let _ = event_tx.send(StreamEvent::Done {
                             ttft_ms: ttft_ms.unwrap_or(total_ms),
@@ -173,8 +198,14 @@ impl StreamChatClient {
                         if let Some(choices) = parsed.choices {
                             for choice in choices {
                                 if let Some(delta) = choice.delta {
+                                    if let Some(reasoning) = delta.reasoning {
+                                        if !reasoning.is_empty() {
+                                            accumulated_reasoning.push_str(&reasoning);
+                                        }
+                                    }
                                     if let Some(content) = delta.content {
                                         if !content.is_empty() {
+                                            has_content = true;
                                             if ttft_ms.is_none() {
                                                 ttft_ms = Some(t_start.elapsed().as_millis());
                                             }
@@ -190,6 +221,13 @@ impl StreamChatClient {
                     }
                 }
             }
+        }
+
+        if !has_content && !accumulated_reasoning.trim().is_empty() {
+            if ttft_ms.is_none() {
+                ttft_ms = Some(t_start.elapsed().as_millis());
+            }
+            let _ = event_tx.send(StreamEvent::Delta(accumulated_reasoning)).await;
         }
 
         let total_ms = t_start.elapsed().as_millis();

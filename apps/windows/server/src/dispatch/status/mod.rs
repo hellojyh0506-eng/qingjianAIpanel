@@ -76,24 +76,24 @@ impl Router {
                     self.on_candidate_selection_changed();
                 } else if next == qingjian_platform::LearningMode::Daily {
                     self.passive_learning_card = None;
-                } else if next == qingjian_platform::LearningMode::Drill && self.composing() {
-                    self.start_drill_session();
                 }
                 let shown = self.self_drawn_frame();
                 self.reconcile_candidates(&shown);
             }
             StatusEvent::SetLearningMode(mode) => {
-                self.learning_mode = mode;
-                self.config.learning_mode = mode;
-                tracing::info!(mode = ?mode, "状态条：设置英语学习模式");
-                self.persist("general", "learning_mode", mode.key());
-                self.notice = Some(format!("已切换至【{}】", mode.label()));
-                if mode == qingjian_platform::LearningMode::Learn && self.composing() {
+                let effective_mode = match mode {
+                    qingjian_platform::LearningMode::Drill => qingjian_platform::LearningMode::Daily,
+                    other => other,
+                };
+                self.learning_mode = effective_mode;
+                self.config.learning_mode = effective_mode;
+                tracing::info!(mode = ?effective_mode, "状态条：设置英语学习模式");
+                self.persist("general", "learning_mode", effective_mode.key());
+                self.notice = Some(format!("已切换至【{}】", effective_mode.label()));
+                if effective_mode == qingjian_platform::LearningMode::Learn && self.composing() {
                     self.on_candidate_selection_changed();
-                } else if mode == qingjian_platform::LearningMode::Daily {
+                } else if effective_mode == qingjian_platform::LearningMode::Daily {
                     self.passive_learning_card = None;
-                } else if mode == qingjian_platform::LearningMode::Drill && self.composing() {
-                    self.start_drill_session();
                 }
                 let shown = self.self_drawn_frame();
                 self.reconcile_candidates(&shown);

@@ -97,8 +97,7 @@ impl Placement {
 
         unsafe {
             let _ = AppendMenuW(menu, MF_STRING, 1, w!("日常 (Daily) - 日常输入，不主动打扰"));
-            let _ = AppendMenuW(menu, MF_STRING, 2, w!("学习 (Learn) - 输入时提供学习辅助"));
-            let _ = AppendMenuW(menu, MF_STRING, 3, w!("训练 (Drill) - 主动回忆与对比训练"));
+            let _ = AppendMenuW(menu, MF_STRING, 2, w!("学习 (Learn) - 输入时提供学习辅助与自然口语"));
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
             let _ = AppendMenuW(menu, MF_STRING, 4, w!("设置 (Settings)..."));
 
@@ -116,7 +115,6 @@ impl Placement {
             match cmd.0 {
                 1 => (self.events)(StatusEvent::SetLearningMode(qingjian_platform::LearningMode::Daily)),
                 2 => (self.events)(StatusEvent::SetLearningMode(qingjian_platform::LearningMode::Learn)),
-                3 => (self.events)(StatusEvent::SetLearningMode(qingjian_platform::LearningMode::Drill)),
                 4 => crate::ui::open_settings(),
                 _ => {}
             }

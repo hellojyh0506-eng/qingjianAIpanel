@@ -329,12 +329,19 @@ impl Router {
             .passive_learning_card
             .as_ref()
             .and_then(|c| c.primary.as_ref().map(|p| p.text.clone()))
-            .or_else(|| self.passive_translation.clone())
+            .filter(|s| composed::is_valid_english_text(s))
             .or_else(|| {
-                self.engine.translate_word(&target_text).and_then(|t| {
-                    t.senses().first().map(|s| s.text.clone())
-                })
+                self.passive_translation
+                    .clone()
+                    .filter(|s| composed::is_valid_english_text(s))
             })
+            .or_else(|| {
+                self.engine
+                    .translate_word(&target_text)
+                    .and_then(|t| t.senses().first().map(|s| s.text.clone()))
+                    .filter(|s| composed::is_valid_english_text(s))
+            })
+            .or_else(|| composed::fallback_idiom_english(&target_text))
             .unwrap_or_default();
 
         let mut data = crate::ui::companion::CompanionData::loading(target_text.clone(), primary_text.clone());
@@ -750,22 +757,29 @@ impl Router {
                 let model = self.config.predict.model.clone();
                 let api_key_opt = self.config.predict.resolve_api_key();
 
-                let Some(api_key) = api_key_opt else {
-                    self.candidates.send_ai_error(
-                        "未配置 API Key。请在 %APPDATA%\\Qingjian\\config.toml 中设置 [predict] api_key 或设置环境变量 QINGJIAN_API_KEY。".to_string()
-                    );
-                    return;
+                let api_key = match api_key_opt {
+                    Some(key) => key,
+                    None => {
+                        if base_url.contains("kilo.ai") || model.starts_with("kilo-") || model == "auto" {
+                            String::new()
+                        } else {
+                            self.candidates.send_ai_error(
+                                "未配置 API Key。请在 %APPDATA%\\Qingjian\\config.toml 中设置 [predict] api_key 或设置环境变量 QINGJIAN_API_KEY。".to_string()
+                            );
+                            return;
+                        }
+                    }
                 };
 
                 let (max_tokens, system_prompt) = if fast_mode {
                     (
                         512,
-                        "你是青简输入法内置的 AI 智能助手。你的当前工作模式是【快速回答】。请直接、精炼、准确地回答用户问题，直击核心本质与落地用法，避免多余冗长铺垫。"
+                        "你是青简输入法内置的 AI 智能助手。你的当前工作模式是【快速回答】。请直接、精炼、准确地回答用户问题，直击核心本质与落地用法，避免多余冗长铺垫。请使用地道通顺的人类自然语言回答。严禁无故输出 Python 等玩具代码或无关程序片段，除非用户明确要求编写代码。"
                     )
                 } else {
                     (
                         2048,
-                        "你是青简输入法内置的 AI 智能助手。你的当前工作模式是【深度回答】。请深入透彻地分析用户的问题，提供多维度的地道表达剖析、语法语境对比、边界条件分析与详尽可落地的中英对照与代码/例句。"
+                        "你是青简输入法内置的 AI 智能助手。你的当前工作模式是【深度回答】。请深入透彻地分析用户的问题，提供多维度的地道表达剖析、语法语境对比、边界条件分析与详尽可落地的中英对照与地道例句。请使用通顺自然的人类语言解答，除非用户明确要求写代码，严禁随意吐出 Python 脚本或无关代码。"
                     )
                 };
 

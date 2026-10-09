@@ -14,12 +14,12 @@ use crate::config::PredictConfig;
 use crate::error::PredictError;
 use crate::prompt::{self, Reply};
 
-/// 联想与翻译回复的 token 上限：口语翻译与备选 300，组句 300，问字 200，对比评测 450，深度学习 700。
-const TRANSLATE_MAX_TOKENS: u32 = 300;
-const COMPOSE_MAX_TOKENS: u32 = 300;
-const QUESTION_MAX_TOKENS: u32 = 200;
-const COMPARE_MAX_TOKENS: u32 = 450;
-const DEEP_LEARN_MAX_TOKENS: u32 = 700;
+/// 联想与翻译回复的 token 上限：口语翻译 800，组句 500，问字 300，对比评测 800，深度学习 1800（留足思考空间）。
+const TRANSLATE_MAX_TOKENS: u32 = 800;
+const COMPOSE_MAX_TOKENS: u32 = 500;
+const QUESTION_MAX_TOKENS: u32 = 300;
+const COMPARE_MAX_TOKENS: u32 = 800;
+const DEEP_LEARN_MAX_TOKENS: u32 = 1800;
 
 /// 采样温度：联想要稳，不要花。
 const TEMPERATURE: f32 = 0.3;
@@ -100,8 +100,13 @@ impl ChatClient {
             ChatCompletionRequestSystemMessage::from(system).into(),
             ChatCompletionRequestUserMessage::from(user).into(),
         ];
+        let effective_model = if self.model == "auto" {
+            "kilo-auto/free"
+        } else {
+            &self.model
+        };
         let mut args = CreateChatCompletionRequestArgs::default();
-        args.model(&self.model)
+        args.model(effective_model)
             .messages(messages)
             .max_tokens(max_tokens)
             .temperature(TEMPERATURE)
@@ -115,11 +120,13 @@ impl ChatClient {
         }
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         let t_http_start = std::time::Instant::now();
-        let req = self
-            .http
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .json(&body);
+        let mut req = self.http.post(&url);
+        if !self.api_key.trim().is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", self.api_key.trim()));
+        } else if self.base_url.contains("kilo.ai") {
+            req = req.header("Authorization", "Bearer ");
+        }
+        let req = req.json(&body);
         let resp = tokio::time::timeout(self.timeout, req.send())
             .await
             .map_err(|_| PredictError::Timeout(self.timeout.as_millis() as u64))??;
@@ -142,6 +149,15 @@ impl ChatClient {
                 |choice| tracing::debug!(finish_reason = ?choice.finish_reason, "联想回复结束原因"),
             )
             .find_map(|choice| choice.message.content.filter(|c| !c.trim().is_empty()))
+            .or_else(|| {
+                raw.get("choices")
+                    .and_then(|c| c.get(0))
+                    .and_then(|c0| c0.get("message"))
+                    .and_then(|m| m.get("reasoning"))
+                    .and_then(|r| r.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|s| s.to_string())
+            })
             .ok_or_else(|| {
                 // 正文为空时原因五花八门（思考占满额度、模型名不对、接口字段不标准），留下原始响应才查得了
                 tracing::warn!(model = %self.model, response = %truncated(&raw), "接口回复里没有正文");
@@ -156,7 +172,9 @@ impl ChatClient {
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();
-        let provider = if self.base_url.contains("siliconflow") {
+        let provider = if self.base_url.contains("kilo.ai") {
+            "Kilo Gateway"
+        } else if self.base_url.contains("siliconflow") {
             "SiliconFlow"
         } else if self.base_url.contains("deepseek") {
             "DeepSeek"
@@ -253,7 +271,28 @@ fn http_client(base_url: &str) -> reqwest::Client {
             builder = builder.default_headers(headers);
         }
     }
+    if is_kilo(base_url) {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            reqwest::header::USER_AGENT,
+            HeaderValue::from_static("opencode-kilo-provider/7.8.8"),
+        );
+        headers.insert(
+            "X-KILOCODE-EDITORNAME",
+            HeaderValue::from_static("Kilo CLI 7.8.8"),
+        );
+        headers.insert(
+            "X-KILOCODE-MACHINEID",
+            HeaderValue::from_static("DESKTOP-FOMGFJO"),
+        );
+        builder = builder.default_headers(headers);
+    }
     builder.build().unwrap_or_default()
+}
+
+/// 接口地址是否指向 Kilo Gateway（`kilo.ai` 及其子域）。
+fn is_kilo(base_url: &str) -> bool {
+    host_of(base_url).is_some_and(|host| host == "kilo.ai" || host.ends_with(".kilo.ai"))
 }
 
 /// 接口地址是否指向国内服务，若是则直连，避免被死代理（如 127.0.0.1:7897）拖死。

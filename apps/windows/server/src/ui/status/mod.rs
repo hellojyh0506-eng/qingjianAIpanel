@@ -180,18 +180,13 @@ impl StatusBar {
         }
     }
 
-    /// 渲染器要的四格：模式（品牌色）、标点（生效时品牌色，否则灰）、学习模式（Daily灰"学"/Learn蓝底白字"学"/Drill橙底白字"练"）、齿轮。
+    /// 渲染器要的四格：模式（品牌色）、标点（生效时品牌色，否则灰）、学习模式（Daily灰"学"/Learn蓝底白字"学"）、齿轮。
     fn status_cells(view: &StatusView) -> Vec<StatusCell> {
         let learn_cell = match view.learning_mode {
             qingjian_platform::LearningMode::Daily => StatusCell::text("学", false),
-            qingjian_platform::LearningMode::Learn => StatusCell::badge(
+            qingjian_platform::LearningMode::Learn | qingjian_platform::LearningMode::Drill => StatusCell::badge(
                 "学",
                 qingjian_render::Color::rgb(0, 166, 153),
-                qingjian_render::Color::rgb(255, 255, 255),
-            ),
-            qingjian_platform::LearningMode::Drill => StatusCell::badge(
-                "练",
-                qingjian_render::Color::rgb(249, 115, 22),
                 qingjian_render::Color::rgb(255, 255, 255),
             ),
         };
@@ -212,15 +207,10 @@ impl StatusBar {
         let punctuation_active = view.full_width;
         let (learn_text, learn_color, learn_bg) = match view.learning_mode {
             qingjian_platform::LearningMode::Daily => ("学", theme.gloss_color, None),
-            qingjian_platform::LearningMode::Learn => (
+            qingjian_platform::LearningMode::Learn | qingjian_platform::LearningMode::Drill => (
                 "学",
                 COLORREF(0x00FFFFFF),
                 Some(COLORREF(0x0099A600)), // #00A699 (BGR: 0x0099A600)
-            ),
-            qingjian_platform::LearningMode::Drill => (
-                "练",
-                COLORREF(0x00FFFFFF),
-                Some(COLORREF(0x001673F9)), // #F97316 (BGR: 0x001673F9)
             ),
         };
         vec![

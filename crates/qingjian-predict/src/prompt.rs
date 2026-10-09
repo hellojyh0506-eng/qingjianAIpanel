@@ -432,6 +432,13 @@ fn is_habitual_idiom_not_thought(zh: &str) -> bool {
         || zh.contains("说话不经")
 }
 
+fn is_habitual_idiom_use_brain(zh: &str) -> bool {
+    zh.contains("动脑子")
+        || zh.contains("动动脑子")
+        || zh.contains("动脑了吗")
+        || zh.contains("动脑")
+}
+
 fn habitual_not_thought_alternatives() -> Vec<PredictionAlternative> {
     vec![
         PredictionAlternative {
@@ -464,6 +471,38 @@ fn habitual_not_thought_alternatives() -> Vec<PredictionAlternative> {
     ]
 }
 
+fn habitual_use_brain_alternatives() -> Vec<PredictionAlternative> {
+    vec![
+        PredictionAlternative {
+            text: "Are you even thinking?".to_string(),
+            tag: "Direct".to_string(),
+            meaning: "你到底动脑子了吗？认真想想！".to_string(),
+            tone: "质问口吻 · 提醒思考".to_string(),
+            scenario: "日常交流 / 口语提醒".to_string(),
+            commonality: "极高频美语".to_string(),
+            why_natural: "最自然地道的口语反问，表达对对方未经思考就下结论或行动的质问。".to_string(),
+        },
+        PredictionAlternative {
+            text: "Use your head!".to_string(),
+            tag: "Idiomatic".to_string(),
+            meaning: "动动脑子！多动动脑筋".to_string(),
+            tone: "地道习语 · 直爽强调".to_string(),
+            scenario: "熟人交流 / 敦促思考".to_string(),
+            commonality: "日常极高频".to_string(),
+            why_natural: "经典习语表达，形象敦促对方动用理智、开动脑筋。".to_string(),
+        },
+        PredictionAlternative {
+            text: "Did you even think this through?".to_string(),
+            tag: "Nuanced".to_string(),
+            meaning: "你究竟认真考虑过了吗？".to_string(),
+            tone: "严肃客观 · 深度质询".to_string(),
+            scenario: "职场 / 严肃讨论".to_string(),
+            commonality: "中高阶地道口语".to_string(),
+            why_natural: "强调是否全面权衡思考过事情的前因后果。".to_string(),
+        },
+    ]
+}
+
 /// 解析模型回复：去空、去重、去换行，截到 `max_items`。不要与本地首选相同的词，也不要没给拼音的词。
 pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
     let json_str = extract_json_str(content);
@@ -478,7 +517,7 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
         let mut alternatives = Vec::new();
         for alt in raw.alternatives {
             let alt_text = strip_translation_prefix(alt.text.trim());
-            if alt_text.is_empty() {
+            if alt_text.is_empty() || !is_valid_english_translation(&alt_text) {
                 continue;
             }
             let display_meaning = if !alt.meaning.trim().is_empty() {
@@ -518,7 +557,7 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
         let mut primary_eng = raw
             .primary_english
             .map(|s| s.trim().to_owned())
-            .filter(|s| !s.is_empty())
+            .filter(|s| is_valid_english_translation(s))
             .or_else(|| alternatives.first().map(|a| a.text.clone()));
 
         if is_habitual_idiom_not_thought(&request.text) {
@@ -532,11 +571,24 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
             if alternatives.is_empty() || alternatives.iter().any(|a| a.text.contains("say this")) {
                 alternatives = habitual_not_thought_alternatives();
             }
+        } else if is_habitual_idiom_use_brain(&request.text) {
+            let is_invalid = match &primary_eng {
+                Some(p) => !is_valid_english_translation(p) || p.to_ascii_lowercase().contains("brain"),
+                None => true,
+            };
+            if is_invalid {
+                primary_eng = Some("Are you even thinking?".to_string());
+            }
+            if alternatives.is_empty() || alternatives.iter().any(|a| a.text.to_ascii_lowercase().contains("brain")) {
+                alternatives = habitual_use_brain_alternatives();
+            }
         }
 
         let mut explanation = raw.explanation.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
         if is_habitual_idiom_not_thought(&request.text) && explanation.is_none() {
             explanation = Some("“They speak before they think.” 是最地道的美语习惯表达，泛指说话冲动、未经深思便脱口而出。原句表达的是泛指的习惯，切忌窄化误译为针对单次具体事件的 “say this like they haven't thought about it”。".to_string());
+        } else if is_habitual_idiom_use_brain(&request.text) && explanation.is_none() {
+            explanation = Some("“Are you even thinking?” 或 “Use your head!” 是最地道的美语日常表达，用于质问或敦促对方动脑筋思考，避免直译中生硬的动词搭配。".to_string());
         }
 
         return Reply {
@@ -552,13 +604,25 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
                     "blurt out".to_string(),
                     "think things through".to_string(),
                 ]
+            } else if raw.collocations.is_empty() && is_habitual_idiom_use_brain(&request.text) {
+                vec![
+                    "use your head".to_string(),
+                    "think it through".to_string(),
+                    "put your mind to it".to_string(),
+                    "think twice".to_string(),
+                ]
             } else {
-                raw.collocations.into_iter().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect()
+                raw.collocations.into_iter().map(|s| s.trim().to_owned()).filter(|s| is_valid_english_translation(s)).collect()
             },
             examples: if raw.examples.is_empty() && is_habitual_idiom_not_thought(&request.text) {
                 vec![
                     "You need to be more careful; they always speak before they think. | 你得当心点，他们说话总是不经大脑。".to_string(),
                     "Don't take it personally, he just blurts things out. | 别往心里去，他就是想到什么就脱口而出。".to_string(),
+                ]
+            } else if raw.examples.is_empty() && is_habitual_idiom_use_brain(&request.text) {
+                vec![
+                    "Are you even thinking? That will never work. | 你动脑子了吗？那根本行不通。".to_string(),
+                    "Use your head before making a decision. | 做决定前动动脑子。".to_string(),
                 ]
             } else {
                 raw.examples.into_iter().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect()
@@ -668,6 +732,10 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
                     || clean_s.contains("haven't thought"))
             {
                 clean_s = "They speak before they think.".to_string();
+            } else if is_habitual_idiom_use_brain(&request.text)
+                && (clean_s.to_ascii_lowercase().contains("brain") || !is_valid_english_translation(&clean_s))
+            {
+                clean_s = "Are you even thinking?".to_string();
             }
             let mut alternatives = Vec::new();
             for alt in raw.alternatives {
@@ -716,6 +784,10 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
                 && (alternatives.is_empty() || alternatives.iter().any(|a| a.text.contains("say this")))
             {
                 alternatives = habitual_not_thought_alternatives();
+            } else if is_habitual_idiom_use_brain(&request.text)
+                && (alternatives.is_empty() || alternatives.iter().any(|a| a.text.to_ascii_lowercase().contains("brain")))
+            {
+                alternatives = habitual_use_brain_alternatives();
             } else if alternatives.is_empty() {
                 alternatives = synthesize_fallback_alternatives(&request.text, &clean_s);
             }
@@ -1381,6 +1453,34 @@ mod tests {
         assert_eq!(parsed.alternatives[1].tag, "Nuanced");
         assert_eq!(parsed.alternatives[2].text, "They just blurt things out.");
         assert_eq!(parsed.alternatives[2].tag, "Idiomatic");
+        assert!(parsed.explanation.is_some());
+    }
+
+    #[test]
+    fn test_deep_learn_use_brain_idiom() {
+        let mut req = request("", false);
+        req.kind = PredictionKind::DeepLearn;
+        req.text = "动脑子了吗".to_owned();
+        req.target_language = "en".to_owned();
+
+        // 模拟机翻或模型返回生硬的 move brain 或中文
+        let invalid_deep = r#"{
+            "primary_english": "Move brain?",
+            "alternatives": [
+                {"text": "动脑子了吗", "tag": "Natural"}
+            ]
+        }"#;
+        let parsed = parse_reply(invalid_deep, &req);
+
+        // 验证动脑子被正确修正为地道反问
+        assert_eq!(parsed.sentence.as_deref(), Some("Are you even thinking?"));
+        assert_eq!(parsed.alternatives.len(), 3);
+        assert_eq!(parsed.alternatives[0].text, "Are you even thinking?");
+        assert_eq!(parsed.alternatives[0].tag, "Direct");
+        assert_eq!(parsed.alternatives[1].text, "Use your head!");
+        assert_eq!(parsed.alternatives[1].tag, "Idiomatic");
+        assert_eq!(parsed.alternatives[2].text, "Did you even think this through?");
+        assert_eq!(parsed.alternatives[2].tag, "Nuanced");
         assert!(parsed.explanation.is_some());
     }
 }

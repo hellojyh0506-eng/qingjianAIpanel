@@ -510,29 +510,27 @@ fn test_three_state_learning_mode_daily_learn_drill_switching_and_isolation() {
         "Learn 模式必须触发当前首选被动翻译"
     );
 
-    // 6. 清空缓冲区，再次按 Ctrl+Alt+L 切换到 Drill 模式
+    // 6. 清空缓冲区，再次按 Ctrl+Alt+L 切换回 Daily 模式 (两态循环: Daily <-> Learn，彻底废除 Drill 练模式)
     router.handle(ClientMessage::Commit { session: SESSION });
-    router.handle(ClientMessage::Key {
-        session: SESSION,
-        event: toggle_key,
-    });
-    assert_eq!(router.learning_mode(), qingjian_platform::LearningMode::Drill);
-
-    // 7. 再按一次 Ctrl+Alt+L 回到 Daily 模式
     router.handle(ClientMessage::Key {
         session: SESSION,
         event: toggle_key,
     });
     assert_eq!(router.learning_mode(), qingjian_platform::LearningMode::Daily);
 
-    // 8. 测试状态栏事件切换
-    router.handle_status_event(qingjian_windows_server::dispatch::StatusEvent::ToggleLearningMode);
+    // 7. 再按一次 Ctrl+Alt+L 切换回 Learn 模式
+    router.handle(ClientMessage::Key {
+        session: SESSION,
+        event: toggle_key,
+    });
     assert_eq!(router.learning_mode(), qingjian_platform::LearningMode::Learn);
 
-    router.handle_status_event(qingjian_windows_server::dispatch::StatusEvent::SetLearningMode(
-        qingjian_platform::LearningMode::Drill,
-    ));
-    assert_eq!(router.learning_mode(), qingjian_platform::LearningMode::Drill);
+    // 8. 测试状态栏事件切换 (两态循环)
+    router.handle_status_event(qingjian_windows_server::dispatch::StatusEvent::ToggleLearningMode);
+    assert_eq!(router.learning_mode(), qingjian_platform::LearningMode::Daily);
+
+    router.handle_status_event(qingjian_windows_server::dispatch::StatusEvent::ToggleLearningMode);
+    assert_eq!(router.learning_mode(), qingjian_platform::LearningMode::Learn);
 }
 
 

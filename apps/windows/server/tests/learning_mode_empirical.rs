@@ -170,18 +170,7 @@ fn test_p1_three_state_cycle_and_isolation() {
         event: space,
     });
 
-    // 5. 再次按 Ctrl+Alt+L 切换到 Drill 模式
-    let drill_msg = router.handle(ClientMessage::Key {
-        session,
-        event: toggle_combo(),
-    });
-    assert_eq!(router.learning_mode(), LearningMode::Drill);
-    if let Some(ServerMessage::KeyResult { frame, .. }) = drill_msg {
-        assert_eq!(frame.learning_mode, LearningMode::Drill);
-        assert!(frame.notice.as_deref().unwrap().contains("训练"));
-    }
-
-    // 6. 再按一次 Ctrl+Alt+L 回到 Daily 模式
+    // 5. 再次按 Ctrl+Alt+L 切换回 Daily 模式 (两态循环: Daily <-> Learn，彻底废除 Drill 练模式)
     let daily_msg = router.handle(ClientMessage::Key {
         session,
         event: toggle_combo(),
@@ -190,6 +179,17 @@ fn test_p1_three_state_cycle_and_isolation() {
     if let Some(ServerMessage::KeyResult { frame, .. }) = daily_msg {
         assert_eq!(frame.learning_mode, LearningMode::Daily);
         assert!(frame.notice.as_deref().unwrap().contains("日常"));
+    }
+
+    // 6. 再按一次 Ctrl+Alt+L 循环回 Learn 模式
+    let learn_msg = router.handle(ClientMessage::Key {
+        session,
+        event: toggle_combo(),
+    });
+    assert_eq!(router.learning_mode(), LearningMode::Learn);
+    if let Some(ServerMessage::KeyResult { frame, .. }) = learn_msg {
+        assert_eq!(frame.learning_mode, LearningMode::Learn);
+        assert!(frame.notice.as_deref().unwrap().contains("学习"));
     }
 }
 
@@ -203,19 +203,19 @@ fn test_p1_status_bar_and_menu_events() {
     let mut router = Router::new(engine, RouterConfig::default());
     assert_eq!(router.learning_mode(), LearningMode::Daily);
 
-    // 1. 模拟状态栏单次左键点击轮转
+    // 1. 模拟状态栏单次左键点击两态轮转 (Daily <-> Learn)
     router.handle_status_event(StatusEvent::ToggleLearningMode);
     assert_eq!(router.learning_mode(), LearningMode::Learn);
 
     router.handle_status_event(StatusEvent::ToggleLearningMode);
-    assert_eq!(router.learning_mode(), LearningMode::Drill);
-
-    router.handle_status_event(StatusEvent::ToggleLearningMode);
     assert_eq!(router.learning_mode(), LearningMode::Daily);
 
-    // 2. 模拟右键菜单或设置菜单直切
-    router.handle_status_event(StatusEvent::SetLearningMode(LearningMode::Drill));
-    assert_eq!(router.learning_mode(), LearningMode::Drill);
+    router.handle_status_event(StatusEvent::ToggleLearningMode);
+    assert_eq!(router.learning_mode(), LearningMode::Learn);
+
+    // 2. 模拟菜单直切
+    router.handle_status_event(StatusEvent::SetLearningMode(LearningMode::Daily));
+    assert_eq!(router.learning_mode(), LearningMode::Daily);
 
     router.handle_status_event(StatusEvent::SetLearningMode(LearningMode::Learn));
     assert_eq!(router.learning_mode(), LearningMode::Learn);
@@ -291,7 +291,7 @@ fn test_p1_multi_host_compatibility() {
         }
     }
 
-    // 3. 在 Terminal 会话中按 Esc 取消并切换到 Drill
+    // 3. 在 Terminal 会话中按 Esc 取消并切换到 Daily
     let session_terminal = SessionId(203);
     let _ = session_terminal;
     let esc = KeyEvent::new(0x1B, None, Default::default());
@@ -299,16 +299,16 @@ fn test_p1_multi_host_compatibility() {
         session: session_chrome,
         event: esc,
     });
-    router.handle_status_event(StatusEvent::SetLearningMode(LearningMode::Drill));
-    assert_eq!(router.learning_mode(), LearningMode::Drill);
+    router.handle_status_event(StatusEvent::SetLearningMode(LearningMode::Daily));
+    assert_eq!(router.learning_mode(), LearningMode::Daily);
 
-    // 在 VS Code 会话中确认进入 Drill 模式帧
+    // 在 VS Code 会话中确认进入 Daily 模式帧
     let session_vscode = SessionId(204);
     let key_msg = router.handle(ClientMessage::Key {
         session: session_vscode,
         event: letter('a'),
     });
     if let Some(ServerMessage::KeyResult { frame, .. }) = key_msg {
-        assert_eq!(frame.learning_mode, LearningMode::Drill);
+        assert_eq!(frame.learning_mode, LearningMode::Daily);
     }
 }

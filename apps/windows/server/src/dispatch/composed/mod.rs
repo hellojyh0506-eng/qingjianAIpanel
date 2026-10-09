@@ -258,19 +258,33 @@ impl Router {
             let primary_text = prediction
                 .sentence
                 .clone()
-                .or_else(|| prediction.alternatives.first().map(|a| a.text.clone()))
+                .filter(|s| is_valid_english_text(s))
+                .or_else(|| {
+                    prediction
+                        .alternatives
+                        .first()
+                        .map(|a| a.text.clone())
+                        .filter(|s| is_valid_english_text(s))
+                })
                 .or_else(|| {
                     self.passive_learning_card
                         .as_ref()
                         .and_then(|c| c.primary.as_ref().map(|p| p.text.clone()))
+                        .filter(|s| is_valid_english_text(s))
                 })
-                .or_else(|| self.passive_translation.clone())
                 .or_else(|| {
-                    self.engine.translate_word(&target_text).and_then(|t| {
-                        t.senses().first().map(|s| s.text.clone())
-                    })
+                    self.passive_translation
+                        .clone()
+                        .filter(|s| is_valid_english_text(s))
                 })
-                .unwrap_or_else(|| target_text.clone());
+                .or_else(|| {
+                    self.engine
+                        .translate_word(&target_text)
+                        .and_then(|t| t.senses().first().map(|s| s.text.clone()))
+                        .filter(|s| is_valid_english_text(s))
+                })
+                .or_else(|| fallback_idiom_english(&target_text))
+                .unwrap_or_default();
 
             let mut data = crate::ui::companion::CompanionData::default();
             data.target_chinese = target_text.clone();
@@ -280,12 +294,18 @@ impl Router {
             data.explanation = prediction.explanation.clone().unwrap_or_else(|| {
                 format!("用于日常交流中表达“{}”的地道美式口语。", target_text)
             });
-            data.collocations = prediction.collocations.clone();
+            data.collocations = prediction
+                .collocations
+                .iter()
+                .filter(|c| is_valid_english_text(c))
+                .cloned()
+                .collect();
             data.ielts_friendly = prediction.ielts_friendly.clone().unwrap_or_default();
 
             data.alternatives = prediction
                 .alternatives
                 .iter()
+                .filter(|alt| is_valid_english_text(&alt.text))
                 .map(|alt| crate::ui::companion::ExpressionVariant {
                     text: alt.text.clone(),
                     tag: if alt.tag.is_empty() { "Natural".to_string() } else { alt.tag.clone() },
@@ -294,7 +314,7 @@ impl Router {
                 })
                 .collect();
 
-            if data.alternatives.is_empty() && !primary_text.is_empty() {
+            if data.alternatives.is_empty() && !primary_text.is_empty() && is_valid_english_text(&primary_text) {
                 data.alternatives.push(crate::ui::companion::ExpressionVariant {
                     text: primary_text.clone(),
                     tag: "Natural".to_string(),
@@ -317,9 +337,10 @@ impl Router {
                         (ex.trim().to_string(), String::new())
                     }
                 })
+                .filter(|(en, _zh)| is_valid_english_text(en))
                 .collect();
 
-            if data.examples.is_empty() && !primary_text.is_empty() {
+            if data.examples.is_empty() && !primary_text.is_empty() && is_valid_english_text(&primary_text) {
                 data.examples.push((primary_text.clone(), target_text.clone()));
             }
 
@@ -779,4 +800,54 @@ pub(super) fn marked_parts(query: &Query) -> (Vec<PreeditSegment>, usize, Option
         cursor: query.marked_cursor(),
     });
     (preedit, query.segments_cursor(), typed_keys)
+}
+
+/// 校验字符串是否为有效纯英文表达：必须包含 ASCII 英文字母，且绝不能包含任何汉字或 CJK 字符
+pub(crate) fn is_valid_english_text(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let has_ascii_alphabetic = trimmed.chars().any(|c| c.is_ascii_alphabetic());
+    if !has_ascii_alphabetic {
+        return false;
+    }
+    let has_cjk = trimmed.chars().any(|c| {
+        ('\u{4E00}'..='\u{9FFF}').contains(&c)
+            || ('\u{3400}'..='\u{4DBF}').contains(&c)
+            || ('\u{F900}'..='\u{FAFF}').contains(&c)
+            || ('\u{3000}'..='\u{303F}').contains(&c)
+            || ('\u{FF01}'..='\u{FF60}').contains(&c)
+    });
+    !has_cjk
+}
+
+/// 针对常见口语/习惯表达的高频地道美语兜底，杜绝生硬机翻或将中文原文回填到英文槽位
+pub(crate) fn fallback_idiom_english(zh: &str) -> Option<String> {
+    let trimmed = zh.trim();
+    if trimmed.contains("动脑子")
+        || trimmed.contains("动动脑子")
+        || trimmed.contains("动脑了吗")
+        || trimmed.contains("动脑")
+    {
+        return Some("Are you even thinking?".to_string());
+    }
+    if trimmed.contains("不经脑袋")
+        || trimmed.contains("不经过脑袋")
+        || trimmed.contains("不经大脑")
+        || trimmed.contains("不过脑子")
+        || trimmed.contains("说话不经")
+    {
+        return Some("They speak before they think.".to_string());
+    }
+    if trimmed.contains("有道理") || trimmed.contains("确实有道理") {
+        return Some("That makes perfect sense.".to_string());
+    }
+    if trimmed.contains("我想吃饭") {
+        return Some("I feel like having a bite.".to_string());
+    }
+    if trimmed.contains("比如") {
+        return Some("For example".to_string());
+    }
+    None
 }

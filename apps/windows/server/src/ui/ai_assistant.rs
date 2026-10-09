@@ -651,7 +651,6 @@ fn paint_ai_assistant(
     let user_text = if dark { rgb(241, 245, 249) } else { rgb(15, 23, 42) };
 
     let font_brand = create_font(px(14), FW_BOLD, false);
-    let font_model = create_font(px(11), FW_NORMAL, false);
     let font_btn = create_font(px(12), FW_NORMAL, false);
     let font_msg = create_font(px(13), FW_NORMAL, false);
     let font_msg_bold = create_font(px(13), FW_BOLD, false);
@@ -669,15 +668,7 @@ fn paint_ai_assistant(
     let mut hx = px(16);
     draw_text_gdi(hdc, font_brand, brand_color, hx, px(12), "✦");
     hx += px(16);
-    draw_text_gdi(hdc, font_brand, text_color, hx, px(12), "Qingjian AI");
-    hx += px(96);
-
-    // 模型 Badge
-    let badge_rect = RECT { left: hx, top: px(11), right: hx + px(90), bottom: px(33) };
-    super::candidates::view::fill_round_rect(hdc, badge_rect, if dark { rgb(51, 65, 85) } else { rgb(241, 245, 249) }, 4);
-    let badge_border = RECT { left: hx, top: px(11), right: hx + px(90), bottom: px(12) };
-    super::candidates::view::fill_rect(hdc, badge_border, card_border);
-    draw_text_gdi(hdc, font_model, sub_color, hx + px(8), px(14), "Qwen 2.5 · 7B");
+    draw_text_gdi(hdc, font_brand, text_color, hx, px(12), "青简 AI 助手");
 
     // 右侧 5 键操作群：新对话 ✎ | 置顶 📌 | 最小化 — | 最大化/还原 🗖/⧉ | 关闭 ✕
     let btn_w = px(28);
@@ -972,7 +963,6 @@ fn paint_ai_assistant(
 
     unsafe {
         let _ = DeleteObject(font_brand.into());
-        let _ = DeleteObject(font_model.into());
         let _ = DeleteObject(font_btn.into());
         let _ = DeleteObject(font_msg.into());
         let _ = DeleteObject(font_msg_bold.into());
