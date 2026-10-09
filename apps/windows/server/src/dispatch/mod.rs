@@ -259,6 +259,7 @@ impl Router {
     /// 关闭独立 AI Assistant 对话窗口
     pub(crate) fn close_ai_assistant(&mut self) {
         self.ai_assistant_open = false;
+        self.ai_stop_signal.store(true, Ordering::Relaxed);
         self.candidates.hide_ai_assistant();
     }
 

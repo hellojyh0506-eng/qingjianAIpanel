@@ -346,32 +346,44 @@ fn apply(
         UiCommand::AiAssistantShow(payload) => {
             let (anchor, initial_prompt) = *payload;
             if let Some(ai) = ai_assistant {
-                ai.show_or_focus(anchor, initial_prompt);
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    ai.show_or_focus(anchor, initial_prompt);
+                }));
             }
         }
         UiCommand::AiAssistantHide => {
             if let Some(ai) = ai_assistant {
-                ai.hide();
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    ai.hide();
+                }));
             }
         }
         UiCommand::AiAssistantChunk(chunk) => {
             if let Some(ai) = ai_assistant {
-                ai.append_stream_chunk(&chunk);
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    ai.append_stream_chunk(&chunk);
+                }));
             }
         }
         UiCommand::AiAssistantWebSources(sources) => {
             if let Some(ai) = ai_assistant {
-                ai.set_web_sources(sources);
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    ai.set_web_sources(sources);
+                }));
             }
         }
         UiCommand::AiAssistantFinish { ttft_ms, total_ms } => {
             if let Some(ai) = ai_assistant {
-                ai.finish_stream(ttft_ms, total_ms);
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    ai.finish_stream(ttft_ms, total_ms);
+                }));
             }
         }
         UiCommand::AiAssistantError(error) => {
             if let Some(ai) = ai_assistant {
-                ai.set_stream_error(&error);
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    ai.set_stream_error(&error);
+                }));
             }
         }
     }

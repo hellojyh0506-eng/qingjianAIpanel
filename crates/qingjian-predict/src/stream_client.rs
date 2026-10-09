@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
@@ -67,6 +67,7 @@ impl StreamChatClient {
         Self {
             http: reqwest::Client::builder()
                 .tcp_nodelay(true)
+                .connect_timeout(Duration::from_secs(10))
                 .build()
                 .unwrap_or_default(),
             base_url,

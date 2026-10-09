@@ -326,7 +326,7 @@ fn test_real_running_server_shui_yue_and_zhengliushui() {
         Ok(f) => f,
         Err(_) => return, // Server not running, skip
     };
-    let session = SessionId(999);
+    let session = SessionId(997);
     write_message(&mut client, &ClientMessage::OpenSession {
         session,
         app: None,

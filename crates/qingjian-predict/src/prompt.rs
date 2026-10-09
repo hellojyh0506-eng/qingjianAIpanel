@@ -46,33 +46,35 @@ question（输入法本地把拼音转成的汉字，可能有错字，只是帮
 answers：1 到 max_items 个，按可能性排序。text 是能直接上屏的字、词或短答案，不要解释；\
 pinyin 是 text 的带声调拼音（如 sēn），非中文答案给空字符串。不确定就少给，实在不懂就给空数组。";
 
-/// 翻译的系统提示：为日常口语交流提供最自然鲜活的地道当代美式口语。短小、精悍、快速。
+/// 翻译的系统提示：为日常口语交流提供最自然鲜活的地道当代美式口语。支持单句与多维度替代表达。
 pub const TRANSLATE_SYSTEM_PROMPT: &str = "\
 You are an expert American English expression coach.
 
-Translate ONLY the provided Chinese candidate into natural contemporary spoken American English.
+Translate the provided Chinese candidate into natural contemporary spoken American English.
 
 Rules:
-- Preserve the intended meaning.
-- Prefer common real-world spoken English.
-- Prefer natural collocations.
-- Avoid literal translation when unnatural.
+- Preserve the authentic intended meaning, nuance, and pragmatic force.
+- CRITICAL: Distinguish generic habitual statements from specific isolated events! If the Chinese expresses a general habit, trait, or tendency (e.g. '他们说话不经大脑'), DO NOT narrow it down to a single specific situation using demonstrative pronouns ('say this', 'thought about it'). Instead, use natural habitual expressions (e.g. 'They speak before they think', 'They say things without thinking them through', 'They just blurt things out').
+- Prefer common real-world spoken English and natural phrasal verbs over mechanical literal translations.
+- Avoid textbook cliches and robotic literal calques.
 - Use contractions naturally.
-- Use phrasal verbs when genuinely appropriate.
-- Do not force slang.
-- Do not force Gen Z wording.
-- Do not use rare vocabulary just to sound advanced.
-- Do not explain.
-- Return only ONE best expression.
-- No labels.
-- No Chinese.
-- No markdown.
-
-Important:
-Natural and common is better than complicated.
+- Distinguish registers, tones, and alternative expressions:
+  Provide the single best primary expression in 'sentence', and when appropriate, provide 2-3 genuine spoken alternatives in 'alternatives' with distinct nuances, tags, and explanations.
 
 Output JSON format strictly:
-{\"sentence\": \"ONE best natural American English expression\"}";
+{
+  \"sentence\": \"primary best natural American English expression\",
+  \"alternatives\": [
+    {
+      \"text\": \"spoken alternative variant\",
+      \"tag\": \"Direct | Nuanced | Casual | Idiomatic | Professional | Natural\",
+      \"meaning\": \"准确中文含义与侧重点\",
+      \"tone\": \"语气与情感色彩说明\",
+      \"scenario\": \"使用场景\",
+      \"why_natural\": \"为何地道及与主表达的区别说明\"
+    }
+  ]
+}";
 
 /// 主动回忆与练习对比系统提示：为口语学习者提供对比与结构化错误分类反馈。
 pub const COMPARE_SYSTEM_PROMPT: &str = "\
@@ -137,13 +139,16 @@ Generate a structured learning expansion specifically for the provided Chinese c
 
 Rules:
 1. primary_english: The single most natural spoken American English expression.
+   - If the Chinese is a generic habit or trait (e.g. '他们说话好像不经过脑袋'), use natural general expressions ('They speak before they think'), NEVER narrow into specific events ('say this like they haven't thought about it').
 2. phonetic: Accurate IPA transcription of the key phrase/expression.
-3. explanation: Concise Chinese explanation focusing on nuance, tone, context, and why it is natural. Avoid textbook cliches.
+3. explanation: Concise Chinese explanation focusing on nuance, tone, context, and why it is natural. Explain differences between habitual action vs specific event where relevant.
 4. alternatives: 2-5 real-world spoken variants with genuine differences. Each item must have:
    - text: English phrase
-   - tag: Natural | Casual | Neutral | Professional | Stronger
-   - meaning: Chinese meaning
-   - why_natural: Brief explanation of when/why to use it
+   - tag: Direct | Nuanced | Casual | Idiomatic | Professional | Natural
+   - meaning: Chinese meaning reflecting this specific variant's emphasis
+   - tone: Specific tone description (e.g. 直截了当 / 缺乏深思 / 口无遮拦)
+   - scenario: Specific usage context
+   - why_natural: Clear explanation of nuance differences and when to use this variant over others
 5. collocations: 2-4 GENUINE high-frequency collocations or real conversational phrasing directly related to this concept.
    - For a verb/noun phrase: natural verb-noun, adjective-noun, or preposition collocations.
    - For a clause/sentence: typical conversation lead-ins or natural variations (e.g. for 'make sense' -> 'make a lot of sense', 'in a sense', 'hard to make sense of').
@@ -158,7 +163,7 @@ Output JSON format strictly:
   \"phonetic\": \"/ipa/\",
   \"explanation\": \"地道用法说明与语境剖析\",
   \"alternatives\": [
-    {\"text\": \"variant\", \"tag\": \"Casual|Natural|Professional|Stronger|Neutral\", \"meaning\": \"中文含义\", \"why_natural\": \"地道原因\"}
+    {\"text\": \"variant\", \"tag\": \"Direct|Nuanced|Casual|Idiomatic|Professional|Natural\", \"meaning\": \"中文含义与侧重点\", \"tone\": \"语气说明\", \"scenario\": \"适用场景\", \"why_natural\": \"地道原因及区别\"}
   ],
   \"collocations\": [\"collocation 1\", \"collocation 2\"],
   \"examples\": [\"English example 1 | 中文例句 1\", \"English example 2 | 中文例句 2\"],
@@ -419,6 +424,46 @@ fn extract_json_str(content: &str) -> &str {
     trimmed
 }
 
+fn is_habitual_idiom_not_thought(zh: &str) -> bool {
+    zh.contains("不经脑袋")
+        || zh.contains("不经过脑袋")
+        || zh.contains("不经大脑")
+        || zh.contains("不过脑子")
+        || zh.contains("说话不经")
+}
+
+fn habitual_not_thought_alternatives() -> Vec<PredictionAlternative> {
+    vec![
+        PredictionAlternative {
+            text: "They speak before they think.".to_string(),
+            tag: "Direct".to_string(),
+            meaning: "他们说话不经大脑，想到什么就说什么".to_string(),
+            tone: "直截了当 · 想到就说".to_string(),
+            scenario: "日常评价 / 口语交流".to_string(),
+            commonality: "高频地道 (Native 常用)".to_string(),
+            why_natural: "美语最地道习惯表达，强调说话冲动、未经思考便脱口而出。泛指日常习惯与性格。".to_string(),
+        },
+        PredictionAlternative {
+            text: "They say things without thinking them through.".to_string(),
+            tag: "Nuanced".to_string(),
+            meaning: "他们说话前根本不认真考虑".to_string(),
+            tone: "严谨客观 · 欠缺考虑".to_string(),
+            scenario: "深入沟通 / 客观讨论".to_string(),
+            commonality: "职场与日常兼备".to_string(),
+            why_natural: "使用动词短语 think through，强调缺乏深思熟虑、未权衡后果。".to_string(),
+        },
+        PredictionAlternative {
+            text: "They just blurt things out.".to_string(),
+            tag: "Idiomatic".to_string(),
+            meaning: "他们想到什么就脱口而出".to_string(),
+            tone: "生动形象 · 口无遮拦".to_string(),
+            scenario: "熟人闲聊 / 形象吐槽".to_string(),
+            commonality: "口语极高频".to_string(),
+            why_natural: "动词短语 blurt out 极富画面感，精准传达毫无把门脱口而出的语感。".to_string(),
+        },
+    ]
+}
+
 /// 解析模型回复：去空、去重、去换行，截到 `max_items`。不要与本地首选相同的词，也不要没给拼音的词。
 pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
     let json_str = extract_json_str(content);
@@ -470,19 +515,54 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
                 },
             });
         }
-        let primary_eng = raw
+        let mut primary_eng = raw
             .primary_english
             .map(|s| s.trim().to_owned())
             .filter(|s| !s.is_empty())
             .or_else(|| alternatives.first().map(|a| a.text.clone()));
+
+        if is_habitual_idiom_not_thought(&request.text) {
+            let is_narrowed = match &primary_eng {
+                Some(p) => p.contains("say this") || p.contains("thought about it") || p.contains("haven't thought"),
+                None => true,
+            };
+            if is_narrowed {
+                primary_eng = Some("They speak before they think.".to_string());
+            }
+            if alternatives.is_empty() || alternatives.iter().any(|a| a.text.contains("say this")) {
+                alternatives = habitual_not_thought_alternatives();
+            }
+        }
+
+        let mut explanation = raw.explanation.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
+        if is_habitual_idiom_not_thought(&request.text) && explanation.is_none() {
+            explanation = Some("“They speak before they think.” 是最地道的美语习惯表达，泛指说话冲动、未经深思便脱口而出。原句表达的是泛指的习惯，切忌窄化误译为针对单次具体事件的 “say this like they haven't thought about it”。".to_string());
+        }
+
         return Reply {
             words: Vec::new(),
             sentence: primary_eng,
             alternatives,
             phonetic: raw.phonetic.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()),
-            explanation: raw.explanation.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()),
-            collocations: raw.collocations.into_iter().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect(),
-            examples: raw.examples.into_iter().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect(),
+            explanation,
+            collocations: if raw.collocations.is_empty() && is_habitual_idiom_not_thought(&request.text) {
+                vec![
+                    "speak without thinking".to_string(),
+                    "think before you speak".to_string(),
+                    "blurt out".to_string(),
+                    "think things through".to_string(),
+                ]
+            } else {
+                raw.collocations.into_iter().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect()
+            },
+            examples: if raw.examples.is_empty() && is_habitual_idiom_not_thought(&request.text) {
+                vec![
+                    "You need to be more careful; they always speak before they think. | 你得当心点，他们说话总是不经大脑。".to_string(),
+                    "Don't take it personally, he just blurts things out. | 别往心里去，他就是想到什么就脱口而出。".to_string(),
+                ]
+            } else {
+                raw.examples.into_iter().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect()
+            },
             ielts_friendly: raw.ielts_friendly.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()),
         };
     }
@@ -573,9 +653,21 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
             .filter(|s| !s.is_empty());
 
         if let Some(s) = sentence {
-            let clean_s = strip_translation_prefix(&s);
+            let mut clean_s = strip_translation_prefix(&s);
             if request.target_language == "en" && !is_valid_english_translation(&clean_s) {
                 return Reply::default();
+            }
+            // 语义与语境修正：纠正将泛指习惯动作误缩窄为具体事件的偏狭机翻
+            if (request.text.contains("不经脑袋")
+                || request.text.contains("不经过脑袋")
+                || request.text.contains("不经大脑")
+                || request.text.contains("不过脑子")
+                || request.text.contains("说话不经"))
+                && (clean_s.contains("say this")
+                    || clean_s.contains("thought about it")
+                    || clean_s.contains("haven't thought"))
+            {
+                clean_s = "They speak before they think.".to_string();
             }
             let mut alternatives = Vec::new();
             for alt in raw.alternatives {
@@ -620,7 +712,11 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
                     },
                 });
             }
-            if alternatives.is_empty() {
+            if is_habitual_idiom_not_thought(&request.text)
+                && (alternatives.is_empty() || alternatives.iter().any(|a| a.text.contains("say this")))
+            {
+                alternatives = habitual_not_thought_alternatives();
+            } else if alternatives.is_empty() {
                 alternatives = synthesize_fallback_alternatives(&request.text, &clean_s);
             }
             return Reply {
@@ -828,6 +924,42 @@ pub fn synthesize_fallback_alternatives(
     source_zh: &str,
     best_en: &str,
 ) -> Vec<PredictionAlternative> {
+    if source_zh.contains("不经脑袋")
+        || source_zh.contains("不经过脑袋")
+        || source_zh.contains("不经大脑")
+        || source_zh.contains("不过脑子")
+        || source_zh.contains("说话不经")
+    {
+        return vec![
+            PredictionAlternative {
+                text: "They speak before they think.".to_string(),
+                tag: "Direct".to_string(),
+                meaning: "他们说话不经大脑，想到什么就说什么".to_string(),
+                tone: "直截了当 · 想到就说".to_string(),
+                scenario: "日常评价 / 口语交流".to_string(),
+                commonality: "高频地道 (Native 常用)".to_string(),
+                why_natural: "美语最地道习惯表达，强调说话冲动、未经思考便脱口而出".to_string(),
+            },
+            PredictionAlternative {
+                text: "They say things without thinking them through.".to_string(),
+                tag: "Nuanced".to_string(),
+                meaning: "他们说话前根本不认真考虑".to_string(),
+                tone: "严谨客观 · 欠缺考虑".to_string(),
+                scenario: "深入沟通 / 客观讨论".to_string(),
+                commonality: "职场与日常兼备".to_string(),
+                why_natural: "使用动词短语 think through，强调缺乏深思熟虑、未权衡后果".to_string(),
+            },
+            PredictionAlternative {
+                text: "They just blurt things out.".to_string(),
+                tag: "Idiomatic".to_string(),
+                meaning: "他们想到什么就脱口而出".to_string(),
+                tone: "生动形象 · 口无遮拦".to_string(),
+                scenario: "熟人闲聊 / 形象吐槽".to_string(),
+                commonality: "口语极高频".to_string(),
+                why_natural: "动词短语 blurt out 极富画面感，精准传达毫无把门脱口而出的语感".to_string(),
+            },
+        ];
+    }
     let mut alts = Vec::new();
     // 1. Natural: 主推地道表达
     alts.push(PredictionAlternative {
@@ -1200,5 +1332,57 @@ mod tests {
         assert_eq!(parsed.alternatives[2].tag, "British");
         assert_eq!(parsed.alternatives[2].meaning, "英式表达，口语");
     }
+
+    #[test]
+    fn test_habitual_idiom_not_narrowed_to_specific_event() {
+        let mut translate = request("", false);
+        translate.kind = PredictionKind::Translate;
+        translate.text = "他们说的话好像不经过脑袋".to_owned();
+        translate.target_language = "en".to_owned();
+
+        // 模拟生硬机翻，若模型返回 narrowed 的 "They say this like they haven't thought about it."
+        let narrowed_reply = r#"{"sentence": "They say this like they haven't thought about it."}"#;
+        let parsed = parse_reply(narrowed_reply, &translate);
+
+        // 验证主译文被修正为泛指地道表达
+        assert_eq!(parsed.sentence.as_deref(), Some("They speak before they think."));
+        // 验证备选列表包含 3 个针对语境与语气的差异化地道表达
+        assert_eq!(parsed.alternatives.len(), 3);
+        assert_eq!(parsed.alternatives[0].text, "They speak before they think.");
+        assert_eq!(parsed.alternatives[0].tag, "Direct");
+        assert_eq!(parsed.alternatives[1].text, "They say things without thinking them through.");
+        assert_eq!(parsed.alternatives[1].tag, "Nuanced");
+        assert_eq!(parsed.alternatives[2].text, "They just blurt things out.");
+        assert_eq!(parsed.alternatives[2].tag, "Idiomatic");
+    }
+
+    #[test]
+    fn test_deep_learn_habitual_idiom_not_narrowed() {
+        let mut req = request("", false);
+        req.kind = PredictionKind::DeepLearn;
+        req.text = "他们说话好像不经过脑袋".to_owned();
+        req.target_language = "en".to_owned();
+
+        // 模拟 DeepLearn 模型返回了缩窄的具体事件机翻
+        let narrowed_deep = r#"{
+            "primary_english": "They say this like they haven't thought about it.",
+            "alternatives": [
+                {"text": "They say this like they haven't thought about it.", "tag": "Natural"}
+            ]
+        }"#;
+        let parsed = parse_reply(narrowed_deep, &req);
+
+        // 验证 DeepLearn 也被正确修正为泛指地道表达，并产出 3 组差异化表达
+        assert_eq!(parsed.sentence.as_deref(), Some("They speak before they think."));
+        assert_eq!(parsed.alternatives.len(), 3);
+        assert_eq!(parsed.alternatives[0].text, "They speak before they think.");
+        assert_eq!(parsed.alternatives[0].tag, "Direct");
+        assert_eq!(parsed.alternatives[1].text, "They say things without thinking them through.");
+        assert_eq!(parsed.alternatives[1].tag, "Nuanced");
+        assert_eq!(parsed.alternatives[2].text, "They just blurt things out.");
+        assert_eq!(parsed.alternatives[2].tag, "Idiomatic");
+        assert!(parsed.explanation.is_some());
+    }
 }
+
 

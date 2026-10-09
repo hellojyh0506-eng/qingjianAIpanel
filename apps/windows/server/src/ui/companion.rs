@@ -18,7 +18,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     LoadCursorW, MA_NOACTIVATE, SW_HIDE, SW_SHOWNA, SendMessageW, ShowWindow,
     WM_EXITSIZEMOVE, WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_MOVE, WM_NCHITTEST,
     WM_NCLBUTTONDOWN, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP,
+    WS_POPUP,
 };
 use windows::core::{PCWSTR, Result, w};
 
@@ -99,6 +99,7 @@ pub struct CompanionWindow {
     current_width: Cell<i32>,
     current_height: Cell<i32>,
     dark: Cell<bool>,
+    pub is_pinned: Cell<bool>,
     action_cb: Box<dyn Fn(CandidateAction)>,
 }
 
@@ -113,7 +114,7 @@ impl CompanionWindow {
         })?;
         let hwnd = unsafe {
             CreateWindowExW(
-                WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED,
+                WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED,
                 CLASS_NAME,
                 w!("Qingjian English Assistant"),
                 WS_POPUP,
@@ -135,6 +136,7 @@ impl CompanionWindow {
             current_width: Cell::new(420),
             current_height: Cell::new(280),
             dark: Cell::new(false),
+            is_pinned: Cell::new(false),
             action_cb,
         });
         COMPANIONS.with(|c| c.borrow_mut().insert(hwnd.0 as isize, Rc::clone(&instance)));
@@ -230,11 +232,26 @@ impl CompanionWindow {
                 background: bg_color,
                 corner_radius: 12,
                 paint: &|hdc, client| {
-                    paint_companion(hdc, &data, client, self.dark.get(), scale);
+                    paint_companion(hdc, &data, client, self.dark.get(), scale, self.is_pinned.get());
                 },
             },
         )?;
-        let _ = unsafe { ShowWindow(self.hwnd, SW_SHOWNA) };
+        let is_pinned = self.is_pinned.get();
+        unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::SetWindowPos(
+                self.hwnd,
+                if is_pinned {
+                    Some(windows::Win32::UI::WindowsAndMessaging::HWND_TOPMOST)
+                } else {
+                    Some(windows::Win32::UI::WindowsAndMessaging::HWND_NOTOPMOST)
+                },
+                0, 0, 0, 0,
+                windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
+                    | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
+                    | windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE,
+            );
+            let _ = ShowWindow(self.hwnd, SW_SHOWNA);
+        }
         Ok(())
     }
 }
@@ -292,7 +309,7 @@ fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
     COLORREF((r as u32) | ((g as u32) << 8) | ((b as u32) << 16))
 }
 
-fn paint_companion(hdc: HDC, data: &CompanionData, client: RECT, dark: bool, scale: f32) {
+fn paint_companion(hdc: HDC, data: &CompanionData, client: RECT, dark: bool, scale: f32, is_pinned: bool) {
     unsafe { SetBkMode(hdc, TRANSPARENT) };
 
     let px = |val: i32| (val as f32 * scale).round() as i32;
@@ -320,7 +337,7 @@ fn paint_companion(hdc: HDC, data: &CompanionData, client: RECT, dark: bool, sca
         _ => "English Assistant · 学习助手",
     };
     draw_text_gdi(hdc, font_title, sub_color, px(16), px(10), title_text);
-    draw_text_gdi(hdc, font_title, sub_color, client.right - px(48), px(10), "📌");
+    draw_text_gdi(hdc, font_title, if is_pinned { brand_color } else { sub_color }, client.right - px(48), px(10), "📌");
     draw_text_gdi(hdc, font_title, sub_color, client.right - px(22), px(10), "×");
 
     // 2. 焦点表达信息
@@ -374,8 +391,11 @@ fn paint_companion(hdc: HDC, data: &CompanionData, client: RECT, dark: bool, sca
                     draw_text_gdi(hdc, font_body, sub_color, px(16), y, &idx_str);
                     let w = draw_text_gdi(hdc, font_body, text_color, px(32), y, &alt.text);
 
-                    // Register 胶囊 (Natural / Casual / Professional / Stronger / Neutral)
+                    // Register 胶囊 (Direct / Nuanced / Idiomatic / Natural / Casual / Professional / Stronger / Neutral)
                     let (badge_bg_col, badge_text_col) = match alt.tag.as_str() {
+                        "Direct" | "直接" => (rgb(224, 242, 254), rgb(2, 132, 199)),
+                        "Nuanced" | "微殊" => (rgb(237, 233, 254), rgb(124, 58, 237)),
+                        "Idiomatic" | "习语" => (rgb(254, 243, 199), rgb(217, 119, 6)),
                         "Casual" | "口语" => (rgb(254, 247, 224), rgb(176, 96, 0)),
                         "Natural" | "地道" => (rgb(230, 244, 234), rgb(19, 115, 51)),
                         "Neutral" | "中性" => (rgb(232, 240, 254), rgb(26, 115, 232)),
@@ -682,12 +702,36 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 let w = comp.current_width.get();
 
                 // 1. 关闭按钮 (右上角)
-                if cx >= w - px(36) && cx <= w && cy <= px(32) {
+                if cx >= w - px(30) && cx <= w && cy <= px(32) {
                     comp.hide();
                     return LRESULT(0);
                 }
 
-                // 2. 标题栏可拖动区域 (cy <= 32 且未点击关闭按钮) -> 原生拖动
+                // 2. 置顶图钉 (cx in w - px(56) .. w - px(30))
+                if cx >= w - px(56) && cx < w - px(30) && cy <= px(32) {
+                    let pinned = !comp.is_pinned.get();
+                    comp.is_pinned.set(pinned);
+                    unsafe {
+                        let _ = windows::Win32::UI::WindowsAndMessaging::SetWindowPos(
+                            hwnd,
+                            if pinned {
+                                Some(windows::Win32::UI::WindowsAndMessaging::HWND_TOPMOST)
+                            } else {
+                                Some(windows::Win32::UI::WindowsAndMessaging::HWND_NOTOPMOST)
+                            },
+                            0, 0, 0, 0,
+                            windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
+                                | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
+                                | windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE,
+                        );
+                    }
+                    if let Some(anchor) = comp.last_anchor.get() {
+                        let _ = comp.show_at(anchor);
+                    }
+                    return LRESULT(0);
+                }
+
+                // 3. 标题栏可拖动区域 (cy <= 32 且未点击按钮) -> 原生拖动
                 if cy <= px(32) {
                     unsafe {
                         let _ = ReleaseCapture();

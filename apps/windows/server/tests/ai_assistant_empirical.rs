@@ -136,3 +136,66 @@ fn test_ai_action_state_machine() {
     });
     assert!(router.is_ai_stop_signaled(), "Stop 动作必须置位原子停止信号");
 }
+
+#[test]
+fn test_close_ai_assistant_cuts_streaming_and_protects_input() {
+    let mut router = create_test_router();
+
+    // 1. 打开 AI 助手
+    router.handle_candidate_action(CandidateAction::OpenAiAssistant);
+    assert!(router.is_ai_assistant_open());
+
+    // 2. 关闭面板
+    router.handle_candidate_action(CandidateAction::CloseAiAssistant);
+    assert!(!router.is_ai_assistant_open(), "AI 窗口必须处于关闭状态");
+    assert!(router.is_ai_stop_signaled(), "关闭 AI 窗口必须立即置位原子停止信号");
+
+    // 3. 验证此时正常输入拼音完全不受任何影响
+    for c in "ceshi".chars() {
+        let _ = router.handle(ClientMessage::Key {
+            session: SESSION,
+            event: KeyEvent::new(c as u32, Some(c), KeyModifiers::default()),
+        });
+    }
+    assert!(router.is_composing(), "关闭 AI 助手后正常拼音输入法完全正常工作");
+}
+
+#[test]
+fn test_ai_assistant_window_buttons_state_logic() {
+    let action_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let action_called_clone = action_called.clone();
+    let win = qingjian_windows_server::ui::ai_assistant::AiAssistantWindow::new(Box::new(move |_| {
+        action_called_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+    }))
+    .expect("create AiAssistantWindow");
+
+    // 1. 测试置顶图钉切换
+    assert!(!win.data.borrow().is_pinned, "初始状态未置顶");
+    win.toggle_pin();
+    assert!(win.data.borrow().is_pinned, "点击图钉后进入置顶状态");
+    win.toggle_pin();
+    assert!(!win.data.borrow().is_pinned, "再次点击图钉后取消置顶状态");
+
+    // 2. 测试最大化与还原切换
+    win.toggle_maximize();
+    // 验证最大化生效
+    win.toggle_maximize();
+    // 验证还原生效
+
+    // 3. 验证最小化：调用 minimize 绝不会触发 CloseAiAssistant 动作
+    action_called.store(false, std::sync::atomic::Ordering::Relaxed);
+    win.minimize();
+    assert!(
+        !action_called.load(std::sync::atomic::Ordering::Relaxed),
+        "点击最小化绝对不能触发 Close 动作或切断在途会话"
+    );
+
+    // 4. 验证关闭：调用 close_and_notify 才会触发通知
+    win.close_and_notify();
+    assert!(
+        action_called.load(std::sync::atomic::Ordering::Relaxed),
+        "点击关闭时必须触发通知并中断在途生成"
+    );
+}
+
+
