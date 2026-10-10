@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use qingjian_core::candidate::Language;
 use qingjian_core::{
-    Prediction, PredictionAlternative, PredictionKind, PredictionPolicy, PredictionRequest,
-    Predictor,
+    CloudWord, Prediction, PredictionAlternative, PredictionKind, PredictionPolicy,
+    PredictionRequest, Predictor,
 };
 use qingjian_platform::LearningMode;
 use qingjian_platform::protocol::{
@@ -87,6 +87,33 @@ fn create_test_router(
     (router, requests, response)
 }
 
+fn latest_translate_request(
+    router: &mut Router,
+    requests: &Arc<Mutex<Vec<PredictionRequest>>>,
+    response: &Arc<Mutex<Option<Prediction>>>,
+) -> PredictionRequest {
+    let mut request = requests.lock().unwrap().last().cloned().expect("request exists");
+    if request.kind == PredictionKind::Rerank {
+        let words = request.candidates.iter().cloned().map(|text| CloudWord {
+            text,
+            syllables: Vec::new(),
+            reading: None,
+        }).collect();
+        *response.lock().unwrap() = Some(Prediction {
+            sequence: request.sequence,
+            words,
+            sentence: None,
+            alternatives: Vec::new(),
+            ..Default::default()
+        });
+        router.tick();
+        let _ = router.handle(ClientMessage::Poll { session: SESSION });
+        request = requests.lock().unwrap().last().cloned().expect("Translate follows Rerank");
+    }
+    assert_eq!(request.kind, PredictionKind::Translate);
+    request
+}
+
 fn type_letters(router: &mut Router, letters: &str) {
     for c in letters.chars() {
         let event = KeyEvent::new(c as u32, Some(c), KeyModifiers::default());
@@ -105,8 +132,7 @@ fn test_scenario_01_standard_chinese_learning_card() {
 
     type_letters(&mut router, "tachongdianlema");
 
-    let last_req = requests.lock().unwrap().last().cloned().expect("发出了请求");
-    assert_eq!(last_req.kind, PredictionKind::Translate);
+    let last_req = latest_translate_request(&mut router, &requests, &response);
 
     // 候选窗口此时处于 Loading 状态，Layer 1 & 2 中文候选完全正常
     let poll_msg = router.handle(ClientMessage::Poll { session: SESSION });
@@ -195,8 +221,7 @@ fn test_scenario_02_henan_dialect_spoken_learning_card() {
 
     // 1. 测试 "woritage"
     type_letters(&mut router, "woritage");
-    let req = requests.lock().unwrap().last().cloned().expect("发出了请求");
-    assert_eq!(req.kind, PredictionKind::Translate);
+    let req = latest_translate_request(&mut router, &requests, &response);
 
     *response.lock().unwrap() = Some(Prediction {
         sequence: req.sequence,
@@ -242,8 +267,7 @@ fn test_scenario_03_disambiguation_chinese_learning_card() {
     let (mut router, requests, response) = create_test_router(LearningMode::Learn);
 
     type_letters(&mut router, "jie'ou");
-    let req = requests.lock().unwrap().last().cloned().expect("发出了请求");
-    assert_eq!(req.kind, PredictionKind::Translate);
+    let req = latest_translate_request(&mut router, &requests, &response);
     assert_eq!(req.text, "解耦");
 
     *response.lock().unwrap() = Some(Prediction {
@@ -289,7 +313,7 @@ fn test_scenario_04_highlight_shift_stale_rejection() {
     let (mut router, requests, response) = create_test_router(LearningMode::Learn);
 
     type_letters(&mut router, "jie'ou");
-    let req1 = requests.lock().unwrap().last().cloned().expect("第1个请求");
+    let req1 = latest_translate_request(&mut router, &requests, &response);
     assert_eq!(req1.text, "解耦");
 
     // 用户按方向键下移高亮到第 2 个候选词
@@ -335,7 +359,7 @@ fn test_scenario_05_progressive_disclosure_and_breakdown() {
     let (mut router, requests, response) = create_test_router(LearningMode::Learn);
 
     type_letters(&mut router, "xianqian");
-    let req = requests.lock().unwrap().last().cloned().expect("发出了请求");
+    let req = latest_translate_request(&mut router, &requests, &response);
 
     *response.lock().unwrap() = Some(Prediction {
         sequence: req.sequence,
@@ -410,9 +434,10 @@ fn test_scenario_05_progressive_disclosure_and_breakdown() {
 /// Scenario 6: Daily Mode Fast Translation
 #[test]
 fn test_scenario_06_daily_mode_zero_overhead_isolation() {
-    let (mut router, requests, _) = create_test_router(LearningMode::Daily);
+    let (mut router, requests, response) = create_test_router(LearningMode::Daily);
 
     type_letters(&mut router, "nihao");
+    let _ = latest_translate_request(&mut router, &requests, &response);
 
     // Daily 模式下支持快速日常口语单句翻译
     let reqs = requests.lock().unwrap();

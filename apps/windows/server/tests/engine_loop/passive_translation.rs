@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use qingjian_core::candidate::Language;
 use qingjian_core::{
-    Prediction, PredictionKind, PredictionPolicy, PredictionRequest, Predictor,
+    CloudWord, Prediction, PredictionKind, PredictionPolicy, PredictionRequest, Predictor,
 };
 use qingjian_platform::protocol::{
     ClientMessage, KeyEvent, KeyOutcome, ServerMessage,
@@ -68,6 +68,97 @@ fn router_with_mock_predictor() -> (Router, Arc<Mutex<Vec<PredictionRequest>>>, 
     (router, requests, response)
 }
 
+fn router_with_mock_predictor_intent_only() -> (Router, Arc<Mutex<Vec<PredictionRequest>>>, Arc<Mutex<Option<Prediction>>>) {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let response = Arc::new(Mutex::new(None));
+
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let dict = root.join("assets/sample/dict.tsv");
+    let glossary = root.join("assets/sample/glossary-en.tsv");
+    let mut engine = assembly::assemble(&AssemblySpec {
+        glossary: Some((Language::English, glossary)),
+        english: Some(root.join("assets/sample/english.tsv")),
+        ..AssemblySpec::new(dict)
+    })
+    .expect("assemble engine from sample data");
+    engine.set_predictor(Box::new(MockPredictor {
+        requests: Arc::clone(&requests),
+        response: Arc::clone(&response),
+    }));
+    let mut router = Router::new(
+        engine,
+        RouterConfig {
+            learning_language_off: true,
+            ..RouterConfig::default()
+        },
+    );
+    open_session(&mut router, SESSION, None);
+    (router, requests, response)
+}
+
+fn latest_translate_request(
+    router: &mut Router,
+    requests: &Arc<Mutex<Vec<PredictionRequest>>>,
+    response: &Arc<Mutex<Option<Prediction>>>,
+) -> PredictionRequest {
+    let mut request = requests.lock().unwrap().last().cloned().expect("request exists");
+    if request.kind == PredictionKind::Rerank {
+        let words = request
+            .candidates
+            .iter()
+            .cloned()
+            .map(|text| CloudWord {
+                text,
+                syllables: Vec::new(),
+                reading: None,
+            })
+            .collect();
+        *response.lock().unwrap() = Some(Prediction {
+            sequence: request.sequence,
+            words,
+            sentence: None,
+            alternatives: Vec::new(),
+            ..Default::default()
+        });
+        router.tick();
+        let _ = router.handle(ClientMessage::Poll { session: SESSION });
+        request = requests.lock().unwrap().last().cloned().expect("translate request follows rerank");
+    }
+    assert_eq!(request.kind, PredictionKind::Translate);
+    request
+}
+
+#[test]
+fn long_typo_intent_is_validated_locally_and_only_commits_on_tab() {
+    let (mut router, requests, response) = router_with_mock_predictor_intent_only();
+    type_letters(&mut router, "kaifazhes");
+
+    let request = requests.lock().unwrap().last().cloned().expect("intent request");
+    assert_eq!(request.kind, PredictionKind::Intent);
+    assert_eq!(request.letters, "kaifazhes");
+    assert!(!request.want_sentence);
+    assert_eq!(request.max_items, 0);
+
+    *response.lock().unwrap() = Some(Prediction {
+        sequence: request.sequence,
+        sentence: Some("kaifazhe".to_owned()),
+        ..Default::default()
+    });
+    router.tick();
+    let _ = router.handle(ClientMessage::Poll { session: SESSION });
+    let frame = router.active_frame();
+    assert_eq!(frame.sentence.as_deref(), Some("开发者"));
+    assert!(preedit(&frame).contains('s'), "the user's actual input must remain unchanged");
+
+    let (outcome, commit, after) = press(
+        &mut router,
+        KeyEvent::new(0x09, Some('\t'), Default::default()),
+    );
+    assert_eq!(outcome, KeyOutcome::Consumed);
+    assert_eq!(commit.as_deref(), Some("开发者"));
+    assert!(after.is_empty());
+}
+
 #[test]
 fn test_local_glossary_passive_translation_space_commits_chinese_only() {
     let mut router = router();
@@ -125,7 +216,7 @@ fn test_cloud_passive_translation_when_no_local_gloss_displayed_and_space_commit
     assert!(first.translation.is_none(), "无本地释义");
 
     // 检查是否发出了 Translate 类型的请求
-    let last_req = requests.lock().unwrap().last().cloned().expect("发出了请求");
+    let last_req = latest_translate_request(&mut router, &requests, &response);
     assert_eq!(last_req.kind, PredictionKind::Translate);
     assert_eq!(last_req.text, "先前");
     assert_eq!(last_req.target_language, "en");
@@ -168,7 +259,7 @@ fn test_ctrl_1_commits_passive_translation() {
     let (mut router, requests, response) = router_with_mock_predictor();
 
     type_letters(&mut router, "xianqian");
-    let last_req = requests.lock().unwrap().last().cloned().expect("发出了请求");
+    let last_req = latest_translate_request(&mut router, &requests, &response);
     *response.lock().unwrap() = Some(Prediction {
         sequence: last_req.sequence,
         words: Vec::new(),
@@ -384,7 +475,7 @@ fn test_chongddren_passive_translation_strictly_binds_to_candidate_text_never_su
     // 3. 验证发出的云端翻译请求：
     //    - 目标文本必须是当前候选词 "充电的人"
     //    - 严格隔离：before 必须为空字符串，绝对不能包含历史前文
-    let req = requests.lock().unwrap().last().cloned().expect("必须触发被动翻译请求");
+    let req = latest_translate_request(&mut router, &requests, &response);
     assert_eq!(req.kind, qingjian_core::PredictionKind::Translate);
     assert_eq!(req.text, "充电的人");
     assert!(

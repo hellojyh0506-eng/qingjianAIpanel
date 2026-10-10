@@ -74,6 +74,7 @@ impl Worker {
             let mut req = request;
             let effective_debounce = match req.kind {
                 qingjian_core::PredictionKind::Compare => Duration::from_millis(0),
+                qingjian_core::PredictionKind::Intent => Duration::from_millis(220),
                 _ => self.debounce,
             };
             if !effective_debounce.is_zero() {

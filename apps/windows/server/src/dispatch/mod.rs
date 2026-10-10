@@ -106,6 +106,7 @@ pub struct Router {
 
     /// 整句补全（preedit 右侧、Tab 上屏）；缓冲变化时清空。
     sentence: Option<String>,
+    pending_intent: bool,
 
     /// 删候选后的屏幕提示，随下一帧下发、下一次按键清。
     notice: Option<String>,
@@ -208,6 +209,7 @@ impl Router {
             pending_selection: None,
             selection_seq: 0,
             sentence: None,
+            pending_intent: false,
             notice: None,
             highlight: 0,
             navigated: false,

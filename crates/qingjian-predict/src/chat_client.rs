@@ -75,6 +75,7 @@ impl ChatClient {
         let max_tokens = match request.kind {
             qingjian_core::PredictionKind::Translate => TRANSLATE_MAX_TOKENS,
             qingjian_core::PredictionKind::Compose => COMPOSE_MAX_TOKENS,
+            qingjian_core::PredictionKind::Intent => 96,
             qingjian_core::PredictionKind::Rerank => RERANK_MAX_TOKENS,
             qingjian_core::PredictionKind::Question => QUESTION_MAX_TOKENS,
             qingjian_core::PredictionKind::Compare => COMPARE_MAX_TOKENS,

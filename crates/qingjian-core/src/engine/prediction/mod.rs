@@ -30,6 +30,29 @@ pub use surrounding_text::SurroundingText;
 
 use super::*;
 
+fn within_edit_distance(left: &[u8], right: &[u8], limit: usize) -> bool {
+    if left.len().abs_diff(right.len()) > limit {
+        return false;
+    }
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    let mut current = vec![0; right.len() + 1];
+    for (i, left_byte) in left.iter().enumerate() {
+        current[0] = i + 1;
+        let mut row_min = current[0];
+        for (j, right_byte) in right.iter().enumerate() {
+            current[j + 1] = (previous[j + 1] + 1)
+                .min(current[j] + 1)
+                .min(previous[j] + usize::from(left_byte != right_byte));
+            row_min = row_min.min(current[j + 1]);
+        }
+        if row_min > limit {
+            return false;
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[right.len()] <= limit
+}
+
 impl Engine {
     /// 是否接了会联想的 Predictor；壳据此决定要不要起轮询定时器、画云朵标识。
     pub fn prediction_enabled(&self) -> bool {
@@ -52,6 +75,122 @@ impl Engine {
         candidates: &[Candidate],
     ) -> Option<u64> {
         self.request_prediction_inner(surrounding, candidates, false)
+    }
+
+    /// 请求 AI 判断长拼音的可能原意；结果须由本地读音和词典校验。
+    pub fn request_intent_suggestion(
+        &mut self,
+        surrounding: Option<SurroundingText>,
+        candidates: &[Candidate],
+    ) -> Option<u64> {
+        self.prediction_sequence += 1;
+        if !self.predictor.is_enabled()
+            || self.private
+            || self.english_mode
+            || self.shuangpin.is_some()
+            || self.zhuyin
+            || self.code.is_some()
+            || self.aux_filter().is_some()
+        {
+            return None;
+        }
+        let scope = self.composition.scope();
+        let letters = scope.to_ascii_lowercase();
+        if scope != letters || !(7..=64).contains(&letters.len())
+            || !letters.bytes().all(|byte| byte.is_ascii_lowercase())
+        {
+            return None;
+        }
+        if self.modes().is_expression(scope, self.zhuyin)
+            || self.modes().is_question(scope, self.zhuyin)
+            || is_raw(scope, self.modes(), self.shuangpin, self.zhuyin)
+        {
+            return None;
+        }
+        let policy = self.predictor.policy();
+        let before = surrounding
+            .map(|text| take_last_chars(&text.before, policy.before))
+            .unwrap_or_default();
+        let (pinyin, syllables, guess) = match segment_longest_prefix(&letters) {
+            Ok((segmentations, tail)) => (
+                query::join_marked(&segmentations, tail),
+                segmentations.first().map_or(0, |seg| seg.syllables.len()),
+                self.local_guess(&segmentations),
+            ),
+            Err(_) => (letters.clone(), 0, String::new()),
+        };
+        let local_candidates: Vec<String> = candidates
+            .iter()
+            .filter(|candidate| matches!(candidate.kind, CandidateKind::Chinese | CandidateKind::Sentence))
+            .map(|candidate| candidate.text.clone())
+            .filter(|text| !text.trim().is_empty())
+            .fold(Vec::new(), |mut acc, text| {
+                if !acc.contains(&text) && acc.len() < 9 {
+                    acc.push(text);
+                }
+                acc
+            });
+        let request = PredictionRequest {
+            sequence: self.prediction_sequence,
+            kind: PredictionKind::Intent,
+            before,
+            after: String::new(),
+            pinyin,
+            letters,
+            syllables,
+            current_expression: local_candidates.first().cloned().unwrap_or_default(),
+            candidates: local_candidates,
+            guess,
+            max_items: 0,
+            want_sentence: false,
+            text: String::new(),
+            target_language: String::new(),
+            user_attempt: String::new(),
+            reference: String::new(),
+        };
+        self.last_prediction_kind = PredictionKind::Intent;
+        self.last_prediction_scope = scope.to_owned();
+        self.predictor.submit(request);
+        Some(self.prediction_sequence)
+    }
+
+    pub fn resolve_intent_pinyin(&self, corrected_pinyin: &str) -> Option<String> {
+        if self.private || self.shuangpin.is_some() || self.zhuyin || self.code.is_some() {
+            return None;
+        }
+        let original = self.composition.scope();
+        if original.bytes().any(|byte| !byte.is_ascii_lowercase())
+            || !(7..=64).contains(&original.len())
+            || !correction::eligible(original)
+        {
+            return None;
+        }
+        let corrected = corrected_pinyin.trim();
+        if corrected.len() < 7
+            || corrected.len() > 64
+            || !corrected.bytes().all(|byte| byte.is_ascii_lowercase())
+            || corrected == original
+        {
+            return None;
+        }
+        let max_edits = if original.len() >= 40 { 5 } else if original.len() >= 16 { 4 } else if original.len() >= 10 { 3 } else { 2 };
+        if !within_edit_distance(original.as_bytes(), corrected.as_bytes(), max_edits) {
+            return None;
+        }
+        let segmentation = correction::complete_segmentation(corrected)?;
+        if segmentation.syllables.len() < 2 {
+            return None;
+        }
+        let conversion = self.convert_sentence(&segmentation.patterns(), false)?;
+        if conversion.has_placeholder()
+            || conversion.altered()
+            || conversion.text.trim().is_empty()
+            || conversion.syllables.concat() != corrected
+            || conversion.syllables.len() != segmentation.syllables.len()
+        {
+            return None;
+        }
+        Some(conversion.text)
     }
 
     /// 当前输入的受约束 AI 重排：最多检查本地候选前 27 项（约前三页），不生成新词或后文续写。
@@ -336,7 +475,14 @@ impl Engine {
                 || self.last_prediction_kind == PredictionKind::Compare;
             if prediction.sequence == self.prediction_sequence || is_learning {
                 // 问字的答案、翻译的译文和敲的拼音本来就对不上，只有组句联想的云端词要校验
-                if self.last_prediction_kind == PredictionKind::Question {
+                if self.last_prediction_kind == PredictionKind::Intent {
+                    prediction.sentence = prediction
+                        .sentence
+                        .take()
+                        .and_then(|pinyin| self.resolve_intent_pinyin(&pinyin));
+                    prediction.words.clear();
+                    prediction.alternatives.clear();
+                } else if self.last_prediction_kind == PredictionKind::Question {
                     let guess = &self.last_question_guess;
                     prediction
                         .words
@@ -520,6 +666,19 @@ impl Engine {
 
 /// 半数以上音节是缩写（声母 `f` 或未打完的前缀 `zho`）：这种输入下模型按声母凑词基本只会给生造词，
 /// 只问整句补全。`fhyq` → 符合要求 是缩写，`fuheyaoqiu` 不是，`nih`（两全一缩）也不是。
+#[cfg(test)]
+mod intent_validation_tests {
+    use super::within_edit_distance;
+
+    #[test]
+    fn intent_distance_is_bounded() {
+        assert!(within_edit_distance(b"nihooma", b"nihaoma", 2));
+        assert!(within_edit_distance(b"kaifazheh", b"kaifazhe", 2));
+        assert!(!within_edit_distance(b"kaifazheh", b"woxiangchi", 2));
+        assert!(!within_edit_distance(b"nihaoma", b"nihaomad", 0));
+    }
+}
+
 fn mostly_abbreviated(segmentation: &Segmentation) -> bool {
     let total = segmentation.syllables.len();
     total > 0

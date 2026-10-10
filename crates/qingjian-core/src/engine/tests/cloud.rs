@@ -69,6 +69,41 @@ fn question_mode_asks_the_cloud_and_shows_answers_unvalidated() {
 }
 
 #[test]
+fn intent_suggestion_uses_only_typed_letters_and_prefix_context() {
+    let submitted = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let mut engine = engine().with_predictor(Box::new(EchoPredictor {
+        submitted: submitted.clone(),
+        replies: Vec::new(),
+        sentence: true,
+    }));
+    engine.set_input("kaifazheh");
+    let surrounding = SurroundingText {
+        before: "我今天".into(),
+        after: "后文不可发送".into(),
+    };
+    assert_eq!(engine.request_intent_suggestion(Some(surrounding), &[]), Some(1));
+    let request = submitted.borrow()[0].clone();
+    assert_eq!(request.kind, PredictionKind::Intent);
+    assert_eq!(request.letters, "kaifazheh");
+    assert!(request.before.contains("我今天"));
+    assert!(request.after.is_empty());
+    assert!(!request.want_sentence);
+    assert_eq!(request.max_items, 0);
+}
+
+#[test]
+fn intent_pinyin_must_be_nearby_and_resolve_exactly_in_the_local_dictionary() {
+    let mut engine = engine();
+    engine.set_input("kaifazheh");
+    assert_eq!(
+        engine.resolve_intent_pinyin("kaifazhe").as_deref(),
+        Some("开发者")
+    );
+    assert!(engine.resolve_intent_pinyin("woxiangchi").is_none());
+    assert!(engine.resolve_intent_pinyin("kaifazhe!").is_none());
+}
+
+#[test]
 fn prediction_request_trims_context_and_only_fires_while_composing() {
     let submitted = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let mut engine = engine().with_predictor(Box::new(EchoPredictor {

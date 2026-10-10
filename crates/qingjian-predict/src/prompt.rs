@@ -184,9 +184,18 @@ pub const RERANK_SYSTEM_PROMPT: &str = r#"
 严格输出 JSON：{"candidate_order":["候选原文 1","候选原文 2"]}
 不输出解释、Markdown 或任何其它字段。
 "#;
+pub const INTENT_SYSTEM_PROMPT: &str = r#"
+你是青简拼音输入法的拼音纠错器。你只负责判断用户当前输入的长拼音最可能原本想拼成什么拼音。
+输入包含用户实际敲下的字母、当前本地切分、少量本地候选和光标前文。必须把整串字母作为一个整体理解，允许相邻键误触、相邻换位、遗漏或多敲字母；不要只根据开头猜词，也不要续写用户未输入的后文。
+只输出一个修正后的标准全拼字母串，音节之间不要加撇号。不要输出汉字、解释、候选列表或 Markdown。
+不要为了语义顺口而大幅改动输入。修正应与原始字母串接近；无法可靠判断时输出空字符串。
+严格输出 JSON：{"corrected_pinyin":"nihaoma"}
+"#;
+
 pub fn system_prompt(request: &PredictionRequest) -> &'static str {
     match request.kind {
         PredictionKind::Compose => SYSTEM_PROMPT,
+        PredictionKind::Intent => INTENT_SYSTEM_PROMPT,
         PredictionKind::Rerank => RERANK_SYSTEM_PROMPT,
         PredictionKind::Question => QUESTION_SYSTEM_PROMPT,
         PredictionKind::Translate => {
@@ -226,6 +235,16 @@ struct UserMessage<'a> {
 }
 
 /// 问字模式发给模型的用户消息。
+#[derive(Serialize)]
+struct IntentMessage<'a> {
+    letters: &'a str,
+    pinyin: &'a str,
+    before: &'a str,
+    current_expression: &'a str,
+    local_sentence: &'a str,
+    local_candidates: &'a [String],
+}
+
 #[derive(Serialize)]
 struct RerankMessage<'a> {
     letters: &'a str,
@@ -284,6 +303,17 @@ pub fn user_prompt(request: &PredictionRequest) -> String {
         return serde_json::to_string(&TranslateMessage {
             text: &request.text,
             target_language: &request.target_language,
+        })
+        .unwrap_or_default();
+    }
+    if request.kind == PredictionKind::Intent {
+        return serde_json::to_string(&IntentMessage {
+            letters: &request.letters,
+            pinyin: &request.pinyin,
+            before: &request.before,
+            current_expression: &request.current_expression,
+            local_sentence: &request.guess,
+            local_candidates: &request.candidates,
         })
         .unwrap_or_default();
     }
@@ -381,6 +411,8 @@ struct RawReply {
 
     /// Rerank 模式：必须是 local_candidates 的完整排列。
     candidate_order: Vec<String>,
+
+    corrected_pinyin: Option<String>,
 
     sentence: Option<String>,
     translation: Option<String>,
@@ -683,6 +715,15 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
     };
     if request.kind == PredictionKind::Question {
         return parse_answers(raw.answers, request.max_items);
+    }
+    if request.kind == PredictionKind::Intent {
+        let pinyin = raw.corrected_pinyin.unwrap_or_default().trim().to_ascii_lowercase();
+        if (7..=64).contains(&pinyin.len())
+            && pinyin.bytes().all(|byte| byte.is_ascii_lowercase())
+        {
+            return Reply { sentence: Some(pinyin), ..Reply::default() };
+        }
+        return Reply::default();
     }
     if request.kind == PredictionKind::Rerank {
         let expected = &request.candidates;
@@ -1384,6 +1425,27 @@ mod tests {
         assert!(prompt.contains("\"pinyin\":\"zhang'tao\""));
         assert!(prompt.contains("\"syllables\":2"));
         assert!(prompt.contains("\"local_candidates\":[\"张涛\",\"张贴\"]"));
+    }
+
+    #[test]
+    fn intent_prompt_and_parser_only_accept_a_pinyin_field() {
+        let mut req = request("nihooma", false);
+        req.kind = PredictionKind::Intent;
+        req.letters = "nihooma".into();
+        req.candidates = vec!["你好吗".into()];
+        req.current_expression = "你好吗".into();
+        req.guess = "你好吗".into();
+        assert_eq!(system_prompt(&req), INTENT_SYSTEM_PROMPT);
+        assert!(INTENT_SYSTEM_PROMPT.contains("\"corrected_pinyin\""));
+        let prompt: serde_json::Value = serde_json::from_str(&user_prompt(&req)).unwrap();
+        assert_eq!(prompt["letters"], "nihooma");
+        assert!(prompt.get("after").is_none());
+        assert_eq!(
+            parse_reply(r#"{"corrected_pinyin":"nihaoma"}"#, &req).sentence.as_deref(),
+            Some("nihaoma")
+        );
+        assert!(parse_reply(r#"{"corrected_pinyin":"你好吗"}"#, &req).sentence.is_none());
+        assert!(parse_reply(r#"{"corrected_pinyin":""}"#, &req).sentence.is_none());
     }
 
     #[test]

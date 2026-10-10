@@ -20,6 +20,7 @@ impl Router {
         self.highlight = 0;
         self.navigated = false;
         self.sentence = None;
+        self.pending_intent = false;
         self.passive_translation = None;
         self.passive_translation_target = None;
         self.passive_learning_card = None;
@@ -32,10 +33,23 @@ impl Router {
             return;
         }
         self.attach_loaded_model();
-        let built = self.engine.query().ok().map(|query| {
+        let typed_scope = self.engine.composition().scope().to_owned();
+        let query = self.engine.query().ok();
+        let intent_suspected = !self.engine.english_mode()
+            && !self.engine.raw_mode()
+            && !self.engine.question_mode()
+            && !self.engine.expression_mode()
+            && !self.is_private()
+            && should_request_intent(query.as_ref(), &typed_scope);
+        let intent_candidate_hints = query
+            .as_ref()
+            .map(|query| query.candidates.items.clone())
+            .unwrap_or_default();
+        let built = query.map(|query| {
             let (preedit, cursor, typed_keys) = marked_parts(&query);
             (query.candidates.items.clone(), preedit, cursor, typed_keys)
         });
+        let mut defer_intent_for_learning = false;
         self.composed = Some(match built {
             Some((items, preedit, cursor, typed_keys)) => {
                 let layout =
@@ -49,7 +63,11 @@ impl Router {
                 let first_target = layout.candidate(0).map(|c| c.text.clone());
                 if learning_on {
                     if let Some(target) = first_target {
-                        if self.passive_translation_target.as_ref() != Some(&target) {
+                        let target_changed = self.passive_translation_target.as_ref() != Some(&target);
+                        defer_intent_for_learning = intent_suspected
+                            && self.engine.prediction_enabled()
+                            && (target_changed || self.translation_start_time.is_some());
+                        if target_changed {
                             self.passive_translation = None;
                             self.generation_id = self.generation_id.wrapping_add(1);
                         }
@@ -111,11 +129,11 @@ impl Router {
                                 }
                             }
                         }
-                    } else if self.engine.prediction_enabled() {
+                    } else if self.engine.prediction_enabled() && !intent_suspected {
                         let surrounding = self.rerank_surrounding();
                         self.engine.request_rerank(surrounding, layout.local());
                     }
-                } else if self.engine.prediction_enabled() {
+                } else if self.engine.prediction_enabled() && !intent_suspected {
                     let surrounding = self.rerank_surrounding();
                     self.engine.request_rerank(surrounding, layout.local());
                 }
@@ -137,6 +155,11 @@ impl Router {
                 Composed::Raw { text, cursor }
             }
         });
+        self.pending_intent = defer_intent_for_learning;
+        if intent_suspected && self.engine.prediction_enabled() && !defer_intent_for_learning {
+            let surrounding = self.rerank_surrounding();
+            self.engine.request_intent_suggestion(surrounding, &intent_candidate_hints);
+        }
         self.schedule_rescoring();
     }
 
@@ -242,6 +265,15 @@ impl Router {
             }
             let shown = self.self_drawn_frame();
             self.reconcile_candidates(&shown);
+            return;
+        }
+        if self.engine.last_prediction_kind() == PredictionKind::Intent {
+            // 意图纠错只能显示经过 Core 本地拼音/词典验证的短语；用户按 Tab 再采用。
+            if !self.navigated && self.highlight == 0 {
+                self.sentence = prediction.sentence;
+                let shown = self.self_drawn_frame();
+                self.reconcile_candidates(&shown);
+            }
             return;
         }
         if self.engine.last_prediction_kind() == PredictionKind::Rerank {
@@ -624,6 +656,19 @@ impl Router {
                     );
                 }
             }
+            if self.pending_intent {
+                self.pending_intent = false;
+                let candidates = self
+                    .composed
+                    .as_ref()
+                    .and_then(|composed| match composed {
+                        Composed::Candidates { layout, .. } => Some(layout.local().to_vec()),
+                        Composed::Raw { .. } => None,
+                    })
+                    .unwrap_or_default();
+                let surrounding = self.rerank_surrounding();
+                self.engine.request_intent_suggestion(surrounding, &candidates);
+            }
             return;
         }
         if let Some(Composed::Candidates { layout, .. }) = self.composed.as_mut() {
@@ -652,6 +697,7 @@ impl Router {
         }
         let next = (self.highlight as isize + delta).clamp(0, count as isize - 1) as usize;
         if next != self.highlight {
+            self.pending_intent = false;
             self.navigated = true;
             self.highlight = next;
             self.on_candidate_selection_changed();
@@ -670,6 +716,7 @@ impl Router {
         let current = (self.highlight / page_size) as isize;
         let target = (current + step).clamp(0, page_count as isize - 1) as usize;
         if target != current as usize {
+            self.pending_intent = false;
             self.navigated = true;
             self.engine.note_page_turn();
         }
@@ -865,7 +912,7 @@ impl Router {
                 layout: self.config.layout,
                 theme: self.config.theme,
                 aux_code_show: self.config.aux_code_show,
-                sentence: None,
+                sentence: self.sentence.clone(),
                 notice: self.notice.clone(),
                 learning_mode: self.learning_mode,
                 learning_card: None,
@@ -941,6 +988,48 @@ pub(super) fn marked_parts(query: &Query) -> (Vec<PreeditSegment>, usize, Option
         cursor: query.marked_cursor(),
     });
     (preedit, query.segments_cursor(), typed_keys)
+}
+
+#[cfg(test)]
+mod intent_trigger_tests {
+    use super::*;
+
+    #[test]
+    fn intent_trigger_requires_a_long_string_without_an_exact_local_reading() {
+        assert!(!should_request_intent(None, "nihao"));
+        assert!(should_request_intent(None, "kaifazheh"));
+
+        let mut query = Query::default();
+        query.candidates.items.push(Candidate {
+            text: "开发者".to_owned(),
+            kind: qingjian_core::CandidateKind::Chinese,
+            syllables: vec!["kai".into(), "fa".into(), "zhe".into()],
+            reading: None,
+            translation: None,
+            aux_code: None,
+        });
+        assert!(!should_request_intent(Some(&query), "kaifazhe"));
+        query.tail = "h".into();
+        assert!(should_request_intent(Some(&query), "kaifazheh"));
+    }
+}
+
+fn should_request_intent(query: Option<&Query>, typed: &str) -> bool {
+    if !(7..=64).contains(&typed.len())
+        || !typed.bytes().all(|byte| byte.is_ascii_lowercase())
+    {
+        return false;
+    }
+    let Some(query) = query else {
+        return true;
+    };
+    if query.correction.is_some() {
+        return false;
+    }
+    let has_exact_reading = query.candidates.items.iter().any(|candidate| {
+        !candidate.syllables.is_empty() && candidate.syllables.concat() == typed
+    });
+    !has_exact_reading || !query.tail.is_empty()
 }
 
 /// 校验字符串是否为有效纯英文表达：必须包含 ASCII 英文字母，且绝不能包含任何汉字或 CJK 字符

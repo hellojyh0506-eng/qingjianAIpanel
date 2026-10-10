@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use qingjian_core::candidate::Language;
 use qingjian_core::{
-    Prediction, PredictionKind, PredictionPolicy, PredictionRequest, Predictor,
+    CloudWord, Prediction, PredictionKind, PredictionPolicy, PredictionRequest, Predictor,
 };
 use qingjian_platform::protocol::{
     ClientMessage, KeyEvent, KeyModifiers, KeyOutcome, PROTOCOL_VERSION, ServerMessage, SessionId,
@@ -66,6 +66,34 @@ fn toggle_combo() -> KeyEvent {
     )
 }
 
+fn latest_translate_request(
+    router: &mut Router,
+    requests: &Arc<Mutex<Vec<PredictionRequest>>>,
+    response: &Arc<Mutex<Option<Prediction>>>,
+    session: SessionId,
+) -> PredictionRequest {
+    let mut request = requests.lock().unwrap().last().cloned().expect("request exists");
+    if request.kind == PredictionKind::Rerank {
+        let words = request.candidates.iter().cloned().map(|text| CloudWord {
+            text,
+            syllables: Vec::new(),
+            reading: None,
+        }).collect();
+        *response.lock().unwrap() = Some(Prediction {
+            sequence: request.sequence,
+            words,
+            sentence: None,
+            alternatives: Vec::new(),
+            ..Default::default()
+        });
+        router.tick();
+        let _ = router.handle(ClientMessage::Poll { session });
+        request = requests.lock().unwrap().last().cloned().expect("Translate follows Rerank");
+    }
+    assert_eq!(request.kind, PredictionKind::Translate);
+    request
+}
+
 /// 场景 1: 三态模式切换流水线与隔离性验证 (Daily -> Learn -> Drill -> Daily)
 #[test]
 fn test_p1_three_state_cycle_and_isolation() {
@@ -107,6 +135,7 @@ fn test_p1_three_state_cycle_and_isolation() {
             event: letter(c),
         });
     }
+    let _ = latest_translate_request(&mut router, &requests, &response, session);
     assert!(
         requests.lock().unwrap().iter().any(|r| r.kind == PredictionKind::Translate),
         "Daily 模式支持快速地道英文单句翻译"
@@ -141,8 +170,7 @@ fn test_p1_three_state_cycle_and_isolation() {
             event: letter(c),
         });
     }
-    let req = requests.lock().unwrap().last().cloned().expect("必须触发请求");
-    assert_eq!(req.kind, PredictionKind::Translate);
+    let req = latest_translate_request(&mut router, &requests, &response, session);
     assert_eq!(req.text, "先前");
 
     // 模拟翻译返回
