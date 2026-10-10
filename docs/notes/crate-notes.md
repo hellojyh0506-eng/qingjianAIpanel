@@ -302,3 +302,8 @@ Unix socket 用共享长度前缀与 Frame（当前公共版本 7，与 `PROTOCO
 ## AI 整串长拼音意图纠错（Windows Server / Core / Predict）
 
 PredictionKind::Intent 是独立的当前输入意图纠错请求，与 Rerank 严格隔离。Server 仅在 7–64 位小写全拼、没有整串精确本地读音候选、且 Core 尚未采用本地纠错的情况下触发；英文、双拼、注音、形码、私密输入和其它模式跳过。Predict 使用 220 ms 防抖，只请求 corrected_pinyin，不接受模型返回汉字。Core 对建议拼音执行有界 Levenshtein 距离（按原串长度分别允许 2/3/4/5 次编辑）、完整音节切分和本地词典整句转换校验，只有精确、无占位、无模糊/错拼路径的本地转换结果才进入 UI。Server 将验证过的中文建议画在既有拼音行右侧提示位，原始 preedit 不变，Tab 才调用 accept_prediction 上屏。Learn 模式在已有的 Rerank → Translate 后请求 Intent，以免共享 Worker 争用；每次重组句清除建议/挂起标志。该能力目前仅 Windows Server 接线，未修改 TSF DLL；真实在线模型的准确率与 P50/P95 尚未验收。
+
+
+## 短拼音选择优先级实验（2026-10-10）
+
+词级排序继续保持精确读音、覆盖长度、简拼数、末音节完整度等结构优先级。对 1–2 个字母的全拼/简拼输入，Engine::query_phonetic 使用 rank_with_choice_priority 把硬选择优先级阈值设为 2：只有一次的同输入选择继续贡献原有 weight_bonus(choice) 软分数，但不作为压过上下文的硬排序项；选过至少两次依旧享有硬优先级。3+ 字母输入阈值为 1，旧 rank 包装仍沿用原行为，其他调用不变。该实验通过同一正常顺序 replay 快照比较：1–2 字母 Word Top-1 84.8% 不变，Top-5 97.0%→97.5%，第 6 名之后 46→39，平均名次 1.51→1.52（略回退）；整体 Word Top-1 84.2% / Top-5 96.0% 不变。属于有限 Top-5 局部改善，数据来自历史选择日志而非人工标注。完整 Core/CLI/Windows Server 回归通过后已部署；线上哈希与回滚链见 docs/plan/ai-current-input-optimization.md。
