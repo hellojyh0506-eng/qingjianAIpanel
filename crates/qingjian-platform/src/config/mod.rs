@@ -320,7 +320,7 @@ enabled = true
 enabled = false
 # OpenAI 兼容接口地址与模型名（SiliconFlow + Qwen 默认值）
 base_url = "https://api.siliconflow.cn/v1"
-model = "Qwen/Qwen2.5-7B-Instruct"
+model = "Qwen/Qwen3-14B"
 # 推理强度（reasoning_effort）：留空则不发
 reasoning_effort = ""
 # 密钥：填在这里，或留空并设置 api_key_env 指定的环境变量（偏好设置里填的密钥写进配置同目录的 .env）
@@ -562,7 +562,7 @@ mod tests {
         let config: Config = toml::from_str("[predict]\nenabled = true\nlookback = 10\n").unwrap();
         assert!(config.predict.enabled);
         assert_eq!(config.predict.lookback, 10);
-        assert_eq!(config.predict.model, "Qwen/Qwen2.5-7B-Instruct");
+        assert_eq!(config.predict.model, "Qwen/Qwen3-14B");
         assert_eq!(config.predict.reasoning_effort, "");
         assert_eq!(config.predict.api_key_env, "QINGJIAN_API_KEY");
     }

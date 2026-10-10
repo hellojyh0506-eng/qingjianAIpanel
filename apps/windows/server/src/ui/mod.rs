@@ -9,6 +9,7 @@ mod command;
 pub mod companion;
 pub mod drill;
 pub mod ai_assistant;
+pub mod markdown;
 mod layered;
 mod monitor;
 mod painter;
@@ -103,6 +104,18 @@ impl CandidateSink for UiHandle {
 
     fn show_companion(&self, data: companion::CompanionData, rect: ScreenRect) {
         self.post(UiCommand::CompanionShow(Box::new((data, rect))));
+    }
+
+    fn send_companion_chunk(&self, tab: usize, chunk: String) {
+        self.post(UiCommand::CompanionChunk { tab, chunk });
+    }
+
+    fn finish_companion_stream(&self, tab: usize) {
+        self.post(UiCommand::CompanionFinish(tab));
+    }
+
+    fn fail_companion_stream(&self, tab: usize, message: String) {
+        self.post(UiCommand::CompanionError { tab, message });
     }
 
     fn hide_companion(&self) {
@@ -322,6 +335,21 @@ fn apply(
             if let Some(comp) = companion {
                 comp.update_data(data);
                 let _ = comp.show_at(to_win_rect(rect));
+            }
+        }
+        UiCommand::CompanionChunk { tab, chunk } => {
+            if let Some(comp) = companion {
+                comp.append_stream_chunk(tab, &chunk);
+            }
+        }
+        UiCommand::CompanionFinish(tab) => {
+            if let Some(comp) = companion {
+                comp.finish_stream(tab);
+            }
+        }
+        UiCommand::CompanionError { tab, message } => {
+            if let Some(comp) = companion {
+                comp.fail_stream(tab, message);
             }
         }
         UiCommand::CompanionHide => {

@@ -14,8 +14,8 @@ use crate::config::PredictConfig;
 use crate::error::PredictError;
 use crate::prompt::{self, Reply};
 
-/// 联想与翻译回复的 token 上限：口语翻译 800，组句 500，问字 300，对比评测 800，深度学习 1800（留足思考空间）。
-const TRANSLATE_MAX_TOKENS: u32 = 800;
+/// 联想与翻译回复的 token 上限：口语即时翻译 120，组句 500，问字 300，对比评测 800，深度学习 1800（留足思考空间）。
+const TRANSLATE_MAX_TOKENS: u32 = 120;
 const COMPOSE_MAX_TOKENS: u32 = 500;
 const QUESTION_MAX_TOKENS: u32 = 300;
 const COMPARE_MAX_TOKENS: u32 = 800;
@@ -78,9 +78,10 @@ impl ChatClient {
             qingjian_core::PredictionKind::Compare => COMPARE_MAX_TOKENS,
             qingjian_core::PredictionKind::DeepLearn => DEEP_LEARN_MAX_TOKENS,
         };
-        // 自适应超时：口语翻译与对比评测保证充足响应时间，深度口语学习保留完整思考空间
+        // 快速翻译采用有限总耗时；完整学习与对比请求可以使用更长预算。
+        // 具体重试/读响应超时统一由 chat_with_timeout 的总 deadline 约束。
         let effective_timeout = match request.kind {
-            qingjian_core::PredictionKind::Translate => self.timeout.max(Duration::from_millis(8000)),
+            qingjian_core::PredictionKind::Translate => self.timeout.max(Duration::from_millis(4500)),
             qingjian_core::PredictionKind::DeepLearn => self.timeout.max(Duration::from_millis(15000)),
             qingjian_core::PredictionKind::Compare => self.timeout.max(Duration::from_millis(10000)),
             _ => self.timeout,
@@ -114,6 +115,7 @@ impl ChatClient {
         timeout: Duration,
     ) -> Result<String, PredictError> {
         let t_start = std::time::Instant::now();
+        let deadline = tokio::time::Instant::now() + timeout;
         let messages: Vec<ChatCompletionRequestMessage> = vec![
             ChatCompletionRequestSystemMessage::from(system).into(),
             ChatCompletionRequestUserMessage::from(user).into(),
@@ -138,15 +140,22 @@ impl ChatClient {
         }
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
 
-        // 最大尝试次数：3 次 (2 次自动退避重试)
+        // 所有尝试共享一个总 deadline，响应体读取也受限；不能每次重试都再等完整 timeout。
         let max_attempts = 3;
         let mut last_err = None;
 
         for attempt in 0..max_attempts {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
             if attempt > 0 {
-                let backoff = Duration::from_millis(250 * attempt as u64);
+                let backoff = Duration::from_millis(250 * attempt as u64).min(remaining);
                 tracing::warn!(attempt, delay_ms = backoff.as_millis(), "正在进行LLM网关自动重试...");
                 tokio::time::sleep(backoff).await;
+                if tokio::time::Instant::now() >= deadline {
+                    break;
+                }
             }
 
             let t_http_start = std::time::Instant::now();
@@ -157,28 +166,36 @@ impl ChatClient {
                 req = req.header("Authorization", "Bearer ");
             }
             let req = req.json(&body);
-            let send_res = tokio::time::timeout(timeout, req.send()).await;
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            let send_res = tokio::time::timeout(remaining, req.send()).await;
             let resp = match send_res {
                 Ok(Ok(r)) => r,
                 Ok(Err(e)) => {
                     tracing::warn!(attempt, %e, "HTTP请求发送失败");
                     last_err = Some(PredictError::Http(e));
-                    continue;
+                    if attempt + 1 < max_attempts { continue; }
+                    break;
                 }
                 Err(_) => {
-                    tracing::warn!(attempt, timeout_ms = timeout.as_millis(), "HTTP请求超时");
+                    tracing::warn!(attempt, timeout_ms = timeout.as_millis(), "HTTP请求到达总超时期限");
                     last_err = Some(PredictError::Timeout(timeout.as_millis() as u64));
-                    continue;
+                    break;
                 }
             };
 
             let first_byte_ms = t_http_start.elapsed().as_millis();
             let status = resp.status();
-            let raw_text = match resp.text().await {
-                Ok(t) => t,
-                Err(e) => {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            let raw_text = match tokio::time::timeout(remaining, resp.text()).await {
+                Ok(Ok(t)) => t,
+                Ok(Err(e)) => {
                     last_err = Some(PredictError::Http(e));
-                    continue;
+                    if attempt + 1 < max_attempts { continue; }
+                    break;
+                }
+                Err(_) => {
+                    last_err = Some(PredictError::Timeout(timeout.as_millis() as u64));
+                    break;
                 }
             };
             let http_ms = t_http_start.elapsed().as_millis();

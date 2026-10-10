@@ -37,8 +37,8 @@ use crate::client::pipe::PipeStream;
 /// 连 Server 的会话客户端，与编辑会话 / 轮询定时器共享（STA 单线程）。连不上时为 `None`，键照样放行。
 pub(crate) type SharedClient = Rc<RefCell<Option<EngineClient<PipeStream>>>>;
 
-/// 连不上 Server 后隔多久再试（每次尝试都在应用的 UI 线程上，不能每键都试）。
-const RECONNECT_INTERVAL: Duration = Duration::from_secs(2);
+/// 连不上 Server 后隔多久再试（每次尝试都在应用的 UI 线程上，快速重试，防止开机卡顿）。
+const RECONNECT_INTERVAL: Duration = Duration::from_millis(150);
 
 /// 一个 TSF 文本服务实例（每线程一个）。
 #[implement(ITfTextInputProcessor, ITfKeyEventSink, ITfDisplayAttributeProvider)]

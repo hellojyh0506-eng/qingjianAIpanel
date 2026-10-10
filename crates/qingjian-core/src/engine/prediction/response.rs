@@ -41,6 +41,18 @@ pub struct Prediction {
 
     /// 深度口语学习：雅思/正式替换
     pub ielts_friendly: Option<String>,
+
+    /// 深度口语学习：语气色彩
+    pub tone: Option<String>,
+
+    /// 深度口语学习：核心适用场景
+    pub scenario: Option<String>,
+
+    /// 深度口语学习：核心语感精析
+    pub nuance: Option<String>,
+
+    /// 真实情境短对话：(speaker, text, zh)
+    pub dialogue: Vec<(String, String, String)>,
 }
 
 impl Prediction {

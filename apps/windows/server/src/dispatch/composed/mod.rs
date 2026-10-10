@@ -41,17 +41,49 @@ impl Router {
                     CandidateLayout::new(items, self.config.page_size, self.config.cloud_slots);
                 let learning_on = !self.config.learning_language_off
                     && self.engine.learning_language() != Language::Chinese
-                    && !self.is_private();
+                    && !self.is_private()
+                    && !self.engine.question_mode()
+                    && !self.engine.expression_mode()
+                    && !self.engine.raw_mode();
                 let first_target = layout.candidate(0).map(|c| c.text.clone());
                 if learning_on {
                     if let Some(target) = first_target {
+                        if self.passive_translation_target.as_ref() != Some(&target) {
+                            self.passive_translation = None;
+                            self.generation_id = self.generation_id.wrapping_add(1);
+                        }
                         self.passive_translation_target = Some(target.clone());
                         if self.engine.prediction_enabled() {
                             let due = self.today_due_count();
+                            let offline = self.engine
+                                .translate_word(&target)
+                                .and_then(|t| t.senses().first().map(|s| s.text.clone()))
+                                .filter(|s| is_valid_english_text(s))
+                                .or_else(|| fallback_idiom_english(&target));
+
+                            let (initial_state, initial_primary) = if let Some(primary_en) = offline {
+                                self.passive_translation = Some(primary_en.clone());
+                                (
+                                    qingjian_platform::protocol::LearningState::Ready,
+                                    Some(qingjian_platform::protocol::LearningExpression {
+                                        text: primary_en,
+                                        tag: "Common".to_string(),
+                                        meaning: target.clone(),
+                                        tone: "标准自然".to_string(),
+                                        scenario: "日常场景".to_string(),
+                                        commonality: "高频".to_string(),
+                                        why_natural: "本地离线词库释义".to_string(),
+                                    }),
+                                )
+                            } else {
+                                self.passive_translation = None;
+                                (qingjian_platform::protocol::LearningState::Loading, None)
+                            };
+
                             self.passive_learning_card = Some(qingjian_platform::protocol::LearningCardFrame {
                                 target_text: target.clone(),
-                                state: qingjian_platform::protocol::LearningState::Loading,
-                                primary: None,
+                                state: initial_state,
+                                primary: initial_primary,
                                 alternatives: Vec::new(),
                                 expanded: false,
                                 selected_index: None,
@@ -84,6 +116,9 @@ impl Router {
             }
             None => {
                 self.cancel_prediction();
+                self.passive_learning_card = None;
+                self.passive_translation_target = None;
+                self.passive_translation = None;
                 let composition = self.engine.composition();
                 let text = composition.text().to_owned();
                 let cursor = text[..composition.cursor()].chars().count();
@@ -318,9 +353,10 @@ impl Router {
             data.primary_english = primary_text.clone();
             data.is_loading = false;
             data.phonetic = prediction.phonetic.clone().unwrap_or_default();
-            data.explanation = prediction.explanation.clone().unwrap_or_else(|| {
-                format!("用于日常交流中表达“{}”的地道美式口语。", target_text)
-            });
+            data.tone = prediction.tone.clone().unwrap_or_default();
+            data.scenario = prediction.scenario.clone().unwrap_or_default();
+            data.nuance = prediction.nuance.clone().or_else(|| prediction.explanation.clone()).unwrap_or_default();
+            data.explanation = prediction.explanation.clone().unwrap_or_default();
             data.collocations = prediction
                 .collocations
                 .iter()
@@ -335,20 +371,26 @@ impl Router {
                 .filter(|alt| is_valid_english_text(&alt.text))
                 .map(|alt| crate::ui::companion::ExpressionVariant {
                     text: alt.text.clone(),
-                    tag: if alt.tag.is_empty() { "Natural".to_string() } else { alt.tag.clone() },
+                    tag: if alt.tag.is_empty() { "日常口语".to_string() } else { alt.tag.clone() },
                     meaning: alt.meaning.clone(),
+                    tone: alt.tone.clone(),
+                    scenario: alt.scenario.clone(),
                     why_natural: alt.why_natural.clone(),
+                    example_en: String::new(),
+                    example_zh: String::new(),
                 })
                 .collect();
 
-            if data.alternatives.is_empty() && !primary_text.is_empty() && is_valid_english_text(&primary_text) {
-                data.alternatives.push(crate::ui::companion::ExpressionVariant {
-                    text: primary_text.clone(),
-                    tag: "Natural".to_string(),
-                    meaning: target_text.clone(),
-                    why_natural: "日常高频地道表达".to_string(),
-                });
-            }
+
+            data.dialogue = prediction
+                .dialogue
+                .iter()
+                .map(|(s, t, z)| crate::ui::companion::DialogueTurn {
+                    speaker: s.clone(),
+                    text: t.clone(),
+                    zh: z.clone(),
+                })
+                .collect();
 
             data.examples = prediction
                 .examples
@@ -367,9 +409,6 @@ impl Router {
                 .filter(|(en, _zh)| is_valid_english_text(en))
                 .collect();
 
-            if data.examples.is_empty() && !primary_text.is_empty() && is_valid_english_text(&primary_text) {
-                data.examples.push((primary_text.clone(), target_text.clone()));
-            }
 
             if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
                 let vault = qingjian_learning::LearningVault::open(&user_dir);
@@ -495,6 +534,7 @@ impl Router {
                     let t_ui = Instant::now();
                     let shown = self.self_drawn_frame();
                     self.reconcile_candidates(&shown);
+
                     let ui_update_ms = t_ui.elapsed().as_millis();
                     tracing::info!(
                         target = %target,

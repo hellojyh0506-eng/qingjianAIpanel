@@ -58,8 +58,8 @@ Rules:
 - Prefer common real-world spoken English and natural phrasal verbs over mechanical literal translations.
 - Avoid textbook cliches and robotic literal calques.
 - Use contractions naturally.
-- Distinguish registers, tones, and alternative expressions:
-  Provide the single best primary expression in 'sentence', and when appropriate, provide 2-3 genuine spoken alternatives in 'alternatives' with distinct nuances, tags, and explanations.
+- Keep output extremely fast and concise. No verbose explanations.
+- Output the single best primary expression in 'sentence', and 1-2 spoken alternatives in 'alternatives'.
 
 Output JSON format strictly:
 {
@@ -67,11 +67,7 @@ Output JSON format strictly:
   \"alternatives\": [
     {
       \"text\": \"spoken alternative variant\",
-      \"tag\": \"Direct | Nuanced | Casual | Idiomatic | Professional | Natural\",
-      \"meaning\": \"准确中文含义与侧重点\",
-      \"tone\": \"语气与情感色彩说明\",
-      \"scenario\": \"使用场景\",
-      \"why_natural\": \"为何地道及与主表达的区别说明\"
+      \"tag\": \"Direct | Nuanced | Casual | Idiomatic | Professional | Natural\"
     }
   ]
 }";
@@ -134,40 +130,39 @@ Output JSON format strictly:
 /// 深度英语学习与伴侣助手提示：用于在用户主动查看更多表达与用法时展开
 #[allow(dead_code)]
 pub const DEEP_LEARN_SYSTEM_PROMPT: &str = "\
-You are an expert American English expression coach.
+You are an expert American English and IELTS Speaking coach.
 Generate a structured learning expansion specifically for the provided Chinese candidate and its translation.
 
 Rules:
-1. primary_english: The single most natural spoken American English expression.
-   - If the Chinese is a generic habit or trait (e.g. '他们说话好像不经过脑袋'), use natural general expressions ('They speak before they think'), NEVER narrow into specific events ('say this like they haven't thought about it').
-2. phonetic: Accurate IPA transcription of the key phrase/expression.
-3. explanation: Concise Chinese explanation focusing on nuance, tone, context, and why it is natural. Explain differences between habitual action vs specific event where relevant.
-4. alternatives: 2-5 real-world spoken variants with genuine differences. Each item must have:
-   - text: English phrase
-   - tag: Direct | Nuanced | Casual | Idiomatic | Professional | Natural
-   - meaning: Chinese meaning reflecting this specific variant's emphasis
-   - tone: Specific tone description (e.g. 直截了当 / 缺乏深思 / 口无遮拦)
-   - scenario: Specific usage context
-   - why_natural: Clear explanation of nuance differences and when to use this variant over others
-5. collocations: 2-4 GENUINE high-frequency collocations or real conversational phrasing directly related to this concept.
-   - For a verb/noun phrase: natural verb-noun, adjective-noun, or preposition collocations.
-   - For a clause/sentence: typical conversation lead-ins or natural variations (e.g. for 'make sense' -> 'make a lot of sense', 'in a sense', 'hard to make sense of').
-   - NEVER mechanically prepend dummy words like 'use ...' or 'really ...'.
-   - If no natural collocations exist, return an empty array [].
-6. examples: 2-3 realistic spoken examples in format: 'English sentence | 中文例句'.
-7. ielts_friendly: An IELTS Speaking Band 7+ natural idiom or precise phrasing IF genuinely appropriate; otherwise null.
+1. primary_english: Single most natural contemporary spoken American English expression.
+   - If the Chinese is a generic habit/trait (e.g. '他们说话好像不经过脑袋'), use natural general expressions ('They speak before they think'), NEVER narrow into specific events ('say this like they haven't thought about it').
+2. phonetic: Accurate IPA transcription of the key phrase (e.g. /.../).
+3. tone: Concise description of tone and register (e.g. 强烈惊讶与无奈 / 自嘲调侃 / 随和日常 / 严谨客观).
+4. scenario: Core real-world communicative context (e.g. 熟人闲聊、突发状况吐槽、职场讨论).
+5. nuance: ONE short, punchy sentence explaining WHY native speakers say this and why it is natural/scores high.
+6. alternatives: Up to 3 genuine spoken alternatives with distinct nuances (text, tag, meaning, tone, scenario, why_natural).
+7. collocations: 2-3 genuine high-frequency spoken collocations. If none, return empty array [].
+8. examples: ONE natural spoken example: 'English sentence | 中文例句'.
+9. ielts_friendly: Band 7+ spoken upgrade if applicable, otherwise null.
+10. dialogue: 2-3 short turns of authentic dialogue using this expression: [{\"speaker\": \"A\", \"text\": \"...\", \"zh\": \"...\"}, {\"speaker\": \"B\", \"text\": \"...\", \"zh\": \"...\"}].
 
 Output JSON format strictly:
 {
   \"primary_english\": \"most natural spoken expression\",
   \"phonetic\": \"/ipa/\",
-  \"explanation\": \"地道用法说明与语境剖析\",
+  \"tone\": \"语气色彩\",
+  \"scenario\": \"适用语境\",
+  \"nuance\": \"一句话讲透地道原因\",
   \"alternatives\": [
-    {\"text\": \"variant\", \"tag\": \"Direct|Nuanced|Casual|Idiomatic|Professional|Natural\", \"meaning\": \"中文含义与侧重点\", \"tone\": \"语气说明\", \"scenario\": \"适用场景\", \"why_natural\": \"地道原因及区别\"}
+    {\"text\": \"variant\", \"tag\": \"Direct|Nuanced|Casual|Idiomatic|Natural\", \"meaning\": \"中文含义\", \"tone\": \"语气说明\", \"scenario\": \"适用场景\", \"why_natural\": \"地道区别\"}
   ],
   \"collocations\": [\"collocation 1\", \"collocation 2\"],
-  \"examples\": [\"English example 1 | 中文例句 1\", \"English example 2 | 中文例句 2\"],
-  \"ielts_friendly\": \"optional IELTS phrasing or null\"
+  \"examples\": [\"English example | 中文例句\"],
+  \"ielts_friendly\": \"optional IELTS phrasing or null\",
+  \"dialogue\": [
+    {\"speaker\": \"A\", \"text\": \"...\", \"zh\": \"...\"},
+    {\"speaker\": \"B\", \"text\": \"...\", \"zh\": \"...\"}
+  ]
 }";
 
 pub const TRANSLATE_TO_CHINESE_SYSTEM_PROMPT: &str = "\
@@ -336,6 +331,18 @@ pub struct Reply {
 
     /// 深度口语学习：雅思/正式替换
     pub ielts_friendly: Option<String>,
+
+    /// 深度口语学习：语气色彩
+    pub tone: Option<String>,
+
+    /// 深度口语学习：核心适用场景
+    pub scenario: Option<String>,
+
+    /// 深度口语学习：核心语感精析
+    pub nuance: Option<String>,
+
+    /// 真实情境短对话：(speaker, text, zh)
+    pub dialogue: Vec<(String, String, String)>,
 }
 
 impl Reply {
@@ -370,9 +377,13 @@ struct RawReply {
     primary_english: Option<String>,
     phonetic: Option<String>,
     explanation: Option<String>,
+    tone: Option<String>,
+    scenario: Option<String>,
+    nuance: Option<String>,
     collocations: Vec<String>,
     examples: Vec<String>,
     ielts_friendly: Option<String>,
+    dialogue: Vec<RawDialogueLine>,
 
     /// 主动回忆对比模式：评估状态
     status: Option<String>,
@@ -416,6 +427,14 @@ struct RawFeedbackItem {
     label: String,
     explanation: String,
     suggestion: Option<String>,
+}
+
+#[derive(Deserialize, Default, Clone)]
+#[serde(default)]
+struct RawDialogueLine {
+    speaker: String,
+    text: String,
+    zh: String,
 }
 
 #[derive(Deserialize, Default, Clone)]
@@ -677,6 +696,15 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
                 raw.examples.into_iter().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect()
             },
             ielts_friendly: raw.ielts_friendly.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()),
+            tone: raw.tone.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()),
+            scenario: raw.scenario.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()),
+            nuance: raw.nuance.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()),
+            dialogue: raw
+                .dialogue
+                .into_iter()
+                .filter(|d| !d.text.trim().is_empty())
+                .map(|d| (d.speaker.trim().to_owned(), d.text.trim().to_owned(), d.zh.trim().to_owned()))
+                .collect(),
         };
     }
     if request.kind == PredictionKind::Compare {

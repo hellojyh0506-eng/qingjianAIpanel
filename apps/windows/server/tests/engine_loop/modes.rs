@@ -164,8 +164,20 @@ fn bare_question_mark_is_plain_punctuation_by_default() {
     assert_eq!(outcome, KeyOutcome::Consumed);
     assert_eq!(commit.as_deref(), Some("？"));
     assert!(preedit(&frame).is_empty());
+    assert!(frame.learning_card.is_none());
     let (outcome, commit, _) = press(&mut router, KeyEvent::new(0xBF, Some('?'), ENGLISH));
     assert_eq!((outcome, commit), (KeyOutcome::Passthrough, None));
+}
+
+#[test]
+fn question_mark_while_composing_commits_candidate_and_chinese_punctuation() {
+    let mut router = router();
+    type_letters(&mut router, "nihao");
+    let (outcome, commit, frame) = press(&mut router, punct('?'));
+    assert_eq!(outcome, KeyOutcome::Consumed);
+    assert_eq!(commit.as_deref(), Some("你好？"));
+    assert!(preedit(&frame).is_empty());
+    assert!(frame.learning_card.is_none());
 }
 
 #[test]

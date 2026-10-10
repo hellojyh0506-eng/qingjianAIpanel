@@ -49,7 +49,7 @@ impl Default for PredictConfig {
         Self {
             enabled: false,
             base_url: "https://api.siliconflow.cn/v1".to_owned(),
-            model: "Qwen/Qwen2.5-7B-Instruct".to_owned(),
+            model: "Qwen/Qwen3-14B".to_owned(),
             api_key: None,
             api_key_env: "QINGJIAN_API_KEY".to_owned(),
             timeout_ms: 3000,

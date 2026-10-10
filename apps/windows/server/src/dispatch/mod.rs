@@ -156,6 +156,9 @@ pub struct Router {
     /// 学习助手伴侣窗当前是否展开
     pub(crate) assistant_open: bool,
 
+    /// 学习助手请求代次；旧流式请求只能写入其启动时对应的代次。
+    pub(crate) companion_generation: Arc<std::sync::atomic::AtomicU64>,
+
     /// 上次切换助手的时间戳（防按键连击 repeat）
     pub(crate) last_assistant_toggle_time: Instant,
 
@@ -218,6 +221,7 @@ impl Router {
             applied_model: LocalModelConfig::default(),
             rescore: RescoreState::default(),
             assistant_open: false,
+            companion_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             last_assistant_toggle_time: Instant::now() - std::time::Duration::from_secs(10),
             ai_assistant_open: false,
             last_ai_assistant_toggle_time: Instant::now() - std::time::Duration::from_secs(10),
@@ -333,6 +337,7 @@ impl Router {
     /// 打开独立 English Assistant（学习助手伴侣窗）
     pub(crate) fn open_assistant(&mut self) {
         self.assistant_open = true;
+        let request_generation = self.companion_generation.fetch_add(1, Ordering::Relaxed) + 1;
         self.notice = Some("📖 已开启 English Assistant (Ctrl+Alt+E)".to_string());
         if let Some(card) = &mut self.passive_learning_card {
             card.expanded = true;
@@ -374,22 +379,7 @@ impl Router {
 
         let mut data = crate::ui::companion::CompanionData::loading(target_text.clone(), primary_text.clone());
 
-        if let Some(card) = &self.passive_learning_card {
-            if !card.alternatives.is_empty() {
-                data.is_loading = false;
-                data.alternatives = card
-                    .alternatives
-                    .iter()
-                    .map(|alt| crate::ui::companion::ExpressionVariant {
-                        text: alt.text.clone(),
-                        tag: if alt.tag.is_empty() { "Natural".to_string() } else { alt.tag.clone() },
-                        meaning: alt.meaning.clone(),
-                        why_natural: alt.why_natural.clone(),
-                    })
-                    .collect();
-            }
-        }
-
+        // 每次打开都以本轮请求的干净加载状态开始，不继承被动学习卡片中的旧替换结果。
         if let Some(user_dir) = qingjian_platform::dirs::user_dir() {
             let vault = qingjian_learning::LearningVault::open(&user_dir);
             for saved in vault.saved_expressions() {
@@ -401,13 +391,105 @@ impl Router {
 
         self.candidates.show_companion(data, rect);
 
-        // 向 AI 发送真实 DeepLearn 深度解析请求
-        self.engine.request_deep_learn(&target_text, &primary_text);
+        // 学习助手的每个标签独立生成、独立保存响应。避免把同一份综合解析伪装成三个不同的功能。
+        // 三路请求使用同一输入和英文焦点，但 System/User prompt 与 tab id 各自独立。
+        if self.config.predict.enabled {
+            let base_url = if !self.config.predict.base_url.is_empty() {
+                self.config.predict.base_url.clone()
+            } else {
+                "https://api.siliconflow.cn/v1".to_string()
+            };
+            let api_key = self.config.predict.api_key.clone().unwrap_or_else(|| {
+                std::env::var("QINGJIAN_API_KEY")
+                    .or_else(|_| std::env::var("SILICONFLOW_API_KEY"))
+                    .unwrap_or_default()
+            });
+            let model = if !self.config.predict.model.is_empty() {
+                self.config.predict.model.clone()
+            } else {
+                "Qwen/Qwen3-14B".to_string()
+            };
+
+            let sink = self.candidates.clone_sink();
+            let sink_handle: Arc<Mutex<Box<dyn CandidateSink>>> = Arc::new(Mutex::new(sink));
+            let target_zh = target_text.clone();
+            let target_en = primary_text.clone();
+            let generation = self.companion_generation.clone();
+
+            for tab in 0..3 {
+                let sink = Arc::clone(&sink_handle);
+                let client = StreamChatClient::new(base_url.clone(), api_key.clone(), model.clone());
+                let target_zh = target_zh.clone();
+                let target_en = target_en.clone();
+                let generation = generation.clone();
+                self.ai_runtime.spawn(async move {
+                    let (title, guidance, token_budget) = match tab {
+                        0 => (
+                            "语感解析（Meaning & Nuance）",
+                            "解释核心意思、口语语气、语用区别、适用场景和自然例句。不要输出替换表达列表或对话脚本。按「核心意思」「语气与语感」「何时使用」「自然例句」分节。每个模块内容精炼、具体；例句必须真实自然。",
+                            420,
+                        ),
+                        1 => (
+                            "更自然地说（Natural Alternatives）",
+                            "提供恰好 3 个真正不同的地道美式英语替换表达。每条包括英文表达、中文含义、语气/场景区别、一个全新且自然的英文例句和中文翻译。不要复述原表达的分析，不要输出对话。用编号列表。",
+                            480,
+                        ),
+                        _ => (
+                            "真实对话（IELTS Speaking Role-play）",
+                            "写一段真实、连贯的雅思口语场景对话，考官/提问者 A 与考生 B 轮流发言，共 6-8 轮。英文对白自然口语化，每轮配简短中文翻译；最后列出 2-3 个值得学习的口语表达及其用法。不要重复语感解析或替换表达清单。",
+                            520,
+                        ),
+                    };
+                    let prompt = format!(
+                        "任务：{title}\n学习者输入的中文：{target_zh}\n可参考的英文焦点表达：{target_en}\n\n本标签专属要求：{guidance}\n\n排版规则：用简洁 Markdown 标题和列表；段落短；不要输出原始输入的重复释义、空标题、横线分隔符或套话。确保内容只服务于本标签。"
+                    );
+                    let messages = vec![
+                        ChatMessage {
+                            role: "system".to_string(),
+                            content: "你是专业的美式英语与 IELTS 口语教练。优先真实性、具体性和可用性，不编造学习者原句中没有的语境；中文解释简洁，英文表达自然。严格遵循当前标签的范围，不输出另外两个标签的内容。使用 Markdown 但避免标题嵌套过深。".to_string(),
+                        },
+                        ChatMessage { role: "user".to_string(), content: prompt },
+                    ];
+                    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<StreamEvent>(32);
+                    let stop_sig = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    tokio::spawn(async move {
+                        client.stream_chat(messages, token_budget, event_tx, stop_sig).await;
+                    });
+                    let mut stream_error = None;
+                    while let Some(event) = event_rx.recv().await {
+                        if generation.load(Ordering::Relaxed) != request_generation {
+                            return;
+                        }
+                        match event {
+                            StreamEvent::Delta(delta) => {
+                                if let Ok(guard) = sink.lock() { guard.send_companion_chunk(tab, delta); }
+                            },
+                            StreamEvent::Error(message) => stream_error = Some(message),
+                            StreamEvent::Done { ttft_ms, total_ms } => {
+                                tracing::info!(tab, ttft_ms, total_ms, "学习助手标签流式生成完成");
+                            }
+                            StreamEvent::WebSources(_) => {}
+                        }
+                    }
+                    if generation.load(Ordering::Relaxed) != request_generation {
+                        return;
+                    }
+                    if let Ok(guard) = sink.lock() {
+                        if let Some(message) = stream_error {
+                            guard.fail_companion_stream(tab, message);
+                        } else {
+                            guard.finish_companion_stream(tab);
+                        }
+                    }
+                });
+            }
+        }
     }
 
     /// 关闭独立 English Assistant
     pub(crate) fn close_assistant(&mut self) {
         self.assistant_open = false;
+        self.companion_generation.fetch_add(1, Ordering::Relaxed);
         if let Some(card) = &mut self.passive_learning_card {
             card.expanded = false;
         }
@@ -770,7 +852,7 @@ impl Router {
             CandidateAction::AiChatStop { session_id: _ } => {
                 self.ai_stop_signal.store(true, Ordering::Relaxed);
             }
-            CandidateAction::AiChatSend { prompt, fast_mode, web_search, session_id: _ } => {
+            CandidateAction::AiChatSend { prompt, fast_mode: _, web_search, session_id: _ } => {
                 self.ai_stop_signal.store(true, Ordering::Relaxed);
                 let stop_signal = Arc::new(AtomicBool::new(false));
                 self.ai_stop_signal = stop_signal.clone();
@@ -782,21 +864,31 @@ impl Router {
                     });
                 }
 
-                // AI 对话独立面板接入高级 AI：默认接入 Kilo Gateway 免费 auto 模型；
-                // 彻底与输入法打字实时联想/快速翻译的 SiliconFlow Qwen 分离，互不抢占、互不干扰。
-                let (base_url, model, api_key) = if let Ok(custom_url) = std::env::var("QINGJIAN_AI_BASE_URL") {
-                    let m = std::env::var("QINGJIAN_AI_MODEL").unwrap_or_else(|_| "kilo-auto/free".to_string());
-                    let k = std::env::var("QINGJIAN_AI_API_KEY")
-                        .or_else(|_| std::env::var("KILO_API_KEY"))
-                        .unwrap_or_default();
-                    (custom_url, m, k)
+                // AI 对话独立面板接入高性价比付费模型（默认配置中的 SiliconFlow Qwen3 14B，专享推理集群）
+                let base_url = if let Ok(custom_url) = std::env::var("QINGJIAN_AI_BASE_URL") {
+                    custom_url
+                } else if !self.config.predict.base_url.is_empty() {
+                    self.config.predict.base_url.clone()
                 } else {
-                    let k = std::env::var("KILO_API_KEY").unwrap_or_default();
-                    (
-                        "https://api.kilo.ai/api/gateway".to_string(),
-                        "kilo-auto/free".to_string(),
-                        k,
-                    )
+                    "https://api.siliconflow.cn/v1".to_string()
+                };
+
+                let model = if let Ok(m) = std::env::var("QINGJIAN_AI_MODEL") {
+                    m
+                } else if !self.config.predict.model.is_empty() {
+                    self.config.predict.model.clone()
+                } else {
+                    "Qwen/Qwen3-14B".to_string()
+                };
+
+                let api_key = if let Ok(k) = std::env::var("QINGJIAN_AI_API_KEY") {
+                    k
+                } else if let Some(k) = &self.config.predict.api_key {
+                    k.clone()
+                } else {
+                    std::env::var("QINGJIAN_API_KEY")
+                        .or_else(|_| std::env::var("SILICONFLOW_API_KEY"))
+                        .unwrap_or_default()
                 };
 
                 // 优先拦截 /boost 诊断指令，执行全链路状态自检与性能加速报告
@@ -856,17 +948,8 @@ impl Router {
                     return;
                 }
 
-                let (max_tokens, system_prompt) = if fast_mode {
-                    (
-                        512,
-                        "你是青简输入法内置的 AI 智能助手。你的当前工作模式是【快速回答】。请直接、精炼、准确地回答用户问题，直击核心本质与落地用法，避免多余冗长铺垫。请使用地道通顺的人类自然语言回答。严禁无故输出 Python 等玩具代码或无关程序片段，除非用户明确要求编写代码。"
-                    )
-                } else {
-                    (
-                        2048,
-                        "你是青简输入法内置的 AI 智能助手。你的当前工作模式是【深度回答】。请深入透彻地分析用户的问题，提供多维度的地道表达剖析、语法语境对比、边界条件分析与详尽可落地的中英对照与地道例句。请使用通顺自然的人类语言解答，除非用户明确要求写代码，严禁随意吐出 Python 脚本或无关代码。"
-                    )
-                };
+                let max_tokens = 2048;
+                let system_prompt = "你是青简输入法内置的 AI 智能助手。请自然、准确、清晰地回答用户的问题。根据问题类型灵活作答：日常闲聊或普通问答直接简洁回应；技术或专业问题直击本质；涉及语言学习时提供地道自然的解答。善用 Markdown 格式组织内容，不讲无用套话，不做无谓的长篇大论，绝不擅自强加中英互译。";
 
                 let mut messages = Vec::new();
                 messages.push(ChatMessage {

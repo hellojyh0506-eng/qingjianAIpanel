@@ -691,17 +691,21 @@ pub(super) fn hit_test_learning_card(
         let btn_text = "💡 进入练习 (Ctrl+Alt+D)";
         let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
         if x >= theme.padding - 8 && x <= theme.padding + btn_w + 16 {
-            return Some(CandidateAction::StartDrillSession);
+            Some(CandidateAction::StartDrillSession)
+        } else {
+            None
         }
-        return Some(CandidateAction::StartDrillSession);
-    } else {
+    } else if data.learning_mode == qingjian_platform::LearningMode::Learn {
         let btn_text = "📖 学习助手(Ctrl+Alt+E)";
         let btn_w = measure(hdc, theme.index_font, btn_text).cx + 16;
         let btn_x = content_w - theme.padding - btn_w;
         if x >= btn_x - 8 && x <= content_w {
-            return Some(CandidateAction::OpenAssistant);
+            Some(CandidateAction::OpenAssistant)
+        } else {
+            None
         }
-        return Some(CandidateAction::OpenAssistant);
+    } else {
+        None
     }
 }
 
@@ -774,9 +778,13 @@ mod tests {
         let content_w = 360;
         let target_y = data.theme.padding + top_line_size(dc, &data).1 + horizontal_size(dc, &data).1 + 6;
 
-        // Click on 学习助手 button / line
+        // Click on 学习助手 button
         let action = hit_test_learning_card(dc, &data, 300, target_y, content_w);
         assert_eq!(action, Some(CandidateAction::OpenAssistant));
+
+        // Click outside the button (e.g. left side) returns None
+        let stray_action = hit_test_learning_card(dc, &data, 50, target_y, content_w);
+        assert_eq!(stray_action, None);
 
         unsafe { let _ = DeleteDC(dc); }
     }

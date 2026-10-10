@@ -385,20 +385,20 @@ fn test_shortcut_toast_notices_and_feedback() {
         panic!("Ctrl+Alt+L 必须返回 KeyResult");
     }
 
-    // 2. 单击 Shift 切中英：必须产出中英切换屏幕气泡
+    // 2. 单击 Shift 切中英：严禁产出屏幕气泡（防鼠标处浮窗气泡污染）
     let _ = router.handle(ClientMessage::ModeChanged {
         session: SESSION,
         english: true,
     });
     let frame_en = router.active_frame();
-    assert!(frame_en.notice.as_deref().unwrap_or("").contains("英"), "切英文模式必须带英提示");
+    assert!(frame_en.notice.is_none(), "切英文模式严禁弹出屏幕气泡");
 
     let _ = router.handle(ClientMessage::ModeChanged {
         session: SESSION,
         english: false,
     });
     let frame_zh = router.active_frame();
-    assert!(frame_zh.notice.as_deref().unwrap_or("").contains("中"), "切中文模式必须带中提示");
+    assert!(frame_zh.notice.is_none(), "切中文模式严禁弹出屏幕气泡");
 
     // 3. Ctrl+Alt+T 选区翻译在无选区时：必须提示选中文字而不是无反应
     router.set_pending_selection(SESSION, 999);

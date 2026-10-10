@@ -1,5 +1,5 @@
-//! Qingjian AI 对话窗口 (Qwen 2.5 7B 真实流式对话、快速/深度模式与按需联网)
-//! 高对比度、防发白、视口隔离裁剪、自动贴底滚动、故障沙箱防护的原生 Windows 浮动面板。
+//! Qingjian AI 对话窗口 (Qwen 2.5 7B 专享推理流式对话)
+//! 集成 Win32 原生 Caret、TSF 光标锚定、全功能 Markdown 渲染、Claude/DeepSeek 极简现代化界面。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -7,19 +7,25 @@ use std::time::Instant;
 
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateFontW, DeleteObject, GetTextExtentPoint32W, HDC, HFONT, IntersectClipRect,
-    RestoreDC, SaveDC, SelectObject, SetBkMode, SetTextColor, TRANSPARENT, TextOutW,
+    CreateFontW, DeleteObject, GetDC, GetTextExtentPoint32W, HDC, HFONT, IntersectClipRect,
+    ReleaseDC, RestoreDC, SaveDC, SelectObject, SetBkMode, SetTextColor, TRANSPARENT, TextOutW,
     FW_BOLD, FW_NORMAL,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetFocus};
+use windows::Win32::UI::Input::Ime::{
+    ImmGetContext, ImmReleaseContext, ImmSetCandidateWindow, ImmSetCompositionWindow,
+    CANDIDATEFORM, CFS_CANDIDATEPOS, CFS_POINT, COMPOSITIONFORM,
+};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, ReleaseCapture, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, CreateWindowExW, DefWindowProcW, GetWindowRect, IDC_ARROW, LoadCursorW,
-    SW_HIDE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SetForegroundWindow, SetWindowPos, ShowWindow,
-    IsIconic, WM_CHAR, WM_DESTROY, WM_EXITSIZEMOVE, WM_MOVE, WM_LBUTTONDOWN, WM_LBUTTONDBLCLK,
-    WM_MOUSEACTIVATE, WM_MOUSEWHEEL, WM_NCHITTEST, WM_NCLBUTTONDOWN, WNDCLASSEXW, CS_DBLCLKS,
-    WS_EX_LAYERED, WS_EX_APPWINDOW, WS_EX_TOPMOST, WS_POPUP, HWND_TOPMOST, HWND_NOTOPMOST, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_NOACTIVATE, MA_ACTIVATE, SendMessageW, HTCAPTION, HTCLIENT,
+    BringWindowToTop, CreateCaret, CreateWindowExW, DefWindowProcW, DestroyCaret, GetWindowRect,
+    HTCAPTION, HTCLIENT, IDC_ARROW, IsIconic, LoadCursorW, MA_ACTIVATE,
+    SW_HIDE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SendMessageW, SetCaretPos, SetForegroundWindow,
+    SetWindowPos, ShowCaret, ShowWindow, WNDCLASSEXW, CS_DBLCLKS, WS_EX_APPWINDOW, WS_EX_LAYERED,
+    WS_EX_TOPMOST, WS_POPUP, HWND_TOPMOST, HWND_NOTOPMOST, SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE,
+    WM_CHAR, WM_DESTROY, WM_EXITSIZEMOVE, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
+    WM_MOUSEACTIVATE, WM_MOUSEWHEEL, WM_MOVE, WM_NCHITTEST, WM_NCLBUTTONDOWN, WM_SETFOCUS,
+    WM_IME_COMPOSITION, WM_IME_SETCONTEXT, WM_IME_STARTCOMPOSITION,
 };
 use windows::core::{PCWSTR, Result, w};
 
@@ -35,8 +41,8 @@ static CLASS: WindowClass = WindowClass::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatMode {
-    Fast, // ⚡ 快速回答 (简洁、直接、极速)
-    Deep, // 🧠 深度回答 (多维对比、底层原理、完整推演)
+    Fast,
+    Deep,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,22 +78,7 @@ impl Default for AiAssistantData {
     fn default() -> Self {
         Self {
             session_id: uuid::Uuid::new_v4().to_string(),
-            messages: vec![
-                ChatBubble {
-                    is_user: true,
-                    text: "帮我解释一下 “I've been swamped lately” 和 “I've been very busy lately” 的区别。".to_string(),
-                    web_sources: Vec::new(),
-                    ttft_ms: None,
-                    total_ms: None,
-                },
-                ChatBubble {
-                    is_user: false,
-                    text: "“I've been swamped lately.”\n语气更为地道口语化，生动传达事务像潮水般涌来、忙得焦头烂额的真实状态。\n\n“I've been very busy lately.”\n表达严谨中性，适合大部分日常或职场工作汇报场合。\n\n在口语交流与写作中，根据亲疏关系与交谈语境选择最贴切的表达即可。".to_string(),
-                    web_sources: Vec::new(),
-                    ttft_ms: Some(180),
-                    total_ms: Some(950),
-                },
-            ],
+            messages: Vec::new(),
             input_text: String::new(),
             chat_mode: ChatMode::Fast,
             web_search_enabled: false,
@@ -146,8 +137,8 @@ impl AiAssistantWindow {
             data: RefCell::new(AiAssistantData::default()),
             last_anchor: Cell::new(None),
             user_pos: Cell::new(None),
-            current_width: Cell::new(600),
-            current_height: Cell::new(700),
+            current_width: Cell::new(760),
+            current_height: Cell::new(820),
             scroll_y: Cell::new(0),
             scroll_to_bottom_pending: Cell::new(false),
             dark: Cell::new(false),
@@ -187,6 +178,83 @@ impl AiAssistantWindow {
             let _ = BringWindowToTop(self.hwnd);
             let _ = SetForegroundWindow(self.hwnd);
             let _ = SetFocus(Some(self.hwnd));
+        }
+        self.update_caret_pos();
+    }
+
+    /// 计算输入框内光标在窗口客户区中的精确像素位置
+    pub fn get_caret_position(&self) -> (i32, i32) {
+        let dpi = unsafe { GetDpiForWindow(self.hwnd) }.max(96);
+        let scale = dpi as f32 / 96.0;
+        let px = |val: i32| (val as f32 * scale).round() as i32;
+        let is_max = self.is_maximized.get();
+        let margin = if is_max { 0 } else { layered::shadow_margin(dpi) };
+        let content_w = self.current_width.get();
+        let content_h = self.current_height.get();
+        let dock_top = content_h - px(132);
+        let text_start_x = px(28);
+        let text_start_y = dock_top + px(20);
+
+        let data = self.data.borrow();
+        if data.input_text.is_empty() {
+            return (margin + text_start_x, margin + text_start_y);
+        }
+
+        let hdc = unsafe { GetDC(Some(self.hwnd)) };
+        if hdc.is_invalid() {
+            return (margin + text_start_x, margin + text_start_y);
+        }
+        let font = create_font(px(13), FW_NORMAL, false);
+        let max_w = content_w - px(68);
+        let lines = wrap_text_lines(hdc, font, max_w, &data.input_text);
+        let line_count = lines.len().max(1).min(3);
+        let last_line = lines.get(line_count - 1).cloned().unwrap_or_default();
+        let utf16: Vec<u16> = last_line.encode_utf16().collect();
+        let mut size = SIZE::default();
+        unsafe {
+            SelectObject(hdc, font.into());
+            let _ = GetTextExtentPoint32W(hdc, &utf16, &mut size);
+            let _ = DeleteObject(font.into());
+            let _ = ReleaseDC(Some(self.hwnd), hdc);
+        }
+        let cur_x = text_start_x + size.cx;
+        let cur_y = text_start_y + ((line_count - 1) as i32) * px(20);
+        (margin + cur_x, margin + cur_y)
+    }
+
+    /// 同步更新 Win32 原生 Caret 与 IMM32 IME 锚定，确保 Windows TSF / IME 准确锚定候选窗口在输入框内
+    pub fn update_caret_pos(&self) {
+        if !self.is_visible.get() {
+            return;
+        }
+        let (cx, cy) = self.get_caret_position();
+        let dpi = unsafe { GetDpiForWindow(self.hwnd) }.max(96);
+        let scale = dpi as f32 / 96.0;
+        let px = |val: i32| (val as f32 * scale).round() as i32;
+        let caret_h = px(18);
+        unsafe {
+            let _ = CreateCaret(self.hwnd, None, 2, caret_h);
+            let _ = SetCaretPos(cx, cy);
+            let _ = ShowCaret(Some(self.hwnd));
+
+            let himc = ImmGetContext(self.hwnd);
+            if !himc.is_invalid() {
+                let mut comp = COMPOSITIONFORM {
+                    dwStyle: CFS_POINT,
+                    ptCurrentPos: POINT { x: cx, y: cy },
+                    rcArea: RECT::default(),
+                };
+                let _ = ImmSetCompositionWindow(himc, &mut comp);
+
+                let mut cand = CANDIDATEFORM {
+                    dwIndex: 0,
+                    dwStyle: CFS_CANDIDATEPOS,
+                    ptCurrentPos: POINT { x: cx, y: cy + caret_h + 2 },
+                    rcArea: RECT::default(),
+                };
+                let _ = ImmSetCandidateWindow(himc, &mut cand);
+                let _ = ImmReleaseContext(self.hwnd, himc);
+            }
         }
     }
 
@@ -290,14 +358,17 @@ impl AiAssistantWindow {
         self.is_visible.get()
     }
 
-    /// 隐藏窗口（不主动回传通知，用于响应 Router 命令）
+    /// 隐藏窗口
     pub fn hide(&self) {
         self.is_visible.set(false);
         self.last_anchor.set(None);
-        let _ = unsafe { ShowWindow(self.hwnd, SW_HIDE) };
+        unsafe {
+            let _ = DestroyCaret();
+            let _ = ShowWindow(self.hwnd, SW_HIDE);
+        }
     }
 
-    /// 用户主动关闭窗口并向 Router 报告，切断在途流式推理
+    /// 用户主动关闭窗口并向 Router 报告
     pub fn close_and_notify(&self) {
         self.hide();
         (self.action_cb)(CandidateAction::CloseAiAssistant);
@@ -331,7 +402,6 @@ impl AiAssistantWindow {
     /// 切换最大化/还原
     pub fn toggle_maximize(&self) {
         if self.is_maximized.get() {
-            // 还原窗口
             if let Some((nx, ny, nw, nh)) = self.normal_bounds.get() {
                 self.current_width.set(nw);
                 self.current_height.set(nh);
@@ -339,12 +409,11 @@ impl AiAssistantWindow {
             } else {
                 let dpi = unsafe { GetDpiForWindow(self.hwnd) }.max(96);
                 let scale = dpi as f32 / 96.0;
-                self.current_width.set((600.0 * scale).round() as i32);
-                self.current_height.set((700.0 * scale).round() as i32);
+                self.current_width.set((760.0 * scale).round() as i32);
+                self.current_height.set((820.0 * scale).round() as i32);
             }
             self.is_maximized.set(false);
         } else {
-            // 最大化展开至当前所在屏幕工作区
             let mut rc = RECT::default();
             let _ = unsafe { GetWindowRect(self.hwnd, &mut rc) };
             let dpi = unsafe { GetDpiForWindow(self.hwnd) }.max(96);
@@ -367,6 +436,7 @@ impl AiAssistantWindow {
             self.is_maximized.set(true);
         }
         let _ = self.render_and_show(self.last_anchor.get());
+        self.update_caret_pos();
     }
 
     /// 开启新会话
@@ -382,6 +452,7 @@ impl AiAssistantWindow {
         self.scroll_to_bottom_pending.set(false);
         (self.action_cb)(CandidateAction::AiChatNewSession);
         let _ = self.render_and_show(self.last_anchor.get());
+        self.update_caret_pos();
     }
 
     /// 发送消息或中断生成
@@ -404,20 +475,20 @@ impl AiAssistantWindow {
                 });
                 d.input_text.clear();
                 d.state = StreamingState::Sending;
-                let fast = d.chat_mode == ChatMode::Fast;
-                let web = d.web_search_enabled;
                 let sid = d.session_id.clone();
                 drop(d);
                 self.scroll_to_bottom_pending.set(true);
+                // 统一全智能模式发送，直出高质量深邃且结构化的 Markdown 解答
                 (self.action_cb)(CandidateAction::AiChatSend {
                     prompt,
-                    fast_mode: fast,
-                    web_search: web,
+                    fast_mode: false,
+                    web_search: false,
                     session_id: sid,
                 });
             }
         }
         let _ = self.render_and_show(self.last_anchor.get());
+        self.update_caret_pos();
     }
 
     pub fn render_and_show(&self, anchor: Option<RECT>) -> Result<()> {
@@ -431,8 +502,8 @@ impl AiAssistantWindow {
         let corner_radius = if is_max { 0 } else { 12 };
 
         if !is_max && self.user_pos.get().is_none() {
-            let logical_w = 600;
-            let logical_h = 700;
+            let logical_w = 760;
+            let logical_h = 820;
             let content_w = (logical_w as f32 * scale).round() as i32;
             let content_h = (logical_h as f32 * scale).round() as i32;
             self.current_width.set(content_w);
@@ -549,12 +620,33 @@ fn create_font(size: i32, weight: windows::Win32::Graphics::Gdi::FONT_WEIGHT, it
             italic as u32,
             0,
             0,
-            windows::Win32::Graphics::Gdi::FONT_CHARSET(1), // DEFAULT_CHARSET for full Unicode fallback
+            windows::Win32::Graphics::Gdi::FONT_CHARSET(1),
             windows::Win32::Graphics::Gdi::FONT_OUTPUT_PRECISION(0),
             windows::Win32::Graphics::Gdi::FONT_CLIP_PRECISION(0),
             windows::Win32::Graphics::Gdi::FONT_QUALITY(5), // CLEARTYPE_QUALITY
             0,
             w!("Microsoft YaHei UI"),
+        )
+    }
+}
+
+fn create_code_font(size: i32) -> HFONT {
+    unsafe {
+        CreateFontW(
+            -size,
+            0,
+            0,
+            0,
+            FW_NORMAL.0 as i32,
+            0,
+            0,
+            0,
+            windows::Win32::Graphics::Gdi::FONT_CHARSET(1),
+            windows::Win32::Graphics::Gdi::FONT_OUTPUT_PRECISION(0),
+            windows::Win32::Graphics::Gdi::FONT_CLIP_PRECISION(0),
+            windows::Win32::Graphics::Gdi::FONT_QUALITY(5),
+            0,
+            w!("Consolas"),
         )
     }
 }
@@ -571,65 +663,7 @@ fn draw_text_gdi(hdc: HDC, font: HFONT, color: COLORREF, x: i32, y: i32, text: &
     size.cx
 }
 
-/// 优雅折行：按空格与 CJK 词边界换行，绝不在英文单词内部生硬折断
-fn wrap_text_lines(hdc: HDC, font: HFONT, max_w: i32, text: &str) -> Vec<String> {
-    unsafe { SelectObject(hdc, font.into()) };
-    let mut lines = Vec::new();
-
-    for paragraph in text.split('\n') {
-        let p_trimmed = paragraph.trim_end();
-        if p_trimmed.is_empty() {
-            lines.push(String::new());
-            continue;
-        }
-
-        let mut tokens: Vec<String> = Vec::new();
-        let mut cur_word = String::new();
-
-        for ch in p_trimmed.chars() {
-            if ch.is_ascii_whitespace() {
-                if !cur_word.is_empty() {
-                    tokens.push(cur_word.clone());
-                    cur_word.clear();
-                }
-                tokens.push(" ".to_string());
-            } else if ch > '\u{2E80}' {
-                if !cur_word.is_empty() {
-                    tokens.push(cur_word.clone());
-                    cur_word.clear();
-                }
-                tokens.push(ch.to_string());
-            } else {
-                cur_word.push(ch);
-            }
-        }
-        if !cur_word.is_empty() {
-            tokens.push(cur_word);
-        }
-
-        let mut current_line = String::new();
-        for token in tokens {
-            let mut test_line = current_line.clone();
-            test_line.push_str(&token);
-            let utf16: Vec<u16> = test_line.encode_utf16().collect();
-            let mut size = SIZE::default();
-            unsafe {
-                let _ = GetTextExtentPoint32W(hdc, &utf16, &mut size);
-            }
-
-            if size.cx > max_w && !current_line.is_empty() {
-                lines.push(current_line.trim_end().to_string());
-                current_line = if token == " " { String::new() } else { token };
-            } else {
-                current_line = test_line;
-            }
-        }
-        if !current_line.is_empty() {
-            lines.push(current_line.trim_end().to_string());
-        }
-    }
-    lines
-}
+pub use super::markdown::*;
 
 fn paint_ai_assistant(
     hdc: HDC,
@@ -644,31 +678,39 @@ fn paint_ai_assistant(
     unsafe { SetBkMode(hdc, TRANSPARENT) };
     let px = |val: i32| (val as f32 * scale).round() as i32;
 
-    // 配色体系：拒绝浮夸 AI 味与发白泛虚，采用符合耐看型工业美学的 Slate + Deep Teal 高对比度体系
+    // 配色体系：Claude / DeepSeek 极简现代化 Slate 高对比度色调
     let header_bg = if dark { rgb(30, 41, 59) } else { rgb(248, 250, 252) };
-    let header_border = if dark { rgb(51, 65, 85) } else { rgb(226, 232, 240) };
-    let text_color = if dark { rgb(241, 245, 249) } else { rgb(15, 23, 42) }; // Slate 900
-    let sub_color = if dark { rgb(148, 163, 184) } else { rgb(71, 85, 105) }; // Slate 600
-    let muted_color = if dark { rgb(100, 116, 139) } else { rgb(148, 163, 184) };
-    let brand_color = rgb(15, 118, 110); // 深青 #0F766E
-    let brand_light = if dark { rgb(19, 78, 74) } else { rgb(204, 251, 241) }; // #CCFBF1
-    let brand_border = rgb(20, 184, 166);
+    let header_border = if dark { rgb(51, 65, 85) } else { rgb(229, 231, 235) };
+    let text_color = if dark { rgb(241, 245, 249) } else { rgb(17, 24, 39) };
+    let sub_color = if dark { rgb(107, 114, 128) } else { rgb(75, 85, 99) };
+    let muted_color = if dark { rgb(148, 163, 184) } else { rgb(156, 163, 175) };
+    let brand_color = rgb(37, 99, 235); // #2563EB shared with learning panel
+    let brand_light = if dark { rgb(30, 58, 138) } else { rgb(235, 242, 255) };
+    let brand_border = rgb(37, 99, 235);
 
     let card_bg = if dark { rgb(30, 41, 59) } else { rgb(248, 250, 252) };
-    let card_border = if dark { rgb(51, 65, 85) } else { rgb(203, 213, 225) }; // Slate 300
-    let user_bubble_bg = if dark { rgb(30, 58, 138) } else { rgb(241, 245, 249) }; // Slate 100
-    let user_bubble_border = if dark { rgb(59, 130, 246) } else { rgb(203, 213, 225) };
-    let user_text = if dark { rgb(241, 245, 249) } else { rgb(15, 23, 42) };
+    let card_border = if dark { rgb(51, 65, 85) } else { rgb(229, 231, 235) };
+    let user_bubble_bg = if dark { rgb(30, 58, 138) } else { rgb(235, 242, 255) };
+    let user_bubble_border = if dark { rgb(51, 102, 225) } else { rgb(219, 230, 255) };
+    let user_text = if dark { rgb(241, 245, 249) } else { rgb(17, 24, 39) };
+
+    let code_bg = if dark { rgb(51, 65, 85) } else { rgb(241, 245, 249) };
+    let code_color = if dark { rgb(147, 197, 253) } else { rgb(37, 99, 235) };
+    let code_block_bg = if dark { rgb(15, 23, 42) } else { rgb(248, 250, 252) };
+    let code_block_border = if dark { rgb(51, 65, 85) } else { rgb(229, 231, 235) };
 
     let font_brand = create_font(px(14), FW_BOLD, false);
+    let font_header_title = create_font(px(15), FW_BOLD, false);
+    let font_header_sub = create_font(px(14), FW_BOLD, false);
     let font_btn = create_font(px(12), FW_NORMAL, false);
-    let font_msg = create_font(px(13), FW_NORMAL, false);
-    let font_msg_bold = create_font(px(13), FW_BOLD, false);
+    let font_msg = create_font(px(14), FW_NORMAL, false);
+    let font_msg_bold = create_font(px(14), FW_BOLD, false);
+    let font_code = create_code_font(px(12));
     let font_small = create_font(px(11), FW_NORMAL, false);
     let font_small_bold = create_font(px(11), FW_BOLD, false);
 
     // ==========================================
-    // 1. 顶部标题栏 (高度 px(44)，实体底色与边框)
+    // 1. 顶部标题栏 (高度 px(44))
     // ==========================================
     let header_rect = RECT { left: 0, top: 0, right: client.right, bottom: px(44) };
     super::candidates::view::fill_rect(hdc, header_rect, header_bg);
@@ -679,8 +721,10 @@ fn paint_ai_assistant(
     draw_text_gdi(hdc, font_brand, brand_color, hx, px(12), "✦");
     hx += px(16);
     draw_text_gdi(hdc, font_brand, text_color, hx, px(12), "青简 AI 助手");
+    hx += px(96);
+    draw_text_gdi(hdc, font_small, muted_color, hx, px(14), "· Qwen3 14B");
 
-    // 右侧 5 键操作群：新对话 ✎ | 置顶 📌 | 最小化 — | 最大化/还原 🗖/⧉ | 关闭 ✕
+    // 右侧操作群：新会话 ✎ | 置顶 📌 | 最小化 — | 最大化/还原 🗖/⧉ | 关闭 ✕
     let btn_w = px(28);
     let gap = px(4);
     let mr = px(12);
@@ -719,30 +763,70 @@ fn paint_ai_assistant(
     // ==========================================
     // 2. 测量消息流并计算视口滚动几何
     // ==========================================
-    let view_top = px(48);
-    let view_bottom = client.bottom - px(148);
+    if data.messages.is_empty() {
+        let max_w = (client.right - px(80)).max(px(180));
+        let hero_y = px(190);
+        draw_text_gdi(hdc, font_header_title, text_color, px(36), hero_y, "今天想学点什么？");
+        draw_text_gdi(hdc, font_msg, sub_color, px(36), hero_y + px(32), "输入问题、短语或中文表达，青简会帮你拆解含义与用法。");
+        let cards = [
+            ("口语表达", "这句话怎么说得更自然？"),
+            ("语法与语感", "解释语气差异并给出例句"),
+            ("雅思口语", "用这个表达练习一段对话"),
+        ];
+        let mut cy = hero_y + px(76);
+        for (label, detail) in cards {
+            let rect = RECT { left: px(36), top: cy, right: px(36) + max_w, bottom: cy + px(56) };
+            super::candidates::view::fill_round_rect(hdc, rect, card_bg, 8);
+            let edge = RECT { left: rect.left, top: rect.top, right: rect.left + px(3), bottom: rect.bottom };
+            super::candidates::view::fill_round_rect(hdc, edge, brand_color, 2);
+            draw_text_gdi(hdc, font_small_bold, brand_color, rect.left + px(14), cy + px(9), label);
+            draw_text_gdi(hdc, font_msg, text_color, rect.left + px(14), cy + px(30), detail);
+            cy += px(66);
+        }
+    }
+    let view_top = px(56);
+    let view_bottom = client.bottom - px(132);
     let view_h = (view_bottom - view_top).max(100);
 
     let mut total_content_height = 0;
     for msg in &data.messages {
         if msg.is_user {
-            let max_w = (client.right * 7 / 10).min(px(420));
+            let max_w = (client.right * 7 / 10).min(px(440));
             let lines = wrap_text_lines(hdc, font_msg, max_w - px(24), &msg.text);
             let text_h = (lines.len() as i32 * px(20)).max(px(20));
             let bubble_h = text_h + px(16);
             total_content_height += bubble_h + px(16);
         } else {
             let max_w = client.right - px(48);
-            let lines = wrap_text_lines(hdc, font_msg, max_w, &msg.text);
-            let text_h = (lines.len() as i32 * px(22)).max(px(22));
-            let mut item_h = px(24) + text_h;
+            let blocks = parse_markdown_blocks(&msg.text);
+            let mut item_h = px(24);
+            for b in &blocks {
+                match b {
+                    MarkdownBlock::Header { .. } => {
+                        item_h += px(28);
+                    }
+                    MarkdownBlock::BulletItem { text: spans }
+                    | MarkdownBlock::NumberedItem { text: spans, .. }
+                    | MarkdownBlock::Quote { text: spans } => {
+                        let lines = wrap_formatted_spans(hdc, font_msg, font_msg_bold, font_code, max_w - px(20), spans);
+                        item_h += (lines.len() as i32 * px(22)).max(px(22)) + px(4);
+                    }
+                    MarkdownBlock::Paragraph { spans } => {
+                        let lines = wrap_formatted_spans(hdc, font_msg, font_msg_bold, font_code, max_w, spans);
+                        item_h += (lines.len() as i32 * px(22)).max(px(22)) + px(6);
+                    }
+                    MarkdownBlock::CodeBlock { lines, .. } => {
+                        item_h += (lines.len() as i32 * px(18)).max(px(18)) + px(16);
+                    }
+                }
+            }
             if !msg.web_sources.is_empty() {
                 item_h += px(20) + (msg.web_sources.len().min(3) as i32) * px(18);
             }
             if msg.ttft_ms.is_some() || msg.total_ms.is_some() {
                 item_h += px(20);
             }
-            total_content_height += item_h + px(18);
+            total_content_height += item_h + px(20);
         }
     }
 
@@ -765,7 +849,7 @@ fn paint_ai_assistant(
     let mut my = view_top - scroll_offset;
     for msg in &data.messages {
         if msg.is_user {
-            let max_w = (client.right * 7 / 10).min(px(420));
+            let max_w = (client.right * 7 / 10).min(px(440));
             let lines = wrap_text_lines(hdc, font_msg, max_w - px(24), &msg.text);
             let text_h = (lines.len() as i32 * px(20)).max(px(20));
             let bubble_w = max_w;
@@ -787,7 +871,7 @@ fn paint_ai_assistant(
             my += bubble_h + px(16);
         } else {
             let label = if data.state == StreamingState::Streaming {
-                "✦ QINGJIAN AI · 正在思考回答……"
+                "✦ QINGJIAN AI · 正在思考生成……"
             } else {
                 "✦ QINGJIAN AI"
             };
@@ -797,22 +881,86 @@ fn paint_ai_assistant(
             my += px(24);
 
             let max_w = client.right - px(48);
-            let lines = wrap_text_lines(hdc, font_msg, max_w, &msg.text);
-            for line in &lines {
-                if my >= view_top - px(22) && my <= view_bottom {
-                    if line.starts_with("### ") || line.starts_with("## ") {
-                        let h_txt = line.trim_start_matches('#').trim();
-                        draw_text_gdi(hdc, font_msg_bold, text_color, px(20), my, h_txt);
-                    } else if line.starts_with("- ") || line.starts_with("* ") {
-                        let bullet_txt = format!("• {}", &line[2..]);
-                        draw_text_gdi(hdc, font_msg, text_color, px(28), my, &bullet_txt);
-                    } else {
-                        draw_text_gdi(hdc, font_msg, text_color, px(20), my, line);
+            let blocks = parse_markdown_blocks(&msg.text);
+            for b in &blocks {
+                match b {
+                    MarkdownBlock::Header { level, text } => {
+                        let font = if *level <= 2 { font_header_title } else { font_header_sub };
+                        if my >= view_top - px(28) && my <= view_bottom {
+                            draw_text_gdi(hdc, font, text_color, px(20), my, text);
+                        }
+                        my += px(28);
+                    }
+                    MarkdownBlock::BulletItem { text: spans } => {
+                        let lines = wrap_formatted_spans(hdc, font_msg, font_msg_bold, font_code, max_w - px(20), spans);
+                        for (l_idx, line) in lines.iter().enumerate() {
+                            if my >= view_top - px(22) && my <= view_bottom {
+                                if l_idx == 0 {
+                                    draw_text_gdi(hdc, font_msg_bold, brand_color, px(20), my, "•");
+                                }
+                                render_spans_line(hdc, font_msg, font_msg_bold, font_code, text_color, code_color, code_bg, px(32), my, &line.spans, px);
+                            }
+                            my += px(22);
+                        }
+                        my += px(4);
+                    }
+                    MarkdownBlock::NumberedItem { number, text: spans } => {
+                        let lines = wrap_formatted_spans(hdc, font_msg, font_msg_bold, font_code, max_w - px(24), spans);
+                        let num_prefix = format!("{}.", number);
+                        for (l_idx, line) in lines.iter().enumerate() {
+                            if my >= view_top - px(22) && my <= view_bottom {
+                                if l_idx == 0 {
+                                    draw_text_gdi(hdc, font_small_bold, sub_color, px(20), my, &num_prefix);
+                                }
+                                render_spans_line(hdc, font_msg, font_msg_bold, font_code, text_color, code_color, code_bg, px(36), my, &line.spans, px);
+                            }
+                            my += px(22);
+                        }
+                        my += px(4);
+                    }
+                    MarkdownBlock::Quote { text: spans } => {
+                        let lines = wrap_formatted_spans(hdc, font_msg, font_msg_bold, font_code, max_w - px(24), spans);
+                        let quote_h = (lines.len() as i32 * px(22)).max(px(22));
+                        if my >= view_top - quote_h && my <= view_bottom {
+                            let bar_r = RECT { left: px(20), top: my, right: px(23), bottom: my + quote_h };
+                            super::candidates::view::fill_rect(hdc, bar_r, brand_color);
+                        }
+                        for line in &lines {
+                            if my >= view_top - px(22) && my <= view_bottom {
+                                render_spans_line(hdc, font_msg, font_msg_bold, font_code, sub_color, code_color, code_bg, px(30), my, &line.spans, px);
+                            }
+                            my += px(22);
+                        }
+                        my += px(4);
+                    }
+                    MarkdownBlock::Paragraph { spans } => {
+                        let lines = wrap_formatted_spans(hdc, font_msg, font_msg_bold, font_code, max_w, spans);
+                        for line in &lines {
+                            if my >= view_top - px(22) && my <= view_bottom {
+                                render_spans_line(hdc, font_msg, font_msg_bold, font_code, text_color, code_color, code_bg, px(20), my, &line.spans, px);
+                            }
+                            my += px(22);
+                        }
+                        my += px(6);
+                    }
+                    MarkdownBlock::CodeBlock { lines, .. } => {
+                        let block_h = (lines.len() as i32 * px(18)).max(px(18)) + px(16);
+                        if my + block_h >= view_top && my <= view_bottom {
+                            let r = RECT { left: px(20), top: my, right: client.right - px(20), bottom: my + block_h };
+                            super::candidates::view::fill_round_rect(hdc, r, code_block_bg, 6);
+                            let border_r = RECT { left: px(20), top: my, right: client.right - px(20), bottom: my + 1 };
+                            super::candidates::view::fill_rect(hdc, border_r, code_block_border);
+                            let mut cy = my + px(8);
+                            for l in lines {
+                                draw_text_gdi(hdc, font_code, text_color, px(28), cy, l);
+                                cy += px(18);
+                            }
+                        }
+                        my += block_h + px(8);
                     }
                 }
-                my += px(22);
             }
-            my += px(8);
+            my += px(4);
 
             // 网络检索来源卡片
             if !msg.web_sources.is_empty() {
@@ -863,10 +1011,10 @@ fn paint_ai_assistant(
         super::candidates::view::fill_round_rect(hdc, thumb_rect, if dark { rgb(71, 85, 105) } else { rgb(148, 163, 184) }, 2);
     }
 
-    // ==========================================
-    // 4. 底部输入与控制卡片 (高度 px(148)，全宽遮蔽正文，防穿透防重叠)
-    // ==========================================
-    let dock_top = client.bottom - px(148);
+    // =========================================================================
+    // 4. 底部输入 Dock：与学习面板共享蓝灰色、轻边框和统一留白规范
+    // =========================================================================
+    let dock_top = client.bottom - px(132);
     let dock_rect = RECT {
         left: 0,
         top: dock_top,
@@ -883,99 +1031,93 @@ fn paint_ai_assistant(
     };
     super::candidates::view::fill_rect(hdc, dock_border, card_border);
 
-    // 输入框卡片
+    // 统一输入容器卡片
     let in_box_rect = RECT {
-        left: px(16),
-        top: dock_top + px(10),
-        right: client.right - px(16),
-        bottom: dock_top + px(92),
+        left: px(24),
+        top: dock_top + px(12),
+        right: client.right - px(24),
+        bottom: client.bottom - px(12),
     };
-    super::candidates::view::fill_round_rect(hdc, in_box_rect, if dark { rgb(15, 23, 42) } else { rgb(255, 255, 255) }, 6);
+    super::candidates::view::fill_round_rect(
+        hdc,
+        in_box_rect,
+        if dark { rgb(15, 23, 42) } else { rgb(255, 255, 255) },
+        8,
+    );
     let in_border_rect = RECT {
-        left: px(16),
-        top: dock_top + px(10),
-        right: client.right - px(16),
-        bottom: dock_top + px(11),
+        left: px(24),
+        top: dock_top + px(12),
+        right: client.right - px(24),
+        bottom: dock_top + px(13),
     };
     super::candidates::view::fill_rect(hdc, in_border_rect, card_border);
 
-    let input_y = dock_top + px(18);
+    // 文本排版
+    let input_y = dock_top + px(22);
+    let mut cur_caret_x = px(28);
+    let mut cur_caret_y = input_y;
     if data.input_text.is_empty() {
-        draw_text_gdi(hdc, font_msg, muted_color, px(28), input_y, "输入消息……（Enter 发送，Shift+Enter 换行）");
+        draw_text_gdi(hdc, font_msg, muted_color, px(28), input_y, "向青简 AI 提问任何问题…… (Enter 发送，Shift+Enter 换行)");
     } else {
-        let max_in_w = client.right - px(64);
-        let cursor_txt = format!("{}|", data.input_text);
-        let in_lines = wrap_text_lines(hdc, font_msg, max_in_w, &cursor_txt);
+        let max_in_w = client.right - px(68);
+        let in_lines = wrap_text_lines(hdc, font_msg, max_in_w, &data.input_text);
         let mut cur_y = input_y;
-        for line in in_lines.iter().take(3) {
-            draw_text_gdi(hdc, font_msg, text_color, px(28), cur_y, line);
+        let line_count = in_lines.len().max(1).min(3);
+        for (i, line) in in_lines.iter().take(3).enumerate() {
+            let lw = draw_text_gdi(hdc, font_msg, text_color, px(28), cur_y, line);
+            if i == line_count - 1 {
+                cur_caret_x = px(28) + lw;
+                cur_caret_y = cur_y;
+            }
             cur_y += px(20);
         }
     }
 
-    // 底部控制胶囊条
-    let bar_y = client.bottom - px(44);
-    let mut cx = px(16);
+    // 绘制输入框内呼吸光标 (消除“光标焦点不在框里”的视觉缺失)
+    let caret_rect = RECT {
+        left: cur_caret_x + px(1),
+        top: cur_caret_y + px(1),
+        right: cur_caret_x + px(3),
+        bottom: cur_caret_y + px(17),
+    };
+    super::candidates::view::fill_rect(hdc, caret_rect, brand_color);
 
-    // [+] 扩展
-    let r_plus = RECT { left: cx, top: bar_y, right: cx + px(28), bottom: bar_y + px(28) };
-    super::candidates::view::fill_round_rect(hdc, r_plus, if dark { rgb(51, 65, 85) } else { rgb(255, 255, 255) }, 4);
-    let r_plus_b = RECT { left: cx, top: bar_y, right: cx + px(28), bottom: bar_y + 1 };
-    super::candidates::view::fill_rect(hdc, r_plus_b, card_border);
-    draw_text_gdi(hdc, font_btn, sub_color, cx + px(9), bar_y + px(5), "+");
-    cx += px(36);
+    // 底部状态标识与发送/停止按钮 (在输入卡片内部右下角)
+    let bottom_action_y = client.bottom - px(42);
 
-    // [⚡ 快速回答]
-    let is_fast = data.chat_mode == ChatMode::Fast;
-    let fast_w = px(92);
-    let r_fast = RECT { left: cx, top: bar_y, right: cx + fast_w, bottom: bar_y + px(28) };
-    let fast_bg = if is_fast { brand_light } else { if dark { rgb(51, 65, 85) } else { rgb(255, 255, 255) } };
-    super::candidates::view::fill_round_rect(hdc, r_fast, fast_bg, 4);
-    let r_fast_b = RECT { left: cx, top: bar_y, right: cx + fast_w, bottom: bar_y + 1 };
-    super::candidates::view::fill_rect(hdc, r_fast_b, if is_fast { brand_border } else { card_border });
-    draw_text_gdi(hdc, if is_fast { font_small_bold } else { font_btn }, if is_fast { brand_color } else { sub_color }, cx + px(10), bar_y + px(5), "⚡ 快速回答");
-    cx += fast_w + px(8);
+    // 左侧极简模型标识
+    draw_text_gdi(hdc, font_small, sub_color, px(28), bottom_action_y + px(4), "✦ Qwen3 14B · 极速高性价比专享推理");
 
-    // [🧠 深度回答]
-    let is_deep = data.chat_mode == ChatMode::Deep;
-    let deep_w = px(92);
-    let r_deep = RECT { left: cx, top: bar_y, right: cx + deep_w, bottom: bar_y + px(28) };
-    let deep_bg = if is_deep { brand_light } else { if dark { rgb(51, 65, 85) } else { rgb(255, 255, 255) } };
-    super::candidates::view::fill_round_rect(hdc, r_deep, deep_bg, 4);
-    let r_deep_b = RECT { left: cx, top: bar_y, right: cx + deep_w, bottom: bar_y + 1 };
-    super::candidates::view::fill_rect(hdc, r_deep_b, if is_deep { brand_border } else { card_border });
-    draw_text_gdi(hdc, if is_deep { font_small_bold } else { font_btn }, if is_deep { brand_color } else { sub_color }, cx + px(10), bar_y + px(5), "🧠 深度回答");
-    cx += deep_w + px(8);
-
-    // [🌐 联网搜索]
-    let is_web = data.web_search_enabled;
-    let web_w = px(92);
-    let r_web = RECT { left: cx, top: bar_y, right: cx + web_w, bottom: bar_y + px(28) };
-    let web_bg = if is_web { rgb(220, 252, 231) } else { if dark { rgb(51, 65, 85) } else { rgb(255, 255, 255) } };
-    super::candidates::view::fill_round_rect(hdc, r_web, web_bg, 4);
-    let r_web_b = RECT { left: cx, top: bar_y, right: cx + web_w, bottom: bar_y + 1 };
-    super::candidates::view::fill_rect(hdc, r_web_b, if is_web { rgb(34, 197, 94) } else { card_border });
-    draw_text_gdi(hdc, if is_web { font_small_bold } else { font_btn }, if is_web { rgb(21, 128, 61) } else { sub_color }, cx + px(10), bar_y + px(5), "🌐 联网搜索");
-
-    // 右侧发送 / 停止按钮
+    // 右侧现代圆角发送/停止 Action 按钮
     let send_x = client.right - px(48);
-    let send_rect = RECT { left: send_x, top: bar_y, right: send_x + px(32), bottom: bar_y + px(28) };
+    let send_y = bottom_action_y;
+    let send_rect = RECT {
+        left: send_x,
+        top: send_y,
+        right: send_x + px(28),
+        bottom: send_y + px(28),
+    };
 
     if data.state == StreamingState::Streaming {
         // 生成中：停止按钮 (红色方形 ■)
-        super::candidates::view::fill_round_rect(hdc, send_rect, rgb(220, 38, 38), 4);
-        draw_text_gdi(hdc, font_brand, rgb(255, 255, 255), send_x + px(10), bar_y + px(5), "■");
+        super::candidates::view::fill_round_rect(hdc, send_rect, rgb(220, 38, 38), 6);
+        draw_text_gdi(hdc, font_brand, rgb(255, 255, 255), send_x + px(9), send_y + px(4), "■");
     } else {
-        // 就绪态：发送按钮 (深青箭头 ↑)
-        super::candidates::view::fill_round_rect(hdc, send_rect, brand_color, 4);
-        draw_text_gdi(hdc, font_brand, rgb(255, 255, 255), send_x + px(10), bar_y + px(5), "↑");
+        let has_text = !data.input_text.trim().is_empty();
+        let btn_color = if has_text { brand_color } else { if dark { rgb(51, 65, 85) } else { rgb(203, 213, 225) } };
+        let icon_color = if has_text { rgb(255, 255, 255) } else { if dark { rgb(100, 116, 139) } else { rgb(148, 163, 184) } };
+        super::candidates::view::fill_round_rect(hdc, send_rect, btn_color, 6);
+        draw_text_gdi(hdc, font_brand, icon_color, send_x + px(9), send_y + px(4), "↑");
     }
 
     unsafe {
         let _ = DeleteObject(font_brand.into());
+        let _ = DeleteObject(font_header_title.into());
+        let _ = DeleteObject(font_header_sub.into());
         let _ = DeleteObject(font_btn.into());
         let _ = DeleteObject(font_msg.into());
         let _ = DeleteObject(font_msg_bold.into());
+        let _ = DeleteObject(font_code.into());
         let _ = DeleteObject(font_small.into());
         let _ = DeleteObject(font_small_bold.into());
     }
@@ -998,7 +1140,30 @@ unsafe fn wndproc_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) ->
     match msg {
         WM_MOUSEACTIVATE => LRESULT(MA_ACTIVATE as isize),
         WM_NCHITTEST => LRESULT(HTCLIENT as isize),
+        WM_IME_SETCONTEXT | WM_IME_STARTCOMPOSITION | WM_IME_COMPOSITION => {
+            let win = AI_WINDOWS.with(|w| w.borrow().get(&(hwnd.0 as isize)).cloned());
+            if let Some(win) = win {
+                win.update_caret_pos();
+            }
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+        }
+        WM_SETFOCUS => {
+            let win = AI_WINDOWS.with(|w| w.borrow().get(&(hwnd.0 as isize)).cloned());
+            if let Some(win) = win {
+                win.update_caret_pos();
+            }
+            LRESULT(0)
+        }
+        WM_KILLFOCUS => {
+            unsafe {
+                let _ = DestroyCaret();
+            }
+            LRESULT(0)
+        }
         WM_DESTROY => {
+            unsafe {
+                let _ = DestroyCaret();
+            }
             AI_WINDOWS.with(|w| w.borrow_mut().remove(&(hwnd.0 as isize)));
             LRESULT(0)
         }
@@ -1035,7 +1200,7 @@ unsafe fn wndproc_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) ->
                 if ch == '\x08' {
                     d.input_text.pop();
                 } else if ch == '\r' || ch == '\n' {
-                    let shift = (unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState(0x10) } as i16) < 0;
+                    let shift = (unsafe { GetKeyState(0x10) } as i16) < 0;
                     if shift {
                         d.input_text.push('\n');
                     } else {
@@ -1052,6 +1217,7 @@ unsafe fn wndproc_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) ->
                 }
                 drop(d);
                 let _ = win.render_and_show(win.last_anchor.get());
+                win.update_caret_pos();
             }
             LRESULT(0)
         }
@@ -1093,7 +1259,7 @@ unsafe fn wndproc_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) ->
                 let w = win.current_width.get();
                 let h = win.current_height.get();
 
-                // 1. 顶部操作栏 (cy in 0..px(44))
+                // 1. 顶部操作栏
                 if cy >= 0 && cy <= px(44) {
                     let btn_w = px(28);
                     let gap = px(4);
@@ -1113,7 +1279,7 @@ unsafe fn wndproc_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) ->
                         return LRESULT(0);
                     }
 
-                    // 1.3 最小化 — (真正最小化至任务栏，绝不强退会话)
+                    // 1.3 最小化 —
                     let b3_x = w - mr - 3 * btn_w - 2 * gap;
                     if cx >= b3_x && cx < b2_x {
                         win.minimize();
@@ -1149,56 +1315,27 @@ unsafe fn wndproc_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) ->
                     return LRESULT(0);
                 }
 
-                // 2. 底部控制条点击 (cy in h - px(52) .. h - px(10))
-                let bar_y = h - px(44);
-                if cy >= bar_y - px(4) && cy <= bar_y + px(32) {
-                    // 2.0 [+] 清除输入框文本
-                    let plus_x = px(16);
-                    if cx >= plus_x && cx <= plus_x + px(28) {
-                        win.data.borrow_mut().input_text.clear();
-                        let _ = win.render_and_show(win.last_anchor.get());
-                        return LRESULT(0);
-                    }
+                // 2. 底部控制区点击
+                let dock_top = h - px(132);
+                let bottom_action_y = h - px(42);
 
-                    // 2.1 发送/停止按钮点击
-                    let send_x = w - px(48);
-                    if cx >= send_x - px(4) && cx <= send_x + px(36) {
-                        win.send_or_stop();
-                        return LRESULT(0);
-                    }
-
-                    // 2.2 切换快速回答
-                    let fast_x = px(16) + px(36);
-                    let fast_w = px(92);
-                    if cx >= fast_x && cx <= fast_x + fast_w {
-                        win.data.borrow_mut().chat_mode = ChatMode::Fast;
-                        let _ = win.render_and_show(win.last_anchor.get());
-                        return LRESULT(0);
-                    }
-
-                    // 2.3 切换深度回答
-                    let deep_x = fast_x + fast_w + px(8);
-                    let deep_w = px(92);
-                    if cx >= deep_x && cx <= deep_x + deep_w {
-                        win.data.borrow_mut().chat_mode = ChatMode::Deep;
-                        let _ = win.render_and_show(win.last_anchor.get());
-                        return LRESULT(0);
-                    }
-
-                    // 2.4 切换联网搜索
-                    let web_x = deep_x + deep_w + px(8);
-                    let web_w = px(92);
-                    if cx >= web_x && cx <= web_x + web_w {
-                        let mut d = win.data.borrow_mut();
-                        d.web_search_enabled = !d.web_search_enabled;
-                        drop(d);
-                        let _ = win.render_and_show(win.last_anchor.get());
-                        return LRESULT(0);
-                    }
+                // 发送/停止按钮点击
+                let send_x = w - px(48);
+                let send_y = bottom_action_y;
+                if cx >= send_x && cx <= send_x + px(28) && cy >= send_y && cy <= send_y + px(28) {
+                    win.send_or_stop();
+                    return LRESULT(0);
                 }
 
-                // 聚焦到窗口与输入区
+                // 输入卡片点击：聚焦并设置 Caret
+                if cy >= dock_top {
+                    let _ = unsafe { SetFocus(Some(hwnd)) };
+                    win.update_caret_pos();
+                    return LRESULT(0);
+                }
+
                 let _ = unsafe { SetFocus(Some(hwnd)) };
+                win.update_caret_pos();
             }
             LRESULT(0)
         }

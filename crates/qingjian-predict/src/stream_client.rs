@@ -68,7 +68,9 @@ impl StreamChatClient {
         Self {
             http: reqwest::Client::builder()
                 .tcp_nodelay(true)
-                .connect_timeout(Duration::from_secs(10))
+                .connect_timeout(Duration::from_secs(5))
+                // SSE 读取空闲 20 秒仍无新数据时中止，避免 UI 永久转圈。
+                .read_timeout(Duration::from_secs(20))
                 .build()
                 .unwrap_or_default(),
             base_url,

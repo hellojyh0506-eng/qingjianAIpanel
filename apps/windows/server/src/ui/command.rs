@@ -26,6 +26,15 @@ pub(super) enum UiCommand {
     /// 显示 / 更新 English Assistant（学习助手伴侣窗）。
     CompanionShow(Box<(CompanionData, ScreenRect)>),
 
+    /// 学习助手伴侣窗指定标签的流式增量文本到达
+    CompanionChunk { tab: usize, chunk: String },
+
+    /// 学习助手伴侣窗指定标签的流式生成完成
+    CompanionFinish(usize),
+
+    /// 学习助手伴侣窗指定标签的流式生成异常
+    CompanionError { tab: usize, message: String },
+
     /// 收起 English Assistant。
     CompanionHide,
 

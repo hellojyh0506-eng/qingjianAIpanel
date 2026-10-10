@@ -327,8 +327,9 @@ impl Router {
             return Effect::Changed(Some(self.commit_highlighted()));
         }
         // 表达式 / 问字模式下的其他字符不进缓冲区（与 macOS 壳一致），辅码态里敲标点同理（码段随之清空）：
-        // 都是先把高亮候选上屏，再按没在组句处理这个键、标点按组句外语义转全角
-        if (c != '\'' && (expression || self.engine.question_mode())) || self.engine.in_aux() {
+        // 都是先把高亮候选上屏，再按没在组句处理这个键、标点按组句外语义转全角。
+        // 特别地，中文组句时敲 `?`（Shift + /）直接将候选上屏并转全角问号，绝不把 ? 塞进拼音缓冲或误唤起学习面板。
+        if c == '?' || (c != '\'' && (expression || self.engine.question_mode())) || self.engine.in_aux() {
             let committed = self.commit_highlighted();
             let effect = self.apply_punctuation(c, event);
             return with_prefix(Some(committed), effect, c);

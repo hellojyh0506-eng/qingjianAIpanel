@@ -28,6 +28,19 @@ pub trait CandidateSink: Send {
         let _ = (data, rect);
     }
 
+    /// 发送指定标签的流式文本增量到 English Assistant 学习助手伴侣窗
+    fn send_companion_chunk(&self, tab: usize, chunk: String) {
+        let _ = (tab, chunk);
+    }
+
+    /// 指定标签的学习助手流式生成完成
+    fn finish_companion_stream(&self, _tab: usize) {}
+
+    /// 指定标签的学习助手流式生成异常
+    fn fail_companion_stream(&self, tab: usize, message: String) {
+        let _ = (tab, message);
+    }
+
     /// 收起 English Assistant
     fn hide_companion(&self) {}
 
