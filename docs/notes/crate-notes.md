@@ -301,7 +301,7 @@ Unix socket 用共享长度前缀与 Frame（当前公共版本 7，与 `PROTOCO
 
 ## AI 整串长拼音意图纠错（Windows Server / Core / Predict）
 
-PredictionKind::Intent 是独立的当前输入意图纠错请求，与 Rerank 严格隔离。Server 仅在 7–64 位小写全拼、没有整串精确本地读音候选、且 Core 尚未采用本地纠错的情况下触发；英文、双拼、注音、形码、私密输入和其它模式跳过。Predict 使用 220 ms 防抖，只请求 corrected_pinyin，不接受模型返回汉字。Core 对建议拼音执行有界 Levenshtein 距离（按原串长度分别允许 2/3/4/5 次编辑）、完整音节切分和本地词典整句转换校验，只有精确、无占位、无模糊/错拼路径的本地转换结果才进入 UI。Server 将验证过的中文建议画在既有拼音行右侧提示位，原始 preedit 不变，Tab 才调用 accept_prediction 上屏。Learn 模式在已有的 Rerank → Translate 后请求 Intent，以免共享 Worker 争用；每次重组句清除建议/挂起标志。该能力目前仅 Windows Server 接线，未修改 TSF DLL；真实在线模型的准确率与 P50/P95 尚未验收。
+PredictionKind::Intent 是独立的当前输入意图纠错请求，与 Rerank 严格隔离。Server 仅在 7–64 位小写全拼、没有整串精确本地读音候选、且 Core 尚未采用本地纠错的情况下触发；英文、双拼、注音、形码、私密输入和其它模式跳过。Predict 使用 220 ms 防抖，只请求 corrected_pinyin，不接受模型返回汉字。Core 对建议拼音执行有界 Levenshtein 距离（按原串长度分别允许 2/3/4/5 次编辑）、完整音节切分和本地词典整句转换校验，只有精确、无占位、无模糊/错拼路径的本地转换结果才进入 UI。Server 将验证过的中文建议画在既有拼音行右侧提示位，原始 preedit 不变，Tab 才调用 accept_prediction 上屏。Learn 模式在已有的 Rerank → Translate 后请求 Intent，以免共享 Worker 争用；每次重组句清除建议/挂起标志。Intent 请求还会发送 Candidate.syllables 产生的候选读音白名单，提示模型优先考虑与原串仅差少量编辑的合法本地读音；该读音提示只出现在 Intent JSON 中。真实模型初次烟测对合成键串 kaifazhes 返回空建议，虽 HTTP 200 但纠错没有成功。已强化 Prompt 并增加候选读音字段，但修订后的真实模型质量、误纠率与 P50/P95 尚未验收。该能力目前仅 Windows Server 接线，未修改 TSF DLL。
 
 
 ## 短拼音选择优先级实验（2026-10-10）

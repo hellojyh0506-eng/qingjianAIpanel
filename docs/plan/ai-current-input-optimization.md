@@ -56,7 +56,7 @@
 - 同一日志快照 A/B：短码 Top-1 保持 84.8%，Top-5 从 97.0% 到 97.5%，落在第 6 名之后的数量从 46 降到 39；平均名次从 1.51 到 1.52，略有回退。整体词级 Top-1 84.2% 和 Top-5 96.0% 均不变，因此这是局部的 Top-5 改善，不代表整体准确率提升。
 - 已通过 Core 332 项、CLI 12 项、Windows Server 全部测试目标（含输入循环 89 项、学习卡片/模式等），cargo check -p qingjian-windows-server、git diff --check 和 Release build。
 - 代码提交：d6fe069 feat(ranking): soften one-off choices for very short pinyin。
-- Windows Release 已部署：PID 23260，SHA-256 7E6F68D475598616660F31E34D49E9EEE0C7DBEBFDC1A457E4AA46A50555CC79。部署前备份：E:\Qingjian\qingjian-server.exe.bak_shortchoice_p1_20261010_200604；桌面验证副本哈希一致，TSF DLL 未替换。
+- Windows Release 已部署：PID 25564，SHA-256 0FAACB0A2C8C86325D009195185B51550048B652AAE922A4A725D303F27CAD1D。最近部署前备份：E:\Qingjian\qingjian-server.exe.bak_intent_readings_20261010_201442；短码版本仍保留在 E:\Qingjian\qingjian-server.exe.bak_shortchoice_p1_20261010_200604；桌面验证副本哈希一致，TSF DLL 未替换。
 
 不做：
 - 不盲目扫全局常数，不降低拼音/音节结构约束，不把 AI 生成词直接插入候选。
@@ -110,13 +110,13 @@
 
 实现与边界：
 - 新增独立 PredictionKind::Intent，不与候选重排 Rerank 混用。触发条件为 7–64 位小写全拼字母、未被本地纠错处理、没有已按整串读音精确匹配的本地候选，且非英文、双拼、注音、形码、问字、表达或私密输入。
-- 请求包含实际键串、本地切分、最多 9 个本地候选提示和可用的光标前文；不发送光标后文、输入历史或 AI 对话历史。
+- 请求包含实际键串、本地切分、最多 9 个本地候选提示、候选的可信词典读音（由 Candidate.syllables 构建）和可用的光标前文；不发送光标后文、输入历史或 AI 对话历史。
 - 模型只能返回 corrected_pinyin，不能直接指定汉字、补写后文或添加候选。请求使用 220 ms 防抖；Core 检查与原串的有界编辑距离（2/3/4/5）、完整合法拼音切分与本地词典整句转换。不能通过本地校验即丢弃，不显示、不上屏。
 - 通过校验的中文建议复用拼音行右侧的提示位显示；原拼音保持不变，用户按 Tab 才采用。正常候选与数字/空格选词路径不变。
 - Learn 模式保留现有 Rerank → Translate 次序，在被动翻译后才请求意图建议；避免两个功能争用同一个预测通道。新输入会使过期结果失效。
 - 回归：Core 331 项、Predict 31 项；Windows Server 完整测试目标均通过，包括意图纠错端到端用例、学习卡片/模式、IPC、输入循环与兼容性；cargo check、git diff --check 和 Release build 通过。
-- 当前线上 Server：PID 23260；SHA-256 7E6F68D475598616660F31E34D49E9EEE0C7DBEBFDC1A457E4AA46A50555CC79。最近一次部署前备份：E:\Qingjian\qingjian-server.exe.bak_shortchoice_p1_20261010_200604；意图纠错部署前版本仍备份于 E:\Qingjian\qingjian-server.exe.bak_intent_reviewfix_20261010_194036，首次部署前版本仍备份于 E:\Qingjian\qingjian-server.exe.bak_intent_20261010_193709。桌面验证副本与线上哈希相同。未替换 TSF DLL。
-- 仍须用真实在线模型与实际长串错拼样本验收建议质量、误纠率和 P50/P95 延迟。测试里的 Mock 响应只证明隔离、校验、显示与 Tab 采用闭环，不等于真实模型效果已验证。
+- 当前线上 Server：PID 25564；SHA-256 0FAACB0A2C8C86325D009195185B51550048B652AAE922A4A725D303F27CAD1D。最近一次部署前备份：E:\Qingjian\qingjian-server.exe.bak_intent_readings_20261010_201442；短码版本备份于 E:\Qingjian\qingjian-server.exe.bak_shortchoice_p1_20261010_200604，意图纠错早期版本仍备份于 E:\Qingjian\qingjian-server.exe.bak_intent_reviewfix_20261010_194036，首次版本备份于 E:\Qingjian\qingjian-server.exe.bak_intent_20261010_193709。桌面验证副本与线上哈希相同。未替换 TSF DLL。
+- 真实模型初次烟测（Qwen/Qwen3-14B）收到 HTTP 200、约 1.4 秒响应，但对合成输入 kaifazhes 返回空建议；该结果说明不能把请求成功当作纠错成功。已增加本地候选读音提示并更新 Prompt，仍须用受支持的真实在线通路复测建议质量、误纠率和 P50/P95 延迟。测试里的 Mock 响应只证明隔离、校验、显示与 Tab 采用闭环，不等于当前 Prompt 的真实模型效果已验证。
 
 ## Phase 4：HALCON / File Dialog 数字输入
 
