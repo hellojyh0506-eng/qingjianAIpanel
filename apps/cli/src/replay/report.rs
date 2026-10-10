@@ -13,6 +13,9 @@ pub struct Report {
     /// 本地整句。
     pub sentence: Tally,
 
+    /// Word candidates grouped by input-letter length within the same chronological replay.
+    pub word_lengths: [Tally; 4],
+
     /// 英文候选。
     pub english: Tally,
 
@@ -146,6 +149,13 @@ impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "回放评测（内存学习，不写文件）")?;
         write_tally(f, "词", &self.word)?;
+        writeln!(f, "Word candidate ranking by typed-letter length (same replay)")?;
+        for (name, tally) in ["1-2 letters", "3-5 letters", "6-9 letters", "10+ letters"]
+            .iter()
+            .zip(self.word_lengths.iter())
+        {
+            write_tally(f, name, tally)?;
+        }
         write_tally(f, "整句", &self.sentence)?;
         write_tally(f, "英文", &self.english)?;
         write_tally(f, "其他", &self.other)?;

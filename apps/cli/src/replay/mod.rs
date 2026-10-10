@@ -89,6 +89,36 @@ pub fn run(
     Ok(report)
 }
 
+fn short_word_bucket(source: InputSource, scope: &str) -> Option<usize> {
+    if source != InputSource::Word {
+        return None;
+    }
+    let length = scope.chars().filter(|c| c.is_ascii_alphabetic()).count();
+    match length {
+        1..=2 => Some(0),
+        3..=5 => Some(1),
+        6..=9 => Some(2),
+        10.. => Some(3),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod length_bucket_tests {
+    use super::short_word_bucket;
+    use qingjian_core::InputSource;
+
+    #[test]
+    fn groups_only_local_words_by_letter_count() {
+        assert_eq!(short_word_bucket(InputSource::Word, "sh"), Some(0));
+        assert_eq!(short_word_bucket(InputSource::Word, "z'h"), Some(0));
+        assert_eq!(short_word_bucket(InputSource::Word, "kaifa"), Some(1));
+        assert_eq!(short_word_bucket(InputSource::Word, "zhongguoren"), Some(3));
+        assert_eq!(short_word_bucket(InputSource::Sentence, "nihao"), None);
+        assert_eq!(short_word_bucket(InputSource::Word, ""), None);
+    }
+}
+
 fn replay_commit(
     engine: &mut Engine,
     switcher: &mut SchemeSwitcher,
@@ -105,6 +135,14 @@ fn replay_commit(
         return;
     }
     switcher.apply(engine, &commit.scheme);
+    let length_bucket = short_word_bucket(
+        commit.source,
+        if commit.scope.is_empty() {
+            commit.keys.as_str()
+        } else {
+            commit.scope.as_str()
+        },
+    );
     let Some(tally) = report.tally_for(commit.source) else {
         // 不是本地排序给出的（云端词、原样上屏……）：只计数；那次上屏的词没法接进上文，断链。
         // 原样上屏照样走一遍 `take_raw`：个人英文词（`gist`）与「这个串不纠」都是从这里学的，不走它回放里的英文候选与纠错就比真实使用差
@@ -140,6 +178,12 @@ fn replay_commit(
         Ok(query) => query,
         Err(_) => {
             tally.unparsable += 1;
+            if let Some(bucket) = length_bucket {
+                let cohort = &mut report.word_lengths[bucket];
+                cohort.total += 1;
+                cohort.note_logged(commit);
+                cohort.unparsable += 1;
+            }
             engine.clear();
             return;
         }
@@ -184,6 +228,27 @@ fn replay_commit(
         ));
     }
     // 照着当时的选择上屏，让上下文往前走；不在候选里就原样清掉
+    if let Some(bucket) = length_bucket {
+        let cohort = &mut report.word_lengths[bucket];
+        cohort.total += 1;
+        cohort.note_logged(commit);
+        match position {
+            Some(0) => cohort.top1 += 1,
+            Some(index) if index < 5 => cohort.top5 += 1,
+            Some(_) => cohort.found_later += 1,
+            None => cohort.missing += 1,
+        }
+        if let Some(index) = position {
+            cohort.rank_sum += index + 1;
+        }
+        if commit.corrected {
+            cohort.corrected_then += 1;
+            if query.correction.is_some() {
+                cohort.corrected_now += 1;
+            }
+        }
+    }
+
     match position.map(|i| query.candidates.items[i].clone()) {
         Some(candidate) => {
             engine.commit(&candidate);
