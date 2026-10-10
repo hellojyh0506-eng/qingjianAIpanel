@@ -141,6 +141,14 @@ fn long_typo_intent_is_validated_locally_and_only_commits_on_tab() {
 
     *response.lock().unwrap() = Some(Prediction {
         sequence: request.sequence,
+        words: vec![CloudWord {
+            text: [0x5f00u32, 0x53d1, 0x8005]
+                .into_iter()
+                .map(|code| char::from_u32(code).unwrap())
+                .collect(),
+            syllables: Vec::new(),
+            reading: None,
+        }],
         sentence: Some("kaifazhe".to_owned()),
         ..Default::default()
     });

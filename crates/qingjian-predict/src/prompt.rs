@@ -185,13 +185,14 @@ pub const RERANK_SYSTEM_PROMPT: &str = r#"
 不输出解释、Markdown 或任何其它字段。
 "#;
 pub const INTENT_SYSTEM_PROMPT: &str = r#"
-你是青简拼音输入法的拼音纠错器。你只负责判断用户当前输入的长拼音最可能原本想拼成什么拼音。
-输入包含用户实际敲下的字母、当前本地切分、少量本地候选、候选的词典读音和光标前文。candidate_readings 是 Core 从本地词库候选的 syllables 字段构造的可信提示，不是模型推测。
-必须把整串字母作为一个整体理解，允许相邻键误触、相邻换位、遗漏或多敲字母；不要只根据开头猜词，也不要续写用户未输入的后文。
-若某个本地候选读音是完整合法全拼，并且与用户实际输入仅存在少量插入、删除、替换或相邻换位，优先考虑该读音；不要因当前切分失败或结尾有残余字母就直接放弃。如果没有可信的近距离拼音修复才输出空字符串。
-只输出一个修正后的标准全拼字母串，音节之间不要加撇号。不要输出汉字、解释、候选列表或 Markdown。
-不要为了语义顺口而大幅改动输入。修正必须仍由 Core 的本地词典和编辑距离验证。
-严格输出 JSON：{"corrected_pinyin":"nihaoma"}
+You are the current-input intent corrector for a Chinese pinyin IME. Infer what the user intended from the entire raw letter string, current segmentation, local candidates, verified candidate readings, and available text before the cursor. Do not continue the sentence or invent words.
+Return BOTH:
+- corrected_pinyin: a complete, valid lowercase pinyin reading (letters a-z only, no apostrophes).
+- candidate_text: exactly one unmodified string copied from local_candidates.
+The chosen candidate's candidate_readings entry must exactly match corrected_pinyin when apostrophes are removed. Keep the repaired spelling very close to the raw letters; consider adjacent typos, transpositions, inserted or missing letters, and trailing accidental letters.
+Use meaning and context to disambiguate homophones. If there is no useful text before the cursor, favor a common complete standalone word or term over a syntactically incomplete fragment when both share the same reading and the raw letters support both. For example, prefer "developer" over the fragment "develop this" unless surrounding text shows the user is composing a longer phrase. Never change the candidate text.
+If no candidate is a close, plausible match, output empty strings for BOTH fields.
+Strict JSON only: {"corrected_pinyin":"kaifazhe","candidate_text":"exact local candidate"}
 "#;
 
 pub fn system_prompt(request: &PredictionRequest) -> &'static str {
@@ -417,6 +418,7 @@ struct RawReply {
     candidate_order: Vec<String>,
 
     corrected_pinyin: Option<String>,
+    candidate_text: Option<String>,
 
     sentence: Option<String>,
     translation: Option<String>,
@@ -722,12 +724,41 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
     }
     if request.kind == PredictionKind::Intent {
         let pinyin = raw.corrected_pinyin.unwrap_or_default().trim().to_ascii_lowercase();
-        if (7..=64).contains(&pinyin.len())
-            && pinyin.bytes().all(|byte| byte.is_ascii_lowercase())
+        let candidate_text = raw.candidate_text.unwrap_or_default().trim().to_owned();
+        let candidate_text = if candidate_text.is_empty() && request.candidates.len() == 1 {
+            request.candidates[0].clone()
+        } else {
+            candidate_text
+        };
+        if !(7..=64).contains(&pinyin.len())
+            || !pinyin.bytes().all(|byte| byte.is_ascii_lowercase())
+            || candidate_text.is_empty()
+            || !request.candidates.iter().any(|candidate| candidate == &candidate_text)
         {
-            return Reply { sentence: Some(pinyin), ..Reply::default() };
+            return Reply::default();
         }
-        return Reply::default();
+
+        // The model cannot invent or rewrite a candidate: the chosen local entry's reading
+        // from Core must exactly match corrected_pinyin.
+        let reading_prefix = format!("{candidate_text}: ");
+        let has_exact_reading = request.candidate_readings.iter().any(|entry| {
+            entry
+                .strip_prefix(&reading_prefix)
+                .is_some_and(|reading| reading.replace('\'', "") == pinyin)
+        });
+        if !has_exact_reading {
+            return Reply::default();
+        }
+
+        return Reply {
+            sentence: Some(pinyin),
+            words: vec![CloudWord {
+                text: candidate_text,
+                syllables: Vec::new(),
+                reading: None,
+            }],
+            ..Reply::default()
+        };
     }
     if request.kind == PredictionKind::Rerank {
         let expected = &request.candidates;
@@ -1433,7 +1464,7 @@ mod tests {
     }
 
     #[test]
-    fn intent_prompt_and_parser_only_accept_a_pinyin_field() {
+    fn intent_prompt_and_parser_validate_a_local_reading() {
         let mut req = request("nihooma", false);
         req.kind = PredictionKind::Intent;
         req.letters = "nihooma".into();
@@ -1453,6 +1484,45 @@ mod tests {
         );
         assert!(parse_reply(r#"{"corrected_pinyin":"你好吗"}"#, &req).sentence.is_none());
         assert!(parse_reply(r#"{"corrected_pinyin":""}"#, &req).sentence.is_none());
+    }
+
+    #[test]
+    fn intent_can_select_a_specific_candidate_among_local_homophones() {
+        let developer: String = [0x5f00, 0x53d1, 0x8005]
+            .into_iter()
+            .map(|code| char::from_u32(code).unwrap())
+            .collect();
+        let fragment: String = [0x5f00, 0x53d1, 0x8fd9]
+            .into_iter()
+            .map(|code| char::from_u32(code).unwrap())
+            .collect();
+        let short: String = [0x5f00, 0x53d1]
+            .into_iter()
+            .map(|code| char::from_u32(code).unwrap())
+            .collect();
+        let mut req = request("kai'fa'zhe's", false);
+        req.kind = PredictionKind::Intent;
+        req.letters = "kaifazhes".into();
+        req.candidates = vec![fragment.clone(), developer.clone(), short.clone()];
+        req.candidate_readings = vec![
+            format!("{fragment}: kai'fa'zhe"),
+            format!("{developer}: kai'fa'zhe"),
+            format!("{short}: kai'fa"),
+        ];
+
+        let payload = serde_json::json!({
+            "corrected_pinyin": "kaifazhe",
+            "candidate_text": developer.clone(),
+        }).to_string();
+        let parsed = parse_reply(&payload, &req);
+        assert_eq!(parsed.sentence.as_deref(), Some("kaifazhe"));
+        assert_eq!(parsed.words.first().map(|word| word.text.as_str()), Some(developer.as_str()));
+
+        let wrong_reading = serde_json::json!({
+            "corrected_pinyin": "kaifazhe",
+            "candidate_text": short,
+        }).to_string();
+        assert!(parse_reply(&wrong_reading, &req).is_empty());
     }
 
     #[test]

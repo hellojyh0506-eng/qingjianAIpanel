@@ -117,6 +117,22 @@ fn intent_pinyin_must_be_nearby_and_resolve_exactly_in_the_local_dictionary() {
 }
 
 #[test]
+fn intent_candidate_must_be_a_current_local_candidate_with_the_matching_reading() {
+    let mut engine = engine();
+    engine.set_input("kaifazhes");
+    let developer: String = [0x5f00, 0x53d1, 0x8005]
+        .into_iter()
+        .map(|code| char::from_u32(code).unwrap())
+        .collect();
+    assert_eq!(
+        engine.resolve_intent_candidate("kaifazhe", &developer).as_deref(),
+        Some(developer.as_str())
+    );
+    assert!(engine.resolve_intent_candidate("kaifazhe", "not a local candidate").is_none());
+    assert!(engine.resolve_intent_candidate("woxiangchi", &developer).is_none());
+}
+
+#[test]
 fn prediction_request_trims_context_and_only_fires_while_composing() {
     let submitted = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let mut engine = engine().with_predictor(Box::new(EchoPredictor {

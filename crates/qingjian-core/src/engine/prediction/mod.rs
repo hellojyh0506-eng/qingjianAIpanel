@@ -169,6 +169,7 @@ impl Engine {
         Some(self.prediction_sequence)
     }
 
+    #[cfg(test)]
     pub fn resolve_intent_pinyin(&self, corrected_pinyin: &str) -> Option<String> {
         if self.private || self.shuangpin.is_some() || self.zhuyin || self.code.is_some() {
             return None;
@@ -206,6 +207,69 @@ impl Engine {
             return None;
         }
         Some(conversion.text)
+    }
+
+    pub fn resolve_intent_candidate(
+        &self,
+        corrected_pinyin: &str,
+        candidate_text: &str,
+    ) -> Option<String> {
+        if self.private || self.shuangpin.is_some() || self.zhuyin || self.code.is_some() {
+            return None;
+        }
+        let original = self.composition.scope();
+        if original.bytes().any(|byte| !byte.is_ascii_lowercase())
+            || !(7..=64).contains(&original.len())
+            || !correction::eligible(original)
+        {
+            return None;
+        }
+        let corrected = corrected_pinyin.trim();
+        if corrected.len() < 7
+            || corrected.len() > 64
+            || !corrected.bytes().all(|byte| byte.is_ascii_lowercase())
+            || corrected == original
+        {
+            return None;
+        }
+        let max_edits = if original.len() >= 40 {
+            5
+        } else if original.len() >= 16 {
+            4
+        } else if original.len() >= 10 {
+            3
+        } else {
+            2
+        };
+        if !within_edit_distance(original.as_bytes(), corrected.as_bytes(), max_edits) {
+            return None;
+        }
+        let segmentation = correction::complete_segmentation(corrected)?;
+        if segmentation.syllables.len() < 2
+            || segmentation
+                .syllables
+                .iter()
+                .map(|syllable| syllable.text.as_str())
+                .collect::<Vec<_>>()
+                .join("")
+                != corrected
+        {
+            return None;
+        }
+
+        // Use the exact chosen local entry instead of whichever homophone the converter ranks first.
+        let query = self.query().ok()?;
+        let candidate = query.candidates.items.iter().find(|candidate| {
+            candidate.text == candidate_text
+                && matches!(candidate.kind, CandidateKind::Chinese | CandidateKind::Sentence)
+        })?;
+        if candidate.syllables.is_empty()
+            || candidate.syllables.concat() != corrected
+            || candidate.syllables.len() != segmentation.syllables.len()
+        {
+            return None;
+        }
+        Some(candidate.text.clone())
     }
 
     /// 当前输入的受约束 AI 重排：最多检查本地候选前 27 项（约前三页），不生成新词或后文续写。
@@ -495,10 +559,18 @@ impl Engine {
             if prediction.sequence == self.prediction_sequence || is_learning {
                 // 问字的答案、翻译的译文和敲的拼音本来就对不上，只有组句联想的云端词要校验
                 if self.last_prediction_kind == PredictionKind::Intent {
-                    prediction.sentence = prediction
-                        .sentence
-                        .take()
-                        .and_then(|pinyin| self.resolve_intent_pinyin(&pinyin));
+                    let corrected_pinyin = prediction.sentence.take();
+                    let candidate_text = prediction.words.first().map(|word| word.text.clone());
+                    prediction.sentence = corrected_pinyin
+                        .as_deref()
+                        .zip(candidate_text.as_deref())
+                        .and_then(|(pinyin, text)| self.resolve_intent_candidate(pinyin, text));
+                    tracing::info!(
+                        sequence = prediction.sequence,
+                        accepted = prediction.sentence.is_some(),
+                        has_candidate = candidate_text.is_some(),
+                        "Intent suggestion passed local validation"
+                    );
                     prediction.words.clear();
                     prediction.alternatives.clear();
                 } else if self.last_prediction_kind == PredictionKind::Question {
