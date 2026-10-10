@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use super::super::{Candidate, CandidateKind};
 use super::Cell;
 
@@ -119,6 +121,56 @@ impl CandidateLayout {
         cells
     }
 
+    /// 只在现有本地候选原本所在的格子间重排。未被模型评价的候选、英文候选和 Custom 固定位置不移动；
+    /// 排序内容必须来自候选列表自身，不会创建、删除或改写候选。
+    pub fn reorder_local_by_text(&mut self, order: &[String]) -> bool {
+        if order.len() < 2 {
+            return false;
+        }
+        let ranks: HashMap<&str, usize> = order
+            .iter()
+            .enumerate()
+            .map(|(index, text)| (text.as_str(), index))
+            .collect();
+        let positions: Vec<usize> = self
+            .local
+            .iter()
+            .enumerate()
+            .filter_map(|(index, candidate)| {
+                (!matches!(candidate.kind, CandidateKind::Custom(_))
+                    && ranks.contains_key(candidate.text.as_str()))
+                .then_some(index)
+            })
+            .collect();
+        let ranked: Vec<Candidate> = order
+            .iter()
+            .filter_map(|text| {
+                self.local
+                    .iter()
+                    .find(|candidate| {
+                        candidate.text == *text
+                            && !matches!(candidate.kind, CandidateKind::Custom(_))
+                    })
+                    .cloned()
+            })
+            .collect();
+        if positions.len() != ranked.len() || ranked.len() < 2 {
+            return false;
+        }
+        let before: Vec<String> = positions
+            .iter()
+            .map(|index| self.local[*index].text.clone())
+            .collect();
+        for (position, candidate) in positions.iter().copied().zip(ranked) {
+            self.local[position] = candidate;
+        }
+        let after: Vec<String> = positions
+            .iter()
+            .map(|index| self.local[*index].text.clone())
+            .collect();
+        after != before
+    }
+
     pub fn len(&self) -> usize {
         self.local_len() + self.cloud.len()
     }
@@ -181,6 +233,22 @@ mod tests {
 
     fn many(count: usize) -> Vec<Candidate> {
         (0..count).map(|i| local(&format!("本{i}"))).collect()
+    }
+
+    #[test]
+    fn rerank_reorders_only_existing_local_candidates_and_keeps_unlisted_order() {
+        let mut layout = CandidateLayout::new(
+            vec![local("我"), local("卧"), local("握"), local("窝"), local("沃")],
+            3,
+            0,
+        );
+        assert!(layout.reorder_local_by_text(&["窝".into(), "我".into(), "握".into()]));
+        assert_eq!(
+            layout.local().iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
+            ["窝", "卧", "我", "握", "沃"]
+        );
+        assert!(!layout.reorder_local_by_text(&["不存在".into(), "也不存在".into()]));
+        assert_eq!(layout.local().len(), 5);
     }
 
     #[test]

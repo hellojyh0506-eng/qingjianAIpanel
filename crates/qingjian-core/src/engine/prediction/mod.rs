@@ -45,15 +45,29 @@ impl Engine {
         self.last_prediction_kind
     }
 
-    /// 发一次联想请求，返回序号；没接 Predictor、私密输入中或拼音太短时不发，返回 `None`。
-    ///
-    /// 要的是「当前作用域拼音对应的词」和整句补全；`candidates` 是本地候选，只取前几个当提示。
-    /// `surrounding` 是应用给的光标前后文本，在这里按观察窗口裁剪，壳给得再多也只发这么多；
-    /// 应用给不出上下文就只靠拼音，本地输入历史不可靠、不用。上屏之后不联想：没有拼音约束的下文联想只是噪音。
+    /// 旧兼容请求：当前作用域候选与可选整句补全。正常打字入口不再调用此接口。
     pub fn request_prediction(
         &mut self,
         surrounding: Option<SurroundingText>,
         candidates: &[Candidate],
+    ) -> Option<u64> {
+        self.request_prediction_inner(surrounding, candidates, false)
+    }
+
+    /// 当前输入的受约束 AI 重排：只允许重排第一页的本地候选，不生成新词或后文续写。
+    pub fn request_rerank(
+        &mut self,
+        surrounding: Option<SurroundingText>,
+        candidates: &[Candidate],
+    ) -> Option<u64> {
+        self.request_prediction_inner(surrounding, candidates, true)
+    }
+
+    fn request_prediction_inner(
+        &mut self,
+        surrounding: Option<SurroundingText>,
+        candidates: &[Candidate],
+        rerank_only: bool,
     ) -> Option<u64> {
         if !self.predictor.is_enabled() || self.private {
             return None;
@@ -94,6 +108,9 @@ impl Engine {
                 String::new(),
                 String::new(),
             )
+        } else if rerank_only {
+            // 默认打字入口只使用 Rerank；旧 request_prediction 保留原 Compose 兼容语义。
+            (PredictionKind::Rerank, scope, before, after)
         } else {
             (PredictionKind::Compose, scope, before, after)
         };
@@ -119,6 +136,36 @@ impl Engine {
         if question {
             self.last_question_guess = guess.clone();
         }
+        let request_candidates: Vec<String> = if question {
+            Vec::new()
+        } else if rerank_only {
+            candidates
+                .iter()
+                .filter(|candidate| matches!(candidate.kind, CandidateKind::Chinese | CandidateKind::Sentence))
+                .map(|candidate| candidate.text.clone())
+                .filter(|text| !text.trim().is_empty())
+                .fold(Vec::new(), |mut acc, text| {
+                    if !acc.contains(&text) && acc.len() < RERANK_CANDIDATE_HINTS {
+                        acc.push(text);
+                    }
+                    acc
+                })
+        } else {
+            candidates
+                .iter()
+                .take(PREDICTION_CANDIDATE_HINTS)
+                .map(|candidate| candidate.text.clone())
+                .collect()
+        };
+        // 受约束重排需要至少两个不同的本地候选；没有候选时绝不让 AI 自行造词。
+        if rerank_only && request_candidates.len() < 2 {
+            return None;
+        }
+        let current_expression = if rerank_only {
+            request_candidates.first().cloned().unwrap_or_else(|| guess.clone())
+        } else {
+            candidates.first().map(|candidate| candidate.text.clone()).unwrap_or_else(|| guess.clone())
+        };
         let request = PredictionRequest {
             sequence: self.prediction_sequence,
             kind,
@@ -127,24 +174,12 @@ impl Engine {
             pinyin,
             letters: pinyin_source.replace('\'', ""),
             syllables,
-            candidates: candidates
-                .iter()
-                .take(PREDICTION_CANDIDATE_HINTS)
-                .map(|c| c.text.clone())
-                .collect(),
+            candidates: request_candidates,
             guess: guess.clone(),
-            current_expression: candidates
-                .first()
-                .map(|c| c.text.clone())
-                .unwrap_or_else(|| guess.clone()),
-            // 简拼（半数以上音节是缩写）不问词：模型按声母凑出来的大多是生造词（复合语气、符号映射），
-            // 只问整句补全；问字模式的答案不受这条限制（答案本来就对不上问题的拼音）。
-            max_items: if abbreviated && !question {
-                0
-            } else {
-                policy.max_items
-            },
-            want_sentence: policy.sentence && !question,
+            current_expression,
+            max_items: if question { policy.max_items } else if rerank_only || abbreviated { 0 } else { policy.max_items },
+            // Rerank 明确关闭后文续写；旧兼容 Compose 请求仍遵守旧策略。
+            want_sentence: !rerank_only && policy.sentence && !question,
             text: String::new(),
             target_language: String::new(),
             user_attempt: String::new(),
@@ -260,6 +295,34 @@ impl Engine {
         Some(self.prediction_sequence)
     }
 
+    /// 记录 UI 实际显示的候选顺序，使 commit 日志反映 AI 重排后的真实列表。
+    pub fn note_candidate_order(&mut self, ordered: &[String]) {
+        if ordered.len() < 2 {
+            return;
+        }
+        let Ok(mut snapshot) = self.last_query.try_borrow_mut() else {
+            return;
+        };
+        let Some(snapshot) = snapshot.as_mut() else {
+            return;
+        };
+        let mut next = Vec::with_capacity(snapshot.candidates.len());
+        for text in ordered {
+            if snapshot.candidates.iter().any(|existing| existing == text) && !next.contains(text) {
+                next.push(text.clone());
+            }
+        }
+        if next.len() < 2 {
+            return;
+        }
+        for text in &snapshot.candidates {
+            if !next.contains(text) {
+                next.push(text.clone());
+            }
+        }
+        snapshot.candidates = next;
+    }
+
     /// 作废正在飞的联想（用户清空了拼音、关掉了联想框）。
     pub fn cancel_prediction(&mut self) {
         self.prediction_sequence += 1;
@@ -298,6 +361,7 @@ impl Engine {
                 }
                 if self.traditional
                     && self.last_prediction_kind != PredictionKind::Translate
+                    && self.last_prediction_kind != PredictionKind::Rerank
                     && let Some(opencc) = &self.opencc
                 {
                     for word in &mut prediction.words {

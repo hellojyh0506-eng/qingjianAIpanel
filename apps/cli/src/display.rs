@@ -159,7 +159,7 @@ pub fn show_typing(engine: &mut Engine, input: &str) {
 
 /// 发一次联想并等结果打印出来。没接 Predictor 时什么都不做。
 pub fn show_prediction(engine: &mut Engine, candidates: &[Candidate]) {
-    let Some(_sequence) = engine.request_prediction(None, candidates) else {
+    let Some(_sequence) = engine.request_rerank(None, candidates) else {
         return;
     };
     let start = Instant::now();

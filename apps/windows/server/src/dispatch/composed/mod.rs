@@ -96,16 +96,24 @@ impl Router {
                                 review_total_count: due,
                                 upgrade: None,
                             });
-                            self.translation_start_time = Some(Instant::now());
-                            if let Some(seq) = self.engine.request_translation(&target) {
-                                self.generation_id = seq;
+                            // 先请求当前本地候选重排；结果回来后再为重排后的首选请求被动译文。
+                            // 预测与翻译共用单个 Worker，串行调度避免翻译先占住通道并压掉候选重排。
+                            self.translation_start_time = None;
+                            if self.engine.request_rerank(None, layout.local()).is_none() {
+                                // 候选不足以重排/输入太短时仍然保持被动翻译功能，不让卡片无限停留在 Loading。
+                                self.translation_start_time = Some(Instant::now());
+                                if let Some(sequence) = self.engine.request_translation(&target) {
+                                    self.generation_id = sequence;
+                                } else {
+                                    self.translation_start_time = None;
+                                }
                             }
                         }
                     } else if self.engine.prediction_enabled() {
-                        self.engine.request_prediction(None, layout.local());
+                        self.engine.request_rerank(None, layout.local());
                     }
                 } else if self.engine.prediction_enabled() {
-                    self.engine.request_prediction(None, layout.local());
+                    self.engine.request_rerank(None, layout.local());
                 }
                 Composed::Candidates {
                     preedit,
@@ -232,6 +240,68 @@ impl Router {
             self.reconcile_candidates(&shown);
             return;
         }
+        if self.engine.last_prediction_kind() == PredictionKind::Rerank {
+            // Rerank 结果只能重排当前状态下的原有本地候选，绝不作为云词插入。
+            // 已移动高亮/翻页就不再应用，避免 AI 回包抢走用户正在操作的候选。
+            if !self.navigated && self.highlight == 0 {
+                let mut logged_order: Option<Vec<String>> = None;
+                if let Some(Composed::Candidates { layout, .. }) = self.composed.as_mut() {
+                    let order: Vec<String> = prediction.words.iter().map(|word| word.text.clone()).collect();
+                    if layout.reorder_local_by_text(&order) {
+                        logged_order = Some(layout.local().iter().map(|candidate| candidate.text.clone()).collect());
+                    }
+                }
+                if let Some(order) = logged_order.as_deref() {
+                    self.engine.note_candidate_order(order);
+                }
+
+                // 重排结束后才启动被动翻译，确保共享 Worker 不会让翻译请求挤掉本轮重排。
+                let target = match self.composed.as_ref() {
+                    Some(Composed::Candidates { layout, .. }) => layout.candidate(0).map(|candidate| candidate.text.clone()),
+                    _ => None,
+                };
+                if let Some(target) = target.filter(|_| self.passive_learning_card.is_some()) {
+                    let changed_target = self.passive_translation_target.as_ref() != Some(&target);
+                    if changed_target {
+                        let offline = self.engine
+                            .translate_word(&target)
+                            .and_then(|translation| translation.senses().first().map(|sense| sense.text.clone()))
+                            .filter(|text| is_valid_english_text(text))
+                            .or_else(|| fallback_idiom_english(&target));
+                        self.passive_translation = offline.clone();
+                        self.passive_translation_target = Some(target.clone());
+                        if let Some(card) = self.passive_learning_card.as_mut() {
+                            card.target_text = target.clone();
+                            card.primary = offline.map(|text| qingjian_platform::protocol::LearningExpression {
+                                text,
+                                tag: "Common".to_string(),
+                                meaning: target.clone(),
+                                tone: "标准自然".to_string(),
+                                scenario: "日常场景".to_string(),
+                                commonality: "高频".to_string(),
+                                why_natural: "本地离线词库释义".to_string(),
+                            });
+                            card.alternatives.clear();
+                            card.state = if card.primary.is_some() {
+                                qingjian_platform::protocol::LearningState::Ready
+                            } else {
+                                qingjian_platform::protocol::LearningState::Loading
+                            };
+                        }
+                    }
+                    self.translation_start_time = Some(Instant::now());
+                    if let Some(sequence) = self.engine.request_translation(&target) {
+                        self.generation_id = sequence;
+                    } else {
+                        self.translation_start_time = None;
+                    }
+                }
+            }
+            let shown = self.self_drawn_frame();
+            self.reconcile_candidates(&shown);
+            return;
+        }
+
         if self.engine.last_prediction_kind() == PredictionKind::Compare {
             let compare_total_ms = self
                 .compare_start_time

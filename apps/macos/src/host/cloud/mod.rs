@@ -105,6 +105,19 @@ impl Host {
         if self.engine.composition().is_empty() {
             return;
         }
+        if self.engine.last_prediction_kind() == qingjian_core::PredictionKind::Rerank {
+            // 当前输入重排不是云词：只能调整现有本地候选顺序，不能塞入额外候选或句子补全。
+            // 已翻页或移动高亮时不应用异步重排，防止覆盖用户正在操作的位置。
+            if self.session.page == 0 && self.session.highlighted == 0 {
+                let order: Vec<String> = prediction.words.iter().map(|word| word.text.clone()).collect();
+                if self.session.layout.reorder_local_by_text(&order) {
+                    let visible_order: Vec<String> = self.session.layout.local().iter().map(|candidate| candidate.text.clone()).collect();
+                    self.engine.note_candidate_order(&visible_order);
+                }
+            }
+            self.render();
+            return;
+        }
         // 云端词补进第一页末尾（前面的本地候选不动），整句挂在 preedit 右侧；云端词没有译文，先补上。
         // 用户已经翻到后面的页、或高亮已经移到会被挪走的那几格时不补：那几格正被他看着 / 要选
         let layout = &self.session.layout;

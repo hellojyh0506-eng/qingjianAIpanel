@@ -91,6 +91,7 @@ fn prediction_request_trims_context_and_only_fires_while_composing() {
     assert_eq!(request.letters, "kaifa");
     assert_eq!(request.syllables, 2);
     assert_eq!(request.candidates[0], "开发");
+    assert_eq!(request.kind, PredictionKind::Compose);
     assert_eq!(request.max_items, 2);
     assert!(request.want_sentence);
 
@@ -103,18 +104,20 @@ fn prediction_request_trims_context_and_only_fires_while_composing() {
     engine.commit(&kaifa);
     engine.punctuate('.');
     engine.set_input("kaifa");
-    assert_eq!(engine.request_prediction(None, &[]), Some(3));
+    let latest = engine.query().unwrap();
+    assert_eq!(engine.request_prediction(None, &latest.candidates.items), Some(3));
     let request = submitted.borrow()[1].clone();
     assert!(request.before.is_empty());
+    assert_eq!(request.kind, PredictionKind::Compose);
     assert!(request.want_sentence);
     // 上屏之后不联想
     engine.clear();
     assert_eq!(engine.request_prediction(None, &[]), None);
 }
 
-/// 简拼（半数以上音节是缩写）只问整句补全：模型按声母凑出来的词大多是生造词（复合语气、符号映射）。
+/// 简拼没有足够的本地候选时不让 AI 凭声母造词；有足够候选时只做重排，不请求后文续写。
 #[test]
-fn abbreviated_input_only_asks_for_the_sentence() {
+fn abbreviated_input_never_requests_continuation_or_fabricated_words() {
     let submitted = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let mut engine = engine().with_predictor(Box::new(EchoPredictor {
         submitted: submitted.clone(),
@@ -123,25 +126,17 @@ fn abbreviated_input_only_asks_for_the_sentence() {
     }));
     engine.set_input("zhsh");
     let query = engine.query().unwrap();
-    assert_eq!(
-        engine.request_prediction(None, &query.candidates.items),
-        Some(1)
-    );
-    let request = submitted.borrow()[0].clone();
-    assert_eq!(request.letters, "zhsh");
-    assert_eq!(request.max_items, 0, "简拼不该要词");
-    assert!(request.want_sentence, "整句补全照常要");
+    assert_eq!(engine.request_rerank(None, &query.candidates.items), None);
+    assert!(submitted.borrow().is_empty(), "没有足够的本地候选时不要让模型生造词");
 
-    // 完整拼音照常要词
-    engine.set_input("zhongshi");
+    // 短简拼 kf 在测试词库里有「开饭 / 咖啡」等多个真实候选，可验证重排请求。
+    engine.set_input("kf");
     let query = engine.query().unwrap();
-    assert_eq!(
-        engine.request_prediction(None, &query.candidates.items),
-        Some(2)
-    );
-    let request = submitted.borrow()[1].clone();
-    assert_eq!(request.max_items, 2);
-    assert!(request.want_sentence);
+    assert_eq!(engine.request_rerank(None, &query.candidates.items), Some(2));
+    let request = submitted.borrow()[0].clone();
+    assert_eq!(request.kind, PredictionKind::Rerank);
+    assert_eq!(request.max_items, 0);
+    assert!(!request.want_sentence);
 }
 
 #[test]

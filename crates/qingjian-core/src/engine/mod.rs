@@ -358,8 +358,11 @@ const MIN_PREDICTION_LETTERS: usize = 2;
 /// 辅码触发键的缺省值（`[general] aux_code_key`）。
 pub const DEFAULT_AUX_CODE_KEY: char = ';';
 
-/// 随联想请求附带的本地候选条数。
+/// 旧兼容 Compose 请求携带的本地候选提示数。
 const PREDICTION_CANDIDATE_HINTS: usize = 5;
+
+/// 当前输入重排最多检查第一页的 9 个候选，不预测后文。
+const RERANK_CANDIDATE_HINTS: usize = 9;
 
 /// 一次查询最多给壳多少条候选。同音字最多的音节也不到这个数，再往后都是长词，没人会翻到。
 const MAX_CANDIDATES: usize = 500;

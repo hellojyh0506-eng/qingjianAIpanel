@@ -170,9 +170,24 @@ Rules:
 Output exactly one valid JSON object with this schema and no extra keys:
 {\"sentence\": \"最佳自然中文译文\"}";
 
+pub const RERANK_SYSTEM_PROMPT: &str = r#"
+你是青简拼音输入法的本地候选重排器。你的唯一任务是重新排列用户当前输入对应的本地候选，绝不续写后文、绝不生成新词、绝不改写候选文本。
+
+输入包含用户实际键串、拼音切分、当前本地首选、少量上下文和一组带编号的本地候选。请优先考虑：
+1. 与当前键串/音节匹配强度；不得让明显不匹配的候选因为语义猜测而跃居首位。
+2. 当前表达与前后文的语义/语法契合度。
+3. 自然的整句意图、常见搭配，以及避免同音错字。
+4. 只在缺乏强上下文时参考常见程度。
+
+必须返回 local_candidates 中每一个候选的原始文本，恰好一次；只改变顺序。不许漏项、不许增加项、不许改变文字。若无法判断，返回原始顺序。
+
+严格输出 JSON：{"candidate_order":["候选原文 1","候选原文 2"]}
+不输出解释、Markdown 或任何其它字段。
+"#;
 pub fn system_prompt(request: &PredictionRequest) -> &'static str {
     match request.kind {
         PredictionKind::Compose => SYSTEM_PROMPT,
+        PredictionKind::Rerank => RERANK_SYSTEM_PROMPT,
         PredictionKind::Question => QUESTION_SYSTEM_PROMPT,
         PredictionKind::Translate => {
             if request.target_language == "zh" {
@@ -211,6 +226,17 @@ struct UserMessage<'a> {
 }
 
 /// 问字模式发给模型的用户消息。
+#[derive(Serialize)]
+struct RerankMessage<'a> {
+    letters: &'a str,
+    pinyin: &'a str,
+    before: &'a str,
+    after: &'a str,
+    current_expression: &'a str,
+    local_sentence: &'a str,
+    local_candidates: &'a [String],
+}
+
 #[derive(Serialize)]
 struct QuestionMessage<'a> {
     letters: &'a str,
@@ -261,6 +287,18 @@ pub fn user_prompt(request: &PredictionRequest) -> String {
         })
         .unwrap_or_default();
     }
+    if request.kind == PredictionKind::Rerank {
+        return serde_json::to_string(&RerankMessage {
+            letters: &request.letters,
+            pinyin: &request.pinyin,
+            before: &request.before,
+            after: &request.after,
+            current_expression: &request.current_expression,
+            local_sentence: &request.guess,
+            local_candidates: &request.candidates,
+        })
+        .unwrap_or_default();
+    }
     if request.kind == PredictionKind::Question {
         return serde_json::to_string(&QuestionMessage {
             letters: &request.letters,
@@ -288,7 +326,7 @@ pub fn user_prompt(request: &PredictionRequest) -> String {
 /// 解析后的回复。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Reply {
-    /// 云端词（组句联想）或答案（问字模式，音节为空、带读音）。
+    /// 云端词（旧兼容组句/问字）；Rerank 模式下保存经过本地候选白名单验证的重排顺序（音节为空）。
     pub words: Vec<CloudWord>,
 
     /// 整句补全。
@@ -340,6 +378,9 @@ impl Reply {
 #[serde(default)]
 struct RawReply {
     words: Vec<RawWord>,
+
+    /// Rerank 模式：必须是 local_candidates 的完整排列。
+    candidate_order: Vec<String>,
 
     sentence: Option<String>,
     translation: Option<String>,
@@ -642,6 +683,31 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
     };
     if request.kind == PredictionKind::Question {
         return parse_answers(raw.answers, request.max_items);
+    }
+    if request.kind == PredictionKind::Rerank {
+        let expected = &request.candidates;
+        if expected.len() < 2 || raw.candidate_order.len() != expected.len() {
+            return Reply::default();
+        }
+        let mut accepted = Vec::with_capacity(expected.len());
+        for text in raw.candidate_order {
+            if !expected.iter().any(|candidate| candidate == &text) || accepted.contains(&text) {
+                return Reply::default();
+            }
+            accepted.push(text);
+        }
+        if expected.iter().any(|candidate| !accepted.contains(candidate)) {
+            return Reply::default();
+        }
+        // 将经过严格本地白名单验证的完整排列放入 words 通道；Rerank 的调用方只将其解释为排序，不加入云词。
+        return Reply {
+            words: accepted.into_iter().map(|text| CloudWord {
+                text,
+                syllables: Vec::new(),
+                reading: None,
+            }).collect(),
+            ..Reply::default()
+        };
     }
     if request.kind == PredictionKind::DeepLearn {
         let mut alternatives = Vec::new();
@@ -1318,6 +1384,42 @@ mod tests {
         assert!(prompt.contains("\"pinyin\":\"zhang'tao\""));
         assert!(prompt.contains("\"syllables\":2"));
         assert!(prompt.contains("\"local_candidates\":[\"张涛\",\"张贴\"]"));
+    }
+
+    #[test]
+    fn rerank_prompt_requests_only_the_existing_local_candidate_order() {
+        let mut req = request("neng'gou", false);
+        req.kind = PredictionKind::Rerank;
+        req.candidates = vec!["能够".into(), "能沟".into(), "嫩够".into()];
+        req.current_expression = "能够".into();
+        req.guess = "能够".into();
+        assert_eq!(system_prompt(&req), RERANK_SYSTEM_PROMPT);
+        assert!(RERANK_SYSTEM_PROMPT.contains(r#"{"candidate_order":["#));
+        assert!(!RERANK_SYSTEM_PROMPT.contains(r#"{\"candidate_order\""#));
+        let user = user_prompt(&req);
+        assert!(user.contains("\"local_candidates\":[\"能够\",\"能沟\",\"嫩够\"]"));
+        assert!(!user.contains("want_sentence"));
+        assert!(!user.contains("max_items"));
+    }
+
+    #[test]
+    fn rerank_accepts_only_a_complete_permutation_of_local_candidates() {
+        let mut req = request("neng'gou", false);
+        req.kind = PredictionKind::Rerank;
+        req.candidates = vec!["能够".into(), "能沟".into(), "嫩够".into()];
+        let valid = r#"{"candidate_order":["嫩够","能够","能沟"]}"#;
+        let parsed = parse_reply(valid, &req);
+        assert_eq!(parsed.words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>(), ["嫩够", "能够", "能沟"]);
+        assert!(parsed.words.iter().all(|word| word.syllables.is_empty()));
+        assert_eq!(parsed.sentence, None);
+
+        for invalid in [
+            r#"{"candidate_order":["新词","能够","能沟"]}"#,
+            r#"{"candidate_order":["能够","能够","嫩够"]}"#,
+            r#"{"candidate_order":["能够","能沟"]}"#,
+        ] {
+            assert!(parse_reply(invalid, &req).is_empty(), "invalid order accepted: {invalid}");
+        }
     }
 
     #[test]

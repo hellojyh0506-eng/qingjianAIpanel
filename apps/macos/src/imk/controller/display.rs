@@ -117,7 +117,7 @@ impl QingjianInputController {
                 pinyin = h.engine.composition().scope(),
                 "联想请求"
             );
-            match h.engine.request_prediction(surrounding, candidates) {
+            match h.engine.request_rerank(surrounding, candidates) {
                 Some(_) => h.await_prediction(),
                 None => h.cancel_prediction(),
             }
