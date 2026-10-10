@@ -186,9 +186,11 @@ pub const RERANK_SYSTEM_PROMPT: &str = r#"
 "#;
 pub const INTENT_SYSTEM_PROMPT: &str = r#"
 你是青简拼音输入法的拼音纠错器。你只负责判断用户当前输入的长拼音最可能原本想拼成什么拼音。
-输入包含用户实际敲下的字母、当前本地切分、少量本地候选和光标前文。必须把整串字母作为一个整体理解，允许相邻键误触、相邻换位、遗漏或多敲字母；不要只根据开头猜词，也不要续写用户未输入的后文。
+输入包含用户实际敲下的字母、当前本地切分、少量本地候选、候选的词典读音和光标前文。candidate_readings 是 Core 从本地词库候选的 syllables 字段构造的可信提示，不是模型推测。
+必须把整串字母作为一个整体理解，允许相邻键误触、相邻换位、遗漏或多敲字母；不要只根据开头猜词，也不要续写用户未输入的后文。
+若某个本地候选读音是完整合法全拼，并且与用户实际输入仅存在少量插入、删除、替换或相邻换位，优先考虑该读音；不要因当前切分失败或结尾有残余字母就直接放弃。如果没有可信的近距离拼音修复才输出空字符串。
 只输出一个修正后的标准全拼字母串，音节之间不要加撇号。不要输出汉字、解释、候选列表或 Markdown。
-不要为了语义顺口而大幅改动输入。修正应与原始字母串接近；无法可靠判断时输出空字符串。
+不要为了语义顺口而大幅改动输入。修正必须仍由 Core 的本地词典和编辑距离验证。
 严格输出 JSON：{"corrected_pinyin":"nihaoma"}
 "#;
 
@@ -243,6 +245,7 @@ struct IntentMessage<'a> {
     current_expression: &'a str,
     local_sentence: &'a str,
     local_candidates: &'a [String],
+    candidate_readings: &'a [String],
 }
 
 #[derive(Serialize)]
@@ -314,6 +317,7 @@ pub fn user_prompt(request: &PredictionRequest) -> String {
             current_expression: &request.current_expression,
             local_sentence: &request.guess,
             local_candidates: &request.candidates,
+            candidate_readings: &request.candidate_readings,
         })
         .unwrap_or_default();
     }
@@ -1407,6 +1411,7 @@ mod tests {
             letters: pinyin.replace('\'', ""),
             syllables: 2,
             candidates: vec!["张涛".into(), "张贴".into()],
+            candidate_readings: Vec::new(),
             guess: String::new(),
             current_expression: "张涛".into(),
             max_items: 2,
@@ -1433,12 +1438,14 @@ mod tests {
         req.kind = PredictionKind::Intent;
         req.letters = "nihooma".into();
         req.candidates = vec!["你好吗".into()];
+        req.candidate_readings = vec!["你好吗: ni'hao'ma".into()];
         req.current_expression = "你好吗".into();
         req.guess = "你好吗".into();
         assert_eq!(system_prompt(&req), INTENT_SYSTEM_PROMPT);
         assert!(INTENT_SYSTEM_PROMPT.contains("\"corrected_pinyin\""));
         let prompt: serde_json::Value = serde_json::from_str(&user_prompt(&req)).unwrap();
         assert_eq!(prompt["letters"], "nihooma");
+        assert_eq!(prompt["candidate_readings"][0], "你好吗: ni'hao'ma");
         assert!(prompt.get("after").is_none());
         assert_eq!(
             parse_reply(r#"{"corrected_pinyin":"nihaoma"}"#, &req).sentence.as_deref(),

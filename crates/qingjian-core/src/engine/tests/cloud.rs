@@ -81,7 +81,18 @@ fn intent_suggestion_uses_only_typed_letters_and_prefix_context() {
         before: "我今天".into(),
         after: "后文不可发送".into(),
     };
-    assert_eq!(engine.request_intent_suggestion(Some(surrounding), &[]), Some(1));
+    let hints = vec![Candidate {
+        text: "开发者".into(),
+        kind: CandidateKind::Chinese,
+        syllables: vec!["kai".into(), "fa".into(), "zhe".into()],
+        reading: None,
+        translation: None,
+        aux_code: None,
+    }];
+    assert_eq!(
+        engine.request_intent_suggestion(Some(surrounding), &hints),
+        Some(1)
+    );
     let request = submitted.borrow()[0].clone();
     assert_eq!(request.kind, PredictionKind::Intent);
     assert_eq!(request.letters, "kaifazheh");
@@ -89,6 +100,8 @@ fn intent_suggestion_uses_only_typed_letters_and_prefix_context() {
     assert!(request.after.is_empty());
     assert!(!request.want_sentence);
     assert_eq!(request.max_items, 0);
+    assert_eq!(request.candidates, ["开发者"]);
+    assert_eq!(request.candidate_readings, ["开发者: kai'fa'zhe"]);
 }
 
 #[test]

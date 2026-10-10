@@ -119,17 +119,31 @@ impl Engine {
             ),
             Err(_) => (letters.clone(), 0, String::new()),
         };
-        let local_candidates: Vec<String> = candidates
-            .iter()
-            .filter(|candidate| matches!(candidate.kind, CandidateKind::Chinese | CandidateKind::Sentence))
-            .map(|candidate| candidate.text.clone())
-            .filter(|text| !text.trim().is_empty())
-            .fold(Vec::new(), |mut acc, text| {
-                if !acc.contains(&text) && acc.len() < 9 {
-                    acc.push(text);
-                }
-                acc
-            });
+        let mut local_candidates = Vec::new();
+        let mut candidate_readings = Vec::new();
+        for candidate in candidates.iter().filter(|candidate| {
+            matches!(candidate.kind, CandidateKind::Chinese | CandidateKind::Sentence)
+        }) {
+            if candidate.text.trim().is_empty()
+                || local_candidates.contains(&candidate.text)
+                || local_candidates.len() >= 9
+            {
+                continue;
+            }
+            local_candidates.push(candidate.text.clone());
+            if !candidate.syllables.is_empty()
+                && candidate
+                    .syllables
+                    .iter()
+                    .all(|syllable| !syllable.is_empty() && syllable.bytes().all(|b| b.is_ascii_lowercase()))
+            {
+                candidate_readings.push(format!(
+                    "{}: {}",
+                    candidate.text,
+                    candidate.syllables.join("'")
+                ));
+            }
+        }
         let request = PredictionRequest {
             sequence: self.prediction_sequence,
             kind: PredictionKind::Intent,
@@ -140,6 +154,7 @@ impl Engine {
             syllables,
             current_expression: local_candidates.first().cloned().unwrap_or_default(),
             candidates: local_candidates,
+            candidate_readings,
             guess,
             max_items: 0,
             want_sentence: false,
@@ -314,6 +329,7 @@ impl Engine {
             letters: pinyin_source.replace('\'', ""),
             syllables,
             candidates: request_candidates,
+            candidate_readings: Vec::new(),
             guess: guess.clone(),
             current_expression,
             max_items: if question { policy.max_items } else if rerank_only || abbreviated { 0 } else { policy.max_items },
@@ -349,6 +365,7 @@ impl Engine {
             letters: String::new(),
             syllables: 0,
             candidates: Vec::new(),
+            candidate_readings: Vec::new(),
             guess: String::new(),
             current_expression: String::new(),
             max_items: 1,
@@ -386,6 +403,7 @@ impl Engine {
             letters: String::new(),
             syllables: 0,
             candidates: Vec::new(),
+            candidate_readings: Vec::new(),
             guess: String::new(),
             current_expression: reference.to_owned(),
             max_items: 1,
@@ -420,6 +438,7 @@ impl Engine {
             letters: String::new(),
             syllables: 0,
             candidates: Vec::new(),
+            candidate_readings: Vec::new(),
             guess: String::new(),
             current_expression: primary_english.to_owned(),
             max_items: 5,

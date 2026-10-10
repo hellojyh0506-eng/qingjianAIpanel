@@ -29,6 +29,9 @@ pub struct PredictionRequest {
     /// 本地词库给出的前几个候选，帮助模型理解拼音，也让它别重复第一个。
     pub candidates: Vec<String>,
 
+    /// Current candidate readings verified by the local dictionary; populated only for Intent requests.
+    pub candidate_readings: Vec<String>,
+
     /// 本地整句转换把这段拼音转成的汉字（问字模式是问题本身的汉字形式），可能有错字；转不出为空。
     pub guess: String,
 
