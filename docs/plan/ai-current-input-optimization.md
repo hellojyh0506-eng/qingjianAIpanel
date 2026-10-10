@@ -58,7 +58,7 @@
 
 ## Phase 2：受约束 AI 当前候选重排
 
-状态：第一版已部署到 Windows 正常安装版，等待真实在线与交互验收；尚未证明准确率/翻页指标改善。
+状态：top27 扩展版已部署到 Windows 正常安装版，等待真实在线与交互验收；尚未证明准确率/翻页指标改善。
 
 本阶段改动：
 - 新增 PredictionKind::Rerank 和 Engine::request_rerank；默认 Windows/macOS/CLI 打字入口调用独立重排接口。
@@ -73,7 +73,7 @@
 
 尚待确认：
 - macOS UI 代码需在 Apple target 上编译；当前 Windows 机器因 objc2 只允许 Apple target，无法用本机 cargo check 验证。
-- 2026-10-10 Windows Release（含 TSF 已过滤光标前文的 Rerank）已部署并保持运行：SHA-256 `01A9DDF0508C287B7F77375CDF74EB667A60638DE22C4C48BEEB6A2815D03FF8`；更新前版本备份为 `E:\Qingjian\qingjian-server.exe.bak_rerank_context_20261010_172241`。TSF DLL 未替换。
+- 2026-10-10 Windows Release（top27 候选池、Rerank 输出上限 512 tokens，复用 TSF 已过滤光标前文）已部署并保持运行：SHA-256 `84B97ECD45D09D30F3DCA050C65D2EEBD5B2EB9F8873675D7F5F0A0E18A99B04`，PID 部署后核实为 `1144`；部署前 P2.1 版本备份为 `E:\Qingjian\qingjian-server.exe.bak_rerank_top27_20261010_174350`，更早备份仍保留。桌面验证副本哈希与线上文件一致，TSF DLL 未替换。
 - Windows 已复用 TSF 既有的 Surrounding 消息，把最多 64 个字符的光标前文用于当前候选重排；不发送光标后文。TSF 在私密输入框不读取前文，Server 在进入私密和组句结束时清空缓存并使在途重排失效。应用上下文的真实质量取决于宿主控件是否允许 TSF 读取。
 - 需真实模型验证 JSON 输出、延迟与缓存；单元测试不等于在线验收。
 
@@ -138,7 +138,7 @@
 
 ## 当前风险边界
 
-- 当前 Rerank 是第一步架构实现，尚未在线验收或部署 Release。
-- Windows 当前未向模型提供应用光标周围文本，所以不能宣称具备完整上下文理解。
+- 当前 Rerank 已部署 Release，但尚未完成真实模型的准确率、延迟及弹窗交互验收，因此不能宣称第一页命中率已经改善。
+- Windows Server 只使用 TSF 允许提供的最多 64 个 UTF-16 单元光标前文，不读取光标后文；密码/私密输入框跳过读取，具体可获得的上下文取决于宿主控件。
 - 本次未修改 TSF 数字键处理；数字输入问题仍处于独立诊断阶段。
 - 不为读取实时输入日志而强行停止运行中的 Server。
