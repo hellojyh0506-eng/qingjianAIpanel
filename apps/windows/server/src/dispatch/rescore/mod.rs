@@ -116,12 +116,22 @@ impl Router {
         if self.focused != Some(session) || self.engine.composition().is_empty() {
             return;
         }
+        self.surrounding_before = (!text.is_empty()).then_some(text.clone());
         self.engine
             .set_rescoring_context((!text.is_empty()).then_some(text));
         if matches!(self.composed, Some(Composed::Candidates { .. })) {
-            // 查一次只为按新前文重新记下要打分的文本，候选顺序此刻不变
+            // 查一次只为按新前文重新记下要打分的文本，候选顺序此刻不变。
             let _ = self.engine.query();
             self.schedule_rescoring();
+            // 首键可能在 Surrounding 消息之前就触发过无上下文重排；用已隐私过滤的前文立即刷新本轮请求。
+            let local = match self.composed.as_ref() {
+                Some(Composed::Candidates { layout, .. }) => layout.local().to_vec(),
+                _ => Vec::new(),
+            };
+            if local.len() >= 2 {
+                let context = self.rerank_surrounding();
+                let _ = self.engine.request_rerank(context, &local);
+            }
         }
     }
 

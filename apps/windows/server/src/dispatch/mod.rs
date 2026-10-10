@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use qingjian_predict::{ChatMessage, StreamChatClient, StreamEvent, execute_web_search};
-use qingjian_core::Engine;
+use qingjian_core::{Engine, SurroundingText};
 use qingjian_platform::LocalModelConfig;
 use qingjian_platform::protocol::{
     ClientMessage, Frame, IndicatorState, InputSettings, ScreenRect, ServerMessage, SessionId,
@@ -60,6 +60,9 @@ pub struct Router {
 
     /// 当前持有组句的会话。
     focused: Option<SessionId>,
+
+    /// TSF 隐私检查后送来的光标前文（最多 64 字）；仅在当前组句期间用于本地/AI 重排，不写入日志。
+    surrounding_before: Option<String>,
 
     /// 当前组句的展示状态；没在组句时为 `None`。
     composed: Option<Composed>,
@@ -188,6 +191,7 @@ impl Router {
             },
             sessions: HashMap::new(),
             focused: None,
+            surrounding_before: None,
             composed: None,
             translation: None,
             last_translation_source: None,
@@ -287,6 +291,17 @@ impl Router {
 
     pub fn set_last_assistant_toggle_time(&mut self, time: Instant) {
         self.last_assistant_toggle_time = time;
+    }
+
+    /// 返回 TSF 已做隐私过滤的当前光标前文，作为受约束候选重排上下文。
+    pub(super) fn rerank_surrounding(&self) -> Option<SurroundingText> {
+        if self.engine.is_private() {
+            return None;
+        }
+        self.surrounding_before.as_ref().map(|before| SurroundingText {
+            before: before.clone(),
+            after: String::new(),
+        })
     }
 
     pub fn set_pending_selection(&mut self, session: SessionId, req: u64) {

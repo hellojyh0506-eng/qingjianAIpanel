@@ -83,7 +83,7 @@ TSV 解析、查询与生成工具把 `lue` / `nue` 统一成 `lve` / `nve`。
 
 - `CloudPredictor`：`Predictor` trait 的网络实现（async-openai，OpenAI 兼容接口，默认 DeepSeek），后台线程防抖 / 缓存 / 超时，`submit` / `poll` 非阻塞。翻译请求的重试、HTTP 发送与响应体读取共用一个总 deadline，避免每次重试重新耗尽完整超时；流式客户端连接超时 5 秒、读取空闲超时 20 秒。Windows English Assistant 不再重复提交 DeepLearn 到共享预测 Worker，学习面板按请求代次丢弃旧流式结果，并显式呈现加载 / 原始流式文本 / 错误状态。
   `PredictConfig` 是配置的 `[predict]` 分节。正常打字入口目前改用 `PredictionKind::Rerank`：只把第一页最多 9 个本地中文/整句候选发给模型排序，`want_sentence = false`、`max_items = 0`，不请求后文续写，也不允许生成新候选。`prompt.rs` 要求输出 `candidate_order` 完整排列；解析端拒绝任何新增、缺失、重复或改写候选。Core 的 `Engine::request_rerank` 与 `CandidateLayout::reorder_local_by_text` 只在现有候选槽间重排，Server/macOS 收到后会丢弃云词插入路径；用户已翻页/移动高亮时不应用异步重排。没有至少 2 个本地候选时不请求模型；Windows 学习助手在此情况下仍回退到被动翻译，避免 Loading 卡住。
-  旧 `request_prediction` / `PredictionKind::Compose` 仍保留兼容行为，用于显式旧调用与测试，但默认 Windows/macOS/CLI 打字入口不再调用它。简拼候选不足时禁止 AI 凭声母造词。Windows/macOS 的真实 AI 在线体验和延迟仍待真实运行验收；Windows 当前调用仍未从 TSF 读取光标周围文本，模型重排上下文暂时有限，后续阶段需在隐私规则下单独解决。
+  旧 `request_prediction` / `PredictionKind::Compose` 仍保留兼容行为，用于显式旧调用与测试，但默认 Windows/macOS/CLI 打字入口不再调用它。简拼候选不足时禁止 AI 凭声母造词。Windows/macOS 的真实 AI 在线体验和延迟仍待真实运行验收；Windows Rerank 复用 TSF 既有 Surrounding 消息携带的最多 64 个光标前字符；不新增协议字段、不读取光标后文。TSF 会在密码/私密输入框跳过读取，Server 缓存仅限当前组句，在私密和结束组句时清空并使在途重排失效。能否获得前文仍取决于具体宿主控件。
 - `CloudGlossFiller`：释义兜底（Core `GlossFiller` trait，与 Predictor 分开的线程与通道，攒 1.5 秒 / 8 个词发一次，问过不再问）：
   随包释义表没有的词库词 / 云端词上屏后入队，结果壳每秒 `Engine::poll_glosses` 经 `Translator::learn` 写进 `qingjian-translate::PersonalGlossary`
   （`user-glossary-<语言>.tsv`，`LayeredTranslator` 个人表优先）；随云联想开关一起开。

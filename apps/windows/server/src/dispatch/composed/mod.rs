@@ -25,6 +25,7 @@ impl Router {
         self.passive_learning_card = None;
         self.recall_session = None;
         if self.engine.composition().is_empty() {
+            self.surrounding_before = None;
             self.composed = None;
             self.cancel_prediction();
             self.stop_rescoring();
@@ -99,7 +100,8 @@ impl Router {
                             // 先请求当前本地候选重排；结果回来后再为重排后的首选请求被动译文。
                             // 预测与翻译共用单个 Worker，串行调度避免翻译先占住通道并压掉候选重排。
                             self.translation_start_time = None;
-                            if self.engine.request_rerank(None, layout.local()).is_none() {
+                            let surrounding = self.rerank_surrounding();
+                            if self.engine.request_rerank(surrounding, layout.local()).is_none() {
                                 // 候选不足以重排/输入太短时仍然保持被动翻译功能，不让卡片无限停留在 Loading。
                                 self.translation_start_time = Some(Instant::now());
                                 if let Some(sequence) = self.engine.request_translation(&target) {
@@ -110,10 +112,12 @@ impl Router {
                             }
                         }
                     } else if self.engine.prediction_enabled() {
-                        self.engine.request_rerank(None, layout.local());
+                        let surrounding = self.rerank_surrounding();
+                        self.engine.request_rerank(surrounding, layout.local());
                     }
                 } else if self.engine.prediction_enabled() {
-                    self.engine.request_rerank(None, layout.local());
+                    let surrounding = self.rerank_surrounding();
+                    self.engine.request_rerank(surrounding, layout.local());
                 }
                 Composed::Candidates {
                     preedit,

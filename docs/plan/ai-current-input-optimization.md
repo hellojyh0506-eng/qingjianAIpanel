@@ -73,8 +73,8 @@
 
 尚待确认：
 - macOS UI 代码需在 Apple target 上编译；当前 Windows 机器因 objc2 只允许 Apple target，无法用本机 cargo check 验证。
-- 2026-10-10 Windows Release 部署 SHA-256：F89ADF3A1204F0C2F1053731D42E99D01244341A5253BD10EAC4711F1AECFF7D；旧版备份为 E:\Qingjian\qingjian-server.exe.bak_rerank_20261010_171422。
-- Windows 当前的 rerank 请求传入 None 上下文，只有拼音和本地候选；语义判断受限。后续要单独研究 TSF 能否安全提供光标周围文本。
+- 2026-10-10 Windows Release（含 TSF 已过滤光标前文的 Rerank）已部署并保持运行：SHA-256 `01A9DDF0508C287B7F77375CDF74EB667A60638DE22C4C48BEEB6A2815D03FF8`；更新前版本备份为 `E:\Qingjian\qingjian-server.exe.bak_rerank_context_20261010_172241`。TSF DLL 未替换。
+- Windows 已复用 TSF 既有的 Surrounding 消息，把最多 64 个字符的光标前文用于当前候选重排；不发送光标后文。TSF 在私密输入框不读取前文，Server 在进入私密和组句结束时清空缓存并使在途重排失效。应用上下文的真实质量取决于宿主控件是否允许 TSF 读取。
 - 需真实模型验证 JSON 输出、延迟与缓存；单元测试不等于在线验收。
 
 验收：
