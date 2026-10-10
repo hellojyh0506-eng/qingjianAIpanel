@@ -252,6 +252,46 @@ mod tests {
     }
 
     #[test]
+    fn rerank_can_promote_an_existing_candidate_from_a_later_page() {
+        let candidates = (0..30)
+            .map(|i| local(&format!("词{i}")))
+            .collect::<Vec<_>>();
+        let mut layout = CandidateLayout::new(candidates, 9, 0);
+        let order = (10..27)
+            .chain(0..10)
+            .map(|i| format!("词{i}"))
+            .collect::<Vec<_>>();
+        assert!(layout.reorder_local_by_text(&order));
+        assert_eq!(layout.local()[0].text, "词10");
+        assert_eq!(layout.local()[8].text, "词18");
+        assert_eq!(layout.local()[9].text, "词19");
+        assert_eq!(layout.local().len(), 30);
+    }
+
+    #[test]
+    fn rerank_keeps_custom_slots_pinned_while_promoting_from_a_later_page() {
+        let mut candidates = many(30);
+        candidates.push(Candidate {
+            kind: CandidateKind::Custom(10),
+            ..local("固定短语")
+        });
+        let mut layout = CandidateLayout::new(candidates, 9, 0);
+        let order = (10..27)
+            .chain(0..10)
+            .map(|i| format!("本{i}"))
+            .collect::<Vec<_>>();
+
+        assert!(layout.reorder_local_by_text(&order));
+        assert_eq!(layout.candidate(0).unwrap().text, "本10");
+        assert_eq!(layout.candidate(9).unwrap().text, "固定短语");
+        assert_eq!(layout.local().len(), 31);
+        assert_eq!(
+            layout.local().iter().filter(|c| matches!(c.kind, CandidateKind::Custom(10))).count(),
+            1
+        );
+    }
+
+    #[test]
     fn cloud_words_take_the_end_of_the_first_page_and_only_bump_those_cells() {
         let mut layout = CandidateLayout::new(many(12), 9, 3);
         assert_eq!(

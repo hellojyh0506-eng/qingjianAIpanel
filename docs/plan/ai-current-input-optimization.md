@@ -63,7 +63,7 @@
 本阶段改动：
 - 新增 PredictionKind::Rerank 和 Engine::request_rerank；默认 Windows/macOS/CLI 打字入口调用独立重排接口。
 - 旧 request_prediction / Compose 保留兼容，不再由默认打字入口调用。
-- 请求最多提供第一页 9 个本地中文/整句候选；want_sentence=false、max_items=0。
+- 请求最多提供排名前 27 个本地中文/整句候选（大致前三页），让第 2/3 页的正确候选有机会进入第一页；want_sentence=false、max_items=0。
 - Rerank 专用 Prompt 仅要求 candidate_order。
 - 解析器要求返回本地候选完整排列，拒绝新增、缺失、重复或改写候选。
 - Core 布局方法只在现有候选槽之间重排，不创建或删除候选。

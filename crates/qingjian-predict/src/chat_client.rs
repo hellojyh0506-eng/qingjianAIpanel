@@ -17,7 +17,7 @@ use crate::prompt::{self, Reply};
 /// 联想与翻译回复的 token 上限：口语即时翻译 120，组句 500，问字 300，对比评测 800，深度学习 1800（留足思考空间）。
 const TRANSLATE_MAX_TOKENS: u32 = 120;
 const COMPOSE_MAX_TOKENS: u32 = 500;
-const RERANK_MAX_TOKENS: u32 = 180;
+const RERANK_MAX_TOKENS: u32 = 512;
 const QUESTION_MAX_TOKENS: u32 = 300;
 const COMPARE_MAX_TOKENS: u32 = 800;
 const DEEP_LEARN_MAX_TOKENS: u32 = 1800;

@@ -54,7 +54,7 @@ impl Engine {
         self.request_prediction_inner(surrounding, candidates, false)
     }
 
-    /// 当前输入的受约束 AI 重排：只允许重排第一页的本地候选，不生成新词或后文续写。
+    /// 当前输入的受约束 AI 重排：最多检查本地候选前 27 项（约前三页），不生成新词或后文续写。
     pub fn request_rerank(
         &mut self,
         surrounding: Option<SurroundingText>,
