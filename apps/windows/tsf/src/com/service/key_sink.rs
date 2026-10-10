@@ -352,9 +352,11 @@ fn eats_key(
     if composing {
         return is_edit(vk) || is_nav(vk) || event.character.is_some_and(|c| !c.is_control());
     }
-    event
-        .character
-        .is_some_and(|c| c.is_ascii_punctuation() || c.is_ascii_digit())
+    // 中文模式没在组句时，普通数字不需要输入法转换：原生交给宿主，避免每个数字都排一个异步 TSF 编辑会话。
+    // 英文模式且 english_direct 关闭时保留旧行为；组句中的数字仍被拦截用于选词。
+    event.character.is_some_and(|c| {
+        c.is_ascii_punctuation() || (in_english && c.is_ascii_digit())
+    })
 }
 
 /// 判断是否为英语学习相关快捷键：
@@ -509,6 +511,33 @@ mod tests {
     }
 
     #[test]
+    fn digits_bypass_tsf_outside_composition_but_are_consumed_inside() {
+        for vk in 0x30..=0x39 {
+            let c = char::from_u32(vk).unwrap();
+            assert!(!eats_key(
+                &with_modifiers(vk, c, KeyModifiers::default()),
+                false, false, false, false,
+            ), "main digit vk={vk:#x} should go to the host natively");
+            assert!(eats_key(
+                &with_modifiers(vk, c, KeyModifiers::default()),
+                true, false, false, false,
+            ), "main digit vk={vk:#x} should be consumed while composing");
+        }
+
+        for vk in 0x60..=0x69 {
+            let c = char::from_u32(u32::from(b'0') + vk - 0x60).unwrap();
+            assert!(!eats_key(
+                &with_modifiers(vk, c, KeyModifiers::default()),
+                false, false, false, false,
+            ), "keypad digit vk={vk:#x} should go to the host natively");
+            assert!(eats_key(
+                &with_modifiers(vk, c, KeyModifiers::default()),
+                true, false, false, false,
+            ), "keypad digit vk={vk:#x} should be consumed while composing");
+        }
+    }
+
+    #[test]
     fn english_direct_off_preserves_v014_behavior() {
         // 当 english_direct 为 false 时，英文模式/Caps 亮着下的字母/数字/标点依然被 TSF 拦截送往 Server
         let en_mod = KeyModifiers {
@@ -634,9 +663,9 @@ mod tests {
         assert!(eats_key(&with_modifiers(0x56, 'V', shifted_zh), false, false, false, true));
         assert!(eats_key(&with_modifiers(0x55, 'U', shifted_zh), false, false, false, true));
         assert!(eats_key(&with_modifiers(0x49, 'I', shifted_zh), false, false, false, true));
-        // 中文模式标点/数字必须吃 (送 Server 转全角)
+        // 中文模式标点仍需送 Server 转换；普通数字由单独回归验证为原生直通。
         assert!(eats_key(&with_modifiers(0xBC, ',', zh_mod), false, false, false, true));
-        assert!(eats_key(&with_modifiers(0x31, '1', zh_mod), false, false, false, true));
+        assert!(!eats_key(&with_modifiers(0x31, '1', zh_mod), false, false, false, true));
 
         // 13. 组句状态转移保护 (若存在未完成组句，即使进入英文模式也要吃，保护退格/上屏)
         assert!(eats_key(&with_modifiers(0x41, 'a', en_mod), true, false, false, true));

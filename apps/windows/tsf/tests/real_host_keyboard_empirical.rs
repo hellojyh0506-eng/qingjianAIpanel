@@ -544,6 +544,25 @@ fn test_real_windows_host_keyboard_validation_end_to_end() {
         send_system_key(VK_ESCAPE.0, false);
         host.pump_messages(Duration::from_millis(50));
 
+        // 8b. 中文模式下的普通数字必须原生交给宿主，不能变成 VK_PROCESSKEY 后通过异步插入重放。
+        host.clear_edit();
+        host.clear_records();
+        println!("[REAL-EMPIRICAL] 中文模式下直接输入数字序列 261009，检查原生 WM_CHAR 顺序");
+        type_system_string(&host, "261009");
+        host.pump_messages(Duration::from_millis(250));
+        let digit_text = host.get_edit_text();
+        let digit_records = host.get_records();
+        println!("[REAL-EMPIRICAL] 中文数字实收文本: {digit_text:?}; 消息: {digit_records:?}");
+        assert_eq!(digit_text, "261009", "中文模式下数字顺序不得倒置或错位");
+        assert!(
+            !digit_records.iter().any(|r| r.message == 0x0100 && r.wparam == 0xE5),
+            "中文模式下普通数字不应被 TSF 转换为 VK_PROCESSKEY"
+        );
+        assert!(
+            digit_records.iter().filter(|r| r.message == 0x0102).count() >= 6,
+            "宿主应收到真实 WM_CHAR 数字消息，而不是由异步编辑会话注入"
+        );
+
         // 9. 物理模拟单击 Shift 切换至内置英文模式 (English Direct Mode)
         println!("[REAL-EMPIRICAL] 模拟物理单击 Shift 键切换至内置英文模式 (English Direct Mode)");
         send_raw_vk(VK_SHIFT.0, false);
