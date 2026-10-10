@@ -46,7 +46,7 @@ question（输入法本地把拼音转成的汉字，可能有错字，只是帮
 answers：1 到 max_items 个，按可能性排序。text 是能直接上屏的字、词或短答案，不要解释；\
 pinyin 是 text 的带声调拼音（如 sēn），非中文答案给空字符串。不确定就少给，实在不懂就给空数组。";
 
-/// 翻译的系统提示：为日常口语交流提供最自然鲜活的地道当代美式口语。支持单句与多维度替代表达。
+/// 快速翻译的系统提示：只输出主译文；详细替代表达由独立 DeepLearn 面板生成，避免混用两种协议。
 pub const TRANSLATE_SYSTEM_PROMPT: &str = "\
 You are an expert American English expression coach.
 
@@ -58,19 +58,11 @@ Rules:
 - Prefer common real-world spoken English and natural phrasal verbs over mechanical literal translations.
 - Avoid textbook cliches and robotic literal calques.
 - Use contractions naturally.
-- Keep output extremely fast and concise. No verbose explanations.
-- Output the single best primary expression in 'sentence', and 1-2 spoken alternatives in 'alternatives'.
+- Keep output extremely fast and concise. No verbose explanations or alternatives.
+- Return only the single best primary expression in 'sentence'. Detailed alternatives belong to the separate English-learning panel, not the quick-translation protocol.
 
-Output JSON format strictly:
-{
-  \"sentence\": \"primary best natural American English expression\",
-  \"alternatives\": [
-    {
-      \"text\": \"spoken alternative variant\",
-      \"tag\": \"Direct | Nuanced | Casual | Idiomatic | Professional | Natural\"
-    }
-  ]
-}";
+Output exactly one valid JSON object with this schema and no extra keys:
+{\"sentence\": \"primary best natural American English expression\"}";
 
 /// 主动回忆与练习对比系统提示：为口语学习者提供对比与结构化错误分类反馈。
 pub const COMPARE_SYSTEM_PROMPT: &str = "\
@@ -173,22 +165,10 @@ Translate the provided foreign text into natural, accurate, fluent contemporary 
 Rules:
 - Preserve the authentic intended meaning, nuance, and pragmatic force.
 - Avoid stiff, robotic word-for-word machine translation; use idiomatic Chinese phrasing.
-- Provide the single best primary Chinese translation in 'sentence', and when appropriate, provide 2-3 genuine alternative Chinese translations in 'alternatives' with distinct nuances, tags, and explanations.
+- Return only the single best Chinese translation in 'sentence'. Do not generate alternatives or explanations; quick translation must fit the small latency/token budget.
 
-Output JSON format strictly:
-{
-  \"sentence\": \"最佳自然中文译文\",
-  \"alternatives\": [
-    {
-      \"text\": \"可选替代中文表述\",
-      \"tag\": \"Direct | Nuanced | Casual | Idiomatic | Professional | Natural\",
-      \"meaning\": \"侧重点与语境\",
-      \"tone\": \"语气说明\",
-      \"scenario\": \"适用场景\",
-      \"why_natural\": \"地道原因及区别\"
-    }
-  ]
-}";
+Output exactly one valid JSON object with this schema and no extra keys:
+{\"sentence\": \"最佳自然中文译文\"}";
 
 pub fn system_prompt(request: &PredictionRequest) -> &'static str {
     match request.kind {
@@ -478,6 +458,55 @@ fn extract_json_str(content: &str) -> &str {
     trimmed
 }
 
+/// 检测结构化响应。翻译解析失败时，严禁将 JSON/截断 JSON 当成可上屏译文。
+fn looks_like_json_payload(content: &str) -> bool {
+    let trimmed = content.trim_start();
+    let unwrapped = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```JSON"))
+        .or_else(|| trimmed.strip_prefix("```"))
+        .unwrap_or(trimmed)
+        .trim_start();
+    unwrapped.starts_with('{')
+        || unwrapped.starts_with('[')
+        || (unwrapped.contains("\"sentence\"") && unwrapped.contains("\"alternatives\""))
+}
+
+/// 从被截断但已包含完整首字段的 JSON 中安全提取字符串，不尝试解析或显示整个残缺对象。
+fn extract_partial_json_string_field(content: &str, fields: &[&str]) -> Option<String> {
+    for field in fields {
+        let marker = format!("\"{field}\"");
+        let Some(key_start) = content.find(&marker) else { continue };
+        let after_key = key_start + marker.len();
+        let Some(colon_rel) = content.get(after_key..)?.find(':') else { continue };
+        let value_start = after_key + colon_rel + 1;
+        let rest = content.get(value_start..)?.trim_start();
+        let Some(json_string) = rest.strip_prefix('\"') else { continue };
+        let mut escaped = false;
+        for (idx, byte) in json_string.as_bytes().iter().enumerate() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match *byte {
+                b'\\' => escaped = true,
+                b'\"' => {
+                    // rest 包含起始引号，idx 是去掉起始引号后的偏移。
+                    let literal = &rest[..idx + 2];
+                    if let Ok(value) = serde_json::from_str::<String>(literal) {
+                        if !value.trim().is_empty() {
+                            return Some(value);
+                        }
+                    }
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
 fn is_habitual_idiom_not_thought(zh: &str) -> bool {
     zh.contains("不经脑袋")
         || zh.contains("不经过脑袋")
@@ -564,13 +593,46 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
         Ok(raw) => raw,
         Err(_) => {
             if request.kind == PredictionKind::Translate {
+                if looks_like_json_payload(content) {
+                    let field = extract_partial_json_string_field(
+                        content,
+                        &["sentence", "translation", "translated_text", "result", "primary_english", "target_text"],
+                    );
+                    if let Some(value) = field {
+                        let clean = strip_translation_prefix(&value);
+                        if !looks_like_json_payload(&clean)
+                            && !clean.trim().is_empty()
+                            && (request.target_language != "en" || is_valid_english_translation(&clean))
+                        {
+                            return Reply {
+                                words: Vec::new(),
+                                sentence: Some(clean.clone()),
+                                alternatives: if request.target_language == "en" {
+                                    synthesize_fallback_alternatives(&request.text, &clean)
+                                } else {
+                                    Vec::new()
+                                },
+                                ..Default::default()
+                            };
+                        }
+                    }
+                    tracing::warn!(sequence = request.sequence, "翻译响应是无效/截断 JSON，已阻止原始结构化内容上屏");
+                    return Reply::default();
+                }
                 let clean = strip_translation_prefix(content.trim());
                 let clean = clean.trim_matches(|c| c == '\"' || c == '`' || c == '\'').trim();
-                if !clean.is_empty() && (request.target_language != "en" || is_valid_english_translation(clean)) {
+                if !clean.is_empty()
+                    && !looks_like_json_payload(clean)
+                    && (request.target_language != "en" || is_valid_english_translation(clean))
+                {
                     return Reply {
                         words: Vec::new(),
                         sentence: Some(clean.to_string()),
-                        alternatives: synthesize_fallback_alternatives(&request.text, clean),
+                        alternatives: if request.target_language == "en" {
+                            synthesize_fallback_alternatives(&request.text, clean)
+                        } else {
+                            Vec::new()
+                        },
                         ..Default::default()
                     };
                 }
@@ -801,6 +863,10 @@ pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
 
         if let Some(s) = sentence {
             let mut clean_s = strip_translation_prefix(&s);
+            if looks_like_json_payload(&clean_s) {
+                tracing::warn!(sequence = request.sequence, "翻译 sentence 字段本身仍包含 JSON，已拒绝上屏");
+                return Reply::default();
+            }
             if request.target_language == "en" && !is_valid_english_translation(&clean_s) {
                 return Reply::default();
             }
@@ -1364,6 +1430,41 @@ mod tests {
             parse_reply(prefixed_reply, &translate).sentence.as_deref(),
             Some("My keyboard can translate anywhere now lol.")
         );
+    }
+
+    #[test]
+    fn truncated_chinese_translation_recovers_only_sentence() {
+        let mut translate = request("", false);
+        translate.kind = PredictionKind::Translate;
+        translate.text = "Are you kidding me?".to_owned();
+        translate.target_language = "zh".to_owned();
+        assert_eq!(system_prompt(&translate), TRANSLATE_TO_CHINESE_SYSTEM_PROMPT);
+        assert!(!system_prompt(&translate).contains("\\\"alternatives\\\""));
+
+        // 模拟中文翻译 prompt 输出了多字段 JSON，但在 alternatives 中途被 token 上限截断。
+        let truncated = r#"{"sentence":"你在开玩笑吗？","alternatives":[{"text":"你逗我呢？","tag":"Casual","meaning":"语气更随意""#;
+        let reply = parse_reply(truncated, &translate);
+        assert_eq!(reply.sentence.as_deref(), Some("你在开玩笑吗？"));
+        assert!(reply.alternatives.is_empty());
+        assert!(!reply.sentence.as_deref().unwrap_or_default().contains("alternatives"));
+    }
+
+    #[test]
+    fn malformed_translation_json_never_leaks_into_candidate_text() {
+        let mut translate = request("", false);
+        translate.kind = PredictionKind::Translate;
+        translate.text = "hello".to_owned();
+        translate.target_language = "zh".to_owned();
+
+        // 没有完整 sentence 字段时必须拒绝原始对象，而不是把它作为译文上屏。
+        let malformed = r#"{"alternatives":[{"text":"你好","tag":"Natural","meaning":"问候""#;
+        let reply = parse_reply(malformed, &translate);
+        assert_eq!(reply.sentence, None);
+
+        // 兼容不带 JSON 包装的合法纯文本响应，但中文翻译不应合成英语学习替换项。
+        let plain = parse_reply("你好", &translate);
+        assert_eq!(plain.sentence.as_deref(), Some("你好"));
+        assert!(plain.alternatives.is_empty());
     }
 
     #[test]
