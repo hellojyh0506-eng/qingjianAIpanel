@@ -86,9 +86,9 @@ impl<'a> Scored<'a> {
     }
 
     /// `choice` 是同输入串下的选择次数，`score` 是上下文得分（log 概率，已含用户加分与模糊音 / 敲错扣分）。
-    pub(super) fn key(&self, choice: u32, score: f64) -> SortKey<'a> {
+    pub(super) fn key(&self, choice: u32, score: f64, hard_choice_min: u32) -> SortKey<'a> {
         // 功能词/虚词不使用离散硬排序优先，由包含 choice 加成的 score 软性裁决
-        let effective_choice = if is_functional_word(self.hit.text) {
+        let effective_choice = if choice < hard_choice_min || is_functional_word(self.hit.text) {
             0
         } else {
             choice

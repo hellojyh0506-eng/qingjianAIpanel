@@ -253,13 +253,15 @@ impl Engine {
         // `ba` 在「做了」后面出 吧、句首出 把
         let log_total = (self.total_frequency() as f64).max(1.0).ln();
         let letters = choice_key(scope, scope.len());
+        // Short pinyin has weak segmentation evidence; try soft choice priority only on 1-2 letters.
+        let hard_choice_min = if letters.len() <= 2 { 2 } else { 1 };
         let (eff_prev, eff_earlier) = self.effective_context();
         let eff_ctx = sentence::Context {
             previous: eff_prev.as_deref(),
             earlier: eff_earlier.as_deref(),
         };
         let before_text = self.effective_before();
-        ranking::rank(&mut scored, MAX_CANDIDATES, |item| {
+        ranking::rank_with_choice_priority(&mut scored, MAX_CANDIDATES, hard_choice_min, |item| {
             let hit = &item.hit;
             // 纠错生效时覆盖的是纠正后的字母，换算回原串再查「这个输入串下选过什么」
             let covered = correction

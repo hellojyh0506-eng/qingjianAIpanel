@@ -46,6 +46,17 @@ pub fn rank(
     limit: usize,
     context: impl Fn(&Scored<'_>) -> (u32, f64),
 ) {
+    rank_with_choice_priority(items, limit, 1, context);
+}
+
+/// Rank candidates while optionally making same-input choice frequency a hard tie-breaker.
+/// The soft choice bonus remains part of the score for both settings.
+pub fn rank_with_choice_priority(
+    items: &mut Vec<Scored<'_>>,
+    limit: usize,
+    hard_choice_min: u32,
+    context: impl Fn(&Scored<'_>) -> (u32, f64),
+) {
     // 远超上限时先按结构键 + 词频线性选出前面一段：同一个词会被多种切分命中，多选一倍留给去重（结果仍可能略少于上限，无妨）
     let preselect = limit.saturating_mul(2);
     if items.len() > preselect.saturating_mul(2) {
@@ -62,7 +73,7 @@ pub fn rank(
         .map(|item| {
             let (choice, log_prob) = context(&item);
             let score = log_prob + weight_bonus(item.weight) + weight_bonus(choice) - item.penalty;
-            (item.key(choice, score), item)
+            (item.key(choice, score, hard_choice_min), item)
         })
         .collect();
     keyed.sort_unstable_by(|a, b| a.0.cmp(&b.0));
@@ -196,6 +207,54 @@ mod tests {
         ];
         rank(&mut items, usize::MAX, |_| (0, 0.0));
         assert_eq!(items[0].hit.text, "开放");
+    }
+
+    #[test]
+    fn short_input_softens_single_choice_but_keeps_repeated_choice_priority() {
+        let make_items = || {
+            vec![
+                Scored {
+                    hit: hit("已选", "ba", 9_000, true),
+                    full_last: true,
+                    coverage: 2,
+                    abbreviated: 0,
+                    weight: 0,
+                    penalty: 0.0,
+                },
+                Scored {
+                    hit: hit("上下文", "ba", 1_000, true),
+                    full_last: true,
+                    coverage: 2,
+                    abbreviated: 0,
+                    weight: 0,
+                    penalty: 0.0,
+                },
+            ]
+        };
+        let one_choice = |item: &Scored<'_>| {
+            (
+                u32::from(item.hit.text == "已选"),
+                if item.hit.text == "已选" { -4.0 } else { -1.0 },
+            )
+        };
+        let repeated_choice = |item: &Scored<'_>| {
+            (
+                2 * u32::from(item.hit.text == "已选"),
+                if item.hit.text == "已选" { -4.0 } else { -1.0 },
+            )
+        };
+
+        let mut soft_one = make_items();
+        rank_with_choice_priority(&mut soft_one, usize::MAX, 2, one_choice);
+        assert_eq!(soft_one[0].hit.text, "上下文");
+
+        let mut hard_one = make_items();
+        rank_with_choice_priority(&mut hard_one, usize::MAX, 1, one_choice);
+        assert_eq!(hard_one[0].hit.text, "已选");
+
+        let mut repeated = make_items();
+        rank_with_choice_priority(&mut repeated, usize::MAX, 2, repeated_choice);
+        assert_eq!(repeated[0].hit.text, "已选");
     }
 
     #[test]
