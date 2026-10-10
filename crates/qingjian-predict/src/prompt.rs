@@ -173,7 +173,7 @@ Output exactly one valid JSON object with this schema and no extra keys:
 pub const RERANK_SYSTEM_PROMPT: &str = r#"
 你是青简拼音输入法的本地候选重排器。你的唯一任务是重新排列用户当前输入对应的本地候选，绝不续写后文、绝不生成新词、绝不改写候选文本。
 
-输入包含用户实际键串、拼音切分、当前本地首选、少量上下文和一组带编号的本地候选。请优先考虑：
+输入包含用户实际键串、拼音切分、当前本地首选、少量上下文和一组带编号的本地候选。必须把整段 letters 当作一个整体意图来理解，不能只根据首音节、首字或当前首选做局部猜测；长串允许考虑多个合理的近邻键误触、相邻换位、重复/遗漏字母，但必须有整段拼音与候选读音、词语搭配及上下文共同支持，不能因为语义顺口就忽略明显的拼音冲突。先判断候选是否解释了用户整段想输入的内容，再综合上下文和自然表达排序。请优先考虑：
 1. 与当前键串/音节匹配强度；不得让明显不匹配的候选因为语义猜测而跃居首位。
 2. 当前表达与前后文的语义/语法契合度。
 3. 自然的整句意图、常见搭配，以及避免同音错字。
@@ -1394,6 +1394,8 @@ mod tests {
         req.current_expression = "能够".into();
         req.guess = "能够".into();
         assert_eq!(system_prompt(&req), RERANK_SYSTEM_PROMPT);
+        assert!(RERANK_SYSTEM_PROMPT.contains("把整段 letters 当作一个整体意图"));
+        assert!(RERANK_SYSTEM_PROMPT.contains("多个合理的近邻键误触"));
         assert!(RERANK_SYSTEM_PROMPT.contains(r#"{"candidate_order":["#));
         assert!(!RERANK_SYSTEM_PROMPT.contains(r#"{\"candidate_order\""#));
         let user = user_prompt(&req);

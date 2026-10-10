@@ -20,24 +20,51 @@ pub struct Correction {
 }
 
 impl Correction {
-    /// 这处编辑落在纠正后哪个音节里：返回 (敲的那段字母, 纠正后的音节)，给个人敲错表记（敲的那段多半不是合法音节）；
-    /// 多敲的字母算在它前面那个音节上（与 [`Edit::to_original`] 一致）。编辑处不在任何音节里时返回 `None`。
-    /// `consumed` 是上屏消耗掉的纠正后字母数：没吃到编辑处的上屏不算接受了纠正。
+    /// 返回本次纠错覆盖到的音节级错拼对；同一音节有两处编辑时只记一次。
+    pub fn typo_pairs(&self, consumed: usize) -> Vec<(String, String)> {
+        let mut pairs = Vec::new();
+        for index in 0..self.edit.components().len() {
+            if let Some(pair) = self.typo_pair_for_edit(index, consumed)
+                && !pairs.contains(&pair)
+            {
+                pairs.push(pair);
+            }
+        }
+        pairs
+    }
+
+    /// 兼容旧的单编辑调用：返回第一处编辑对应的错拼对。
     pub fn typo_pair(&self, consumed: usize) -> Option<(String, String)> {
-        let at = match self.edit {
+        self.typo_pair_for_edit(0, consumed)
+    }
+
+    /// 取得复合编辑中某一步对应的错拼对。每一步的编辑下标先映射到最终拼音，
+    /// 音节边界则逆序映射回原串。
+    pub(crate) fn typo_pair_for_edit(
+        &self,
+        edit_index: usize,
+        consumed: usize,
+    ) -> Option<(String, String)> {
+        let edits = self.edit.components();
+        let edit = *edits.get(edit_index)?;
+        let mut at = match edit {
             Edit::Substitute { index, .. }
             | Edit::Insert { index }
-            | Edit::Transpose { index, .. } => index,
+            | Edit::Transpose { index, .. } => *index,
             Edit::Delete { index, .. } => index.saturating_sub(1),
+            Edit::Multiple { .. } => return None,
         };
+        for later in edits.iter().skip(edit_index + 1) {
+            at = map_position_through_edit(at, later);
+        }
         if at >= consumed {
             return None;
         }
+
         let mut start = 0;
         for syllable in &self.segmentation.syllables {
             let end = start + syllable.text.len();
             if at < end {
-                // 编辑落在还没敲完的末尾音节里：还不知道用户要的是哪个音节，不记
                 if !syllable.complete {
                     return None;
                 }
@@ -52,36 +79,67 @@ impl Correction {
         None
     }
 
-    /// preedit 的分段：纠正后的切分拼音（`'` 连接），被改掉的原字母以 [`MarkedKind::Corrected`] 插在它原来的位置。
-    /// `nihooma` → `ni'h` + ~~o~~ + `ao'ma`。
+    /// preedit 的分段：全部改动都映射到最终切分，旧字母以 Corrected 样式显示在原位置。
     pub fn marked_segments(&self) -> Vec<MarkedSegment> {
         let display = self.segmentation.joined("'");
-        let Some((at, struck)) = self.edit.struck() else {
-            return vec![MarkedSegment::new(display, MarkedKind::Typed)];
-        };
-        // 纠正后串的字母下标 → 显示串（含 `'`）的下标
-        let mut letters = 0;
-        let mut split = display.len();
-        for (i, c) in display.char_indices() {
-            if c == '\'' {
+        let edits = self.edit.components();
+        let mut markers = Vec::new();
+        for (index, edit) in edits.iter().enumerate() {
+            if let Some((mut at, struck)) = edit.struck() {
+                for later in edits.iter().skip(index + 1) {
+                    at = map_position_through_edit(at, later);
+                }
+                markers.push((at, struck));
+            }
+        }
+        markers.sort_by_key(|(at, _)| *at);
+
+        let mut segments = Vec::with_capacity(markers.len() * 2 + 1);
+        let mut cursor = 0;
+        for (at, struck) in markers {
+            let split = display_byte_for_letter(&display, at);
+            if split < cursor {
                 continue;
             }
-            if letters == at {
-                split = i;
-                break;
+            if split > cursor {
+                segments.push(MarkedSegment::new(
+                    &display[cursor..split],
+                    MarkedKind::Typed,
+                ));
             }
-            letters += 1;
+            segments.push(MarkedSegment::new(struck, MarkedKind::Corrected));
+            cursor = split;
         }
-        let mut segments = Vec::with_capacity(3);
-        if split > 0 {
-            segments.push(MarkedSegment::new(&display[..split], MarkedKind::Typed));
+        if cursor < display.len() {
+            segments.push(MarkedSegment::new(&display[cursor..], MarkedKind::Typed));
         }
-        segments.push(MarkedSegment::new(struck, MarkedKind::Corrected));
-        if split < display.len() {
-            segments.push(MarkedSegment::new(&display[split..], MarkedKind::Typed));
+        if segments.is_empty() {
+            segments.push(MarkedSegment::new(display, MarkedKind::Typed));
         }
         segments
     }
+}
+
+fn map_position_through_edit(position: usize, edit: &Edit) -> usize {
+    match edit {
+        Edit::Insert { index } if *index <= position => position.saturating_add(1),
+        Edit::Delete { index, .. } if *index < position => position.saturating_sub(1),
+        _ => position,
+    }
+}
+
+fn display_byte_for_letter(display: &str, target: usize) -> usize {
+    let mut letters = 0;
+    for (index, ch) in display.char_indices() {
+        if ch == '\'' {
+            continue;
+        }
+        if letters == target {
+            return index;
+        }
+        letters += 1;
+    }
+    display.len()
 }
 
 #[cfg(test)]

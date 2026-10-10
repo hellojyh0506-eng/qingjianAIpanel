@@ -448,4 +448,31 @@ mod tests {
         assert_eq!(window_preedit(&frame(PreeditMode::Window)).len(), 1);
         assert!(window_preedit(&frame(PreeditMode::Inline)).is_empty());
     }
+
+    #[test]
+    fn window_preserves_all_multi_edit_correction_marks() {
+        let frame = Frame {
+            preedit: vec![
+                PreeditSegment { text: "ni'h".to_owned(), kind: PreeditKind::Typed },
+                PreeditSegment { text: "o".to_owned(), kind: PreeditKind::Corrected },
+                PreeditSegment { text: "ao'm".to_owned(), kind: PreeditKind::Typed },
+                PreeditSegment { text: "m".to_owned(), kind: PreeditKind::Corrected },
+                PreeditSegment { text: "a".to_owned(), kind: PreeditKind::Typed },
+            ],
+            preedit_mode: PreeditMode::Window,
+            cursor: 11,
+            ..Frame::default()
+        };
+
+        assert_eq!(
+            window_preedit(&frame),
+            [
+                ("ni'h".to_owned(), PreeditKind::Typed),
+                ("o".to_owned(), PreeditKind::Corrected),
+                ("ao'm".to_owned(), PreeditKind::Typed),
+                ("m".to_owned(), PreeditKind::Corrected),
+                ("a".to_owned(), PreeditKind::Typed),
+            ]
+        );
+    }
 }

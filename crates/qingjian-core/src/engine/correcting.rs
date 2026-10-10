@@ -84,30 +84,46 @@ impl Engine {
         // 相邻换位的折扣只在纠正之间比较时用（`mignti` 换位成 `mingti` 胜过换字母成 `mianti`），
         // 与原样比时不打这个折：要不要纠的门槛不因编辑类型而降（`zhongwne` 原样说得通就不纠成 中文）
         let mut best: Option<(f64, f64, Correction)> = None;
-        for candidate in candidates {
-            // 「删掉刚敲的最后一个字母」不算纠正：用户可能还没敲完，尾巴留着等下一键
-            if matches!(candidate.edit, correction::Edit::Delete { index, .. } if index + 1 == scope.len())
-            {
-                continue;
+        let consider = |candidate: Correction, best: &mut Option<(f64, f64, Correction)>| {
+            if matches!(
+                &candidate.edit,
+                correction::Edit::Delete { index, .. } if *index + 1 == scope.len()
+            ) {
+                return;
             }
-            // 纠正后的拼音上不再猜第二处敲错：变体本来就是一处编辑之外的读法，再叠一层既慢又几乎不会赢
-            let Some(conversion) = self.convert_sentence(&candidate.segmentation.patterns(), false)
+            let Some(conversion) =
+                self.convert_sentence(&candidate.segmentation.patterns(), false)
             else {
-                continue;
+                return;
             };
             if conversion.has_placeholder() {
-                continue;
+                return;
             }
-            let accepted = candidate
-                .typo_pair(candidate.corrected.len())
-                .map_or(0, |(typed, intended)| {
-                    self.learner.typo_count(&typed, &intended)
-                });
-            let transpose = matches!(candidate.edit, correction::Edit::Transpose { .. });
-            let score = conversion.score - self.typo_costs.correction_cost(transpose, accepted);
-            let undiscounted = conversion.score - self.typo_costs.correction_cost(false, accepted);
-            if best.as_ref().is_none_or(|(best, _, _)| score > *best) {
-                best = Some((score, undiscounted, candidate));
+
+            let edits = candidate.edit.components();
+            let mut score = conversion.score;
+            let mut undiscounted = conversion.score;
+            for edit_index in 0..edits.len() {
+                let accepted = candidate
+                    .typo_pair_for_edit(edit_index, candidate.corrected.len())
+                    .map_or(0, |(typed, intended)| {
+                        self.learner.typo_count(&typed, &intended)
+                    });
+                let transpose = matches!(edits[edit_index], correction::Edit::Transpose { .. });
+                score -= self.typo_costs.correction_cost(transpose, accepted);
+                undiscounted -= self.typo_costs.correction_cost(false, accepted);
+            }
+            if best.as_ref().is_none_or(|(current, _, _)| score > *current) {
+                *best = Some((score, undiscounted, candidate));
+            }
+        };
+        for candidate in candidates {
+            consider(candidate, &mut best);
+        }
+        // 只有原串无法形成完整整句、单编辑也没有可用结果时，才尝试有界两处纠错。
+        if best.is_none() && raw_score.is_none() {
+            for candidate in correction::two_edit_candidates(scope) {
+                consider(candidate, &mut best);
             }
         }
         let (_, score, found) = best?;

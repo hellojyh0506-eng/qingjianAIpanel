@@ -10,6 +10,8 @@
 //! 另一路是音节级的敲错变体（[`typo`]）：每个完整音节一处编辑后仍合法的写法进词图当带代价的边，
 //! 由整句转换与词级排序按噪声信道挑；用户接受过的 (敲的, 要的) 音节对记进个人敲错表（Learner），以后那条边更便宜。各项代价与折扣上限收在 [`TypoCosts`] 里。
 
+use std::collections::HashMap;
+
 mod costs;
 mod edit;
 pub mod recovery;
@@ -85,6 +87,164 @@ pub fn transposition_candidates(input: &str) -> Vec<Correction> {
         .filter(|(edit, _)| matches!(edit, Edit::Transpose { .. }))
         .collect();
     candidates_from(input, transpositions)
+}
+
+/// 最多两处编辑的受限整串恢复。仅在单编辑路径没有可用结果时由 Engine 调用。
+/// 每一步都必须形成可疑但可解析的拼音，最终结果需完整切分并由本地词典/语言模型验证。
+pub fn two_edit_candidates(input: &str) -> Vec<Correction> {
+    const MIN_MULTI_EDIT_LETTERS: usize = 7;
+    const MAX_PER_EDIT_SIGNATURE: usize = 16;
+    const MAX_TWO_EDIT_CANDIDATES: usize = 256;
+    const MAX_MULTI_EDIT_LETTERS: usize = 24;
+    if !eligible(input)
+        || !(MIN_MULTI_EDIT_LETTERS..=MAX_MULTI_EDIT_LETTERS).contains(&input.len())
+    {
+        return Vec::new();
+    }
+
+    let mut found: Vec<Correction> = Vec::new();
+    let mut by_corrected = HashMap::<String, usize>::new();
+    for (first_edit, intermediate) in variants(input) {
+        if !plausible_first_edit(input, &first_edit, &intermediate)
+            || matches!(first_edit, Edit::Delete { index, .. } if index + 1 == input.len())
+            || first_edit.touches_last_letter(intermediate.len())
+        {
+            continue;
+        }
+        let Some((parsed, tail)) = longest_prefix_segmentation(&intermediate) else {
+            continue;
+        };
+        let Some(best) = parsed.first() else {
+            continue;
+        };
+        if !unlikely_pinyin(Some(best), tail) && !trailing_single_letter(Some(best)) {
+            continue;
+        }
+
+        for second in candidates(&intermediate) {
+            if second.segmentation.incomplete_count() != 0
+                || second.segmentation.syllables.len() < 2
+                || trailing_single_letter(Some(&second.segmentation))
+                || second.edit.touches_last_letter(second.corrected.len())
+                || matches!(second.edit, Edit::Delete { index, .. } if index + 1 == intermediate.len())
+            {
+                continue;
+            }
+            let first_anchor = edit_anchor(&first_edit);
+            let second_anchor = edit_anchor(&second.edit);
+            if first_anchor.abs_diff(second_anchor) < 2 || second.corrected == input {
+                continue;
+            }
+
+            let candidate = Correction {
+                original: input.to_owned(),
+                corrected: second.corrected,
+                edit: Edit::Multiple {
+                    edits: vec![first_edit.clone(), second.edit],
+                },
+                segmentation: second.segmentation,
+            };
+            let corrected_key = candidate.corrected.clone();
+            if let Some(index) = by_corrected.get(&corrected_key).copied() {
+                if correction_path_cost(&candidate.edit) < correction_path_cost(&found[index].edit) {
+                    found[index] = candidate;
+                }
+            } else {
+                by_corrected.insert(corrected_key, found.len());
+                found.push(candidate);
+            }
+        }
+    }
+    // 按编辑组合分别保留最便宜的路径，避免两处换位等低代价组合挤掉“多字母 + 错键”候选。
+    found.sort_by(|left, right| {
+        correction_path_cost(&left.edit).total_cmp(&correction_path_cost(&right.edit))
+    });
+    let mut signature_counts = HashMap::<(u8, u8), usize>::new();
+    let mut bounded = Vec::with_capacity(MAX_TWO_EDIT_CANDIDATES);
+    for candidate in found {
+        let components = candidate.edit.components();
+        if components.len() != 2 {
+            continue;
+        }
+        let signature = (
+            edit_kind_code(components[0]),
+            edit_kind_code(components[1]),
+        );
+        let count = signature_counts.entry(signature).or_default();
+        if *count >= MAX_PER_EDIT_SIGNATURE {
+            continue;
+        }
+        *count += 1;
+        bounded.push(candidate);
+        if bounded.len() >= MAX_TWO_EDIT_CANDIDATES {
+            break;
+        }
+    }
+    bounded
+}
+
+fn longest_prefix_segmentation(input: &str) -> Option<(Vec<Segmentation>, &str)> {
+    match parser::segment(input) {
+        Ok(segmentations) => Some((segmentations, "")),
+        Err(parser::ParseError::NoSegmentation) => (1..input.len())
+            .rev()
+            .find_map(|end| parser::segment(&input[..end]).ok().map(|s| (s, &input[end..]))),
+        Err(_) => None,
+    }
+}
+
+fn plausible_first_edit(input: &str, edit: &Edit, corrected: &str) -> bool {
+    match edit {
+        Edit::Transpose { .. } | Edit::Delete { .. } => true,
+        Edit::Substitute { index, from } => corrected
+            .as_bytes()
+            .get(*index)
+            .is_some_and(|to| typo::adjacent(*from, *to as char)),
+        Edit::Insert { index } => {
+            let Some(&inserted) = corrected.as_bytes().get(*index) else {
+                return false;
+            };
+            let inserted = inserted as char;
+            matches!(inserted, 'a' | 'e' | 'i' | 'o' | 'u')
+                || (*index > 0
+                    && typo::adjacent(inserted, input.as_bytes()[*index - 1] as char))
+                || (*index < input.len()
+                    && typo::adjacent(inserted, input.as_bytes()[*index] as char))
+        }
+        Edit::Multiple { .. } => false,
+    }
+}
+
+fn edit_kind_code(edit: &Edit) -> u8 {
+    match edit {
+        Edit::Transpose { .. } => 0,
+        Edit::Substitute { .. } => 1,
+        Edit::Delete { .. } => 2,
+        Edit::Insert { .. } => 3,
+        Edit::Multiple { .. } => 4,
+    }
+}
+
+fn edit_anchor(edit: &Edit) -> usize {
+    match edit {
+        Edit::Delete { index, .. } => index.saturating_sub(1),
+        Edit::Substitute { index, .. }
+        | Edit::Insert { index }
+        | Edit::Transpose { index, .. } => *index,
+        Edit::Multiple { edits } => edits.first().map_or(0, edit_anchor),
+    }
+}
+
+fn correction_path_cost(edit: &Edit) -> f64 {
+    edit.components()
+        .iter()
+        .map(|step| match step {
+            Edit::Transpose { .. } => 4.0,
+            Edit::Substitute { .. } => 5.0,
+            Edit::Delete { .. } | Edit::Insert { .. } => 5.5,
+            Edit::Multiple { .. } => f64::INFINITY,
+        })
+        .sum()
 }
 
 fn candidates_from(input: &str, variants: Vec<(Edit, String)>) -> Vec<Correction> {
@@ -176,6 +336,14 @@ mod tests {
         assert!(found.iter().any(
             |c| c.corrected == "nihaoma" && matches!(c.edit, Edit::Transpose { index: 3, .. })
         ));
+    }
+
+    #[test]
+    fn two_edit_recovery_caps_candidates_and_rejects_very_long_input() {
+        let candidates = two_edit_candidates("nihoomma");
+        assert!(candidates.len() <= 256);
+        assert!(candidates.iter().any(|candidate| candidate.corrected == "nihaoma"));
+        assert!(two_edit_candidates(&"a".repeat(25)).is_empty());
     }
 
     #[test]

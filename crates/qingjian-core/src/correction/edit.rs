@@ -16,42 +16,73 @@ pub enum Edit {
         first: char,
         second: char,
     },
+
+    /// 有界复合纠错：依次应用的编辑；每个下标属于该步纠正后的字符串。
+    /// 只用于已经过词典与语言模型验证的少量多错候选。
+    Multiple { edits: Vec<Edit> },
 }
 
 impl Edit {
+    /// 复合编辑的组成步骤；单编辑也按长度为 1 的序列返回。
+    pub(crate) fn components(&self) -> Vec<&Edit> {
+        match self {
+            Self::Multiple { edits } => edits.iter().collect(),
+            _ => vec![self],
+        }
+    }
+
     /// 纠正后串开头 `corrected_len` 个字母对应原串开头多少个字母：候选按纠正后的音节消耗拼音，
-    /// 消耗掉的原串长度要按这处编辑换算回去。
+    /// 消耗掉的原串长度要按每一步编辑的逆序换算回去。
     pub fn to_original(&self, corrected_len: usize) -> usize {
-        match *self {
+        match self {
             Self::Substitute { .. } | Self::Transpose { .. } => corrected_len,
             // 多敲的字母紧贴在消耗掉的部分后面时一并吃掉，别把它留给下一段
-            Self::Delete { index, .. } if index <= corrected_len => corrected_len + 1,
+            Self::Delete { index, .. } if *index <= corrected_len => corrected_len + 1,
             Self::Delete { .. } => corrected_len,
-            Self::Insert { index } if index < corrected_len => corrected_len - 1,
+            Self::Insert { index } if *index < corrected_len => corrected_len - 1,
             Self::Insert { .. } => corrected_len,
+            Self::Multiple { edits } => edits
+                .iter()
+                .rev()
+                .fold(corrected_len, |len, edit| edit.to_original(len)),
         }
     }
 
     /// 这处编辑是不是改在刚敲的最后一个键上：换掉最后一个字母、或在末尾补一个字母（`corrected_len` 是纠正后串的长度）。
     /// 用户多半还没敲完，这种编辑凑出的完整拼音说明不了什么。
     pub fn touches_last_letter(&self, corrected_len: usize) -> bool {
-        match *self {
-            Self::Substitute { index, .. } | Self::Insert { index } => index + 1 == corrected_len,
+        match self {
+            Self::Substitute { index, .. } | Self::Insert { index } => *index + 1 == corrected_len,
             Self::Delete { .. } | Self::Transpose { .. } => false,
+            Self::Multiple { edits } => {
+                let mut output_len = corrected_len;
+                for edit in edits.iter().rev() {
+                    if edit.touches_last_letter(output_len) {
+                        return true;
+                    }
+                    output_len = match edit {
+                        Self::Insert { .. } => output_len.saturating_sub(1),
+                        Self::Delete { .. } => output_len.saturating_add(1),
+                        _ => output_len,
+                    };
+                }
+                false
+            }
         }
     }
 
     /// 要画删除线的原字母及其在纠正后串里的位置（画在这一位之前）；漏字没有可划的。
+    /// 复合编辑的全部标记由 Correction 按步骤映射到最终拼音后绘制。
     pub fn struck(&self) -> Option<(usize, String)> {
-        match *self {
-            Self::Substitute { index, from } => Some((index, from.to_string())),
-            Self::Delete { index, removed } => Some((index, removed.to_string())),
-            Self::Insert { .. } => None,
+        match self {
+            Self::Substitute { index, from } => Some((*index, from.to_string())),
+            Self::Delete { index, removed } => Some((*index, removed.to_string())),
+            Self::Insert { .. } | Self::Multiple { .. } => None,
             Self::Transpose {
                 index,
                 first,
                 second,
-            } => Some((index, format!("{first}{second}"))),
+            } => Some((*index, format!("{first}{second}"))),
         }
     }
 }

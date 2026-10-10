@@ -422,7 +422,7 @@ impl Engine {
             Some(c) => {
                 let alignment = self.align(&c.corrected, &candidate.syllables);
                 let mut typos = alignment.typos;
-                typos.extend(c.typo_pair(alignment.consumed));
+                typos.extend(c.typo_pairs(alignment.consumed));
                 typos
             }
             None => self.align(keys, &candidate.syllables).typos,

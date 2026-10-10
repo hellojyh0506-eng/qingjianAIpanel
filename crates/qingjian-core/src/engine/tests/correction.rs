@@ -88,6 +88,68 @@ fn typo_edges_in_the_lattice_correct_legal_but_unlikely_pinyin() {
     assert!(query.candidates.items.iter().all(|c| c.text != "是的"));
 }
 
+/// 同一长串里多个合法音节各自敲错时，词图可以组合多个低成本纠错边。
+/// `laiga` 按原样是 `lai ga`，在词库的局部证据下应能恢复成 `kai fa`（开发）。
+#[test]
+fn multiple_syllable_typos_can_be_combined_in_one_long_input() {
+    let dictionary = Dictionary::parse(
+        "开发\tkai fa\t900000\n来\tlai\t2000\n开\tkai\t10000\n发\tfa\t10000\n",
+    )
+    .unwrap();
+    let mut engine = Engine::new(dictionary);
+    engine.set_input("laiga");
+    let query = engine.query().unwrap();
+
+    let intended = query
+        .candidates
+        .items
+        .iter()
+        .find(|candidate| candidate.text == "开发")
+        .expect("word formed from two typo edges");
+    assert_eq!(query.candidates.items[0].text, "开发");
+    assert_eq!(intended.syllables, ["kai", "fa"]);
+}
+
+/// 长串需要两处整体修复时，只在本地有完整词典/语言模型路径时恢复，且正确处理上屏映射和拼音框标记。
+#[test]
+fn bounded_two_edit_correction_recovers_long_unsegmentable_pinyin() {
+    let dictionary = Dictionary::parse(
+        "你好吗\tni hao ma\t5000\n你好\tni hao\t9000\n你\tni\t90000\n好\thao\t80000\n吗\tma\t70000\n",
+    )
+    .unwrap();
+    let mut engine = Engine::new(dictionary)
+        .with_learner(Box::new(CountingLearner(HashMap::new())));
+    engine.set_input("nihoomma");
+    let query = engine.query().unwrap();
+
+    assert_eq!(
+        query.correction.as_ref().map(|correction| correction.corrected.as_str()),
+        Some("nihaoma")
+    );
+    assert_eq!(query.candidates.items[0].text, "你好吗");
+    assert_eq!(
+        query.marked_segments().iter().map(|segment| (segment.text.clone(), segment.kind)).collect::<Vec<_>>(),
+        [
+            ("ni'h".to_owned(), MarkedKind::Typed),
+            ("o".to_owned(), MarkedKind::Corrected),
+            ("ao'm".to_owned(), MarkedKind::Typed),
+            ("m".to_owned(), MarkedKind::Corrected),
+            ("a".to_owned(), MarkedKind::Typed),
+        ]
+    );
+    assert_eq!(query.marked_cursor(), 11);
+
+    let first = query.candidates.items[0].clone();
+    assert_eq!(engine.commit(&first), "你好吗");
+    assert!(engine.composition().is_empty());
+    assert_eq!(engine.learner().typo_count("hoo", "hao"), 1);
+    assert_eq!(engine.learner().typo_count("mma", "ma"), 1);
+
+    // 用户准确输入的合法长拼音不能被多编辑兜底误纠。
+    engine.set_input("nihaoma");
+    assert!(engine.query().unwrap().correction.is_none());
+}
+
 /// 模糊音命中的词按敲的字母消耗拼音（`zi` 对 `zhi`），不算敲错。
 #[test]
 fn fuzzy_hits_consume_the_typed_syllables() {
