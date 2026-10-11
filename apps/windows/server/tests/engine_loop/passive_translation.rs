@@ -123,6 +123,18 @@ fn latest_translate_request(
         router.tick();
         let _ = router.handle(ClientMessage::Poll { session: SESSION });
         request = requests.lock().unwrap().last().cloned().expect("translate request follows rerank");
+    } else if request.kind == PredictionKind::Intent {
+        // A long typo prioritizes Intent. If no candidate is accepted, the passive-translation path resumes.
+        *response.lock().unwrap() = Some(Prediction {
+            sequence: request.sequence,
+            words: Vec::new(),
+            sentence: None,
+            alternatives: Vec::new(),
+            ..Default::default()
+        });
+        router.tick();
+        let _ = router.handle(ClientMessage::Poll { session: SESSION });
+        request = requests.lock().unwrap().last().cloned().expect("fallback Translate follows empty Intent");
     }
     assert_eq!(request.kind, PredictionKind::Translate);
     request
@@ -132,6 +144,16 @@ fn latest_translate_request(
 fn long_typo_intent_is_validated_locally_and_only_commits_on_tab() {
     let (mut router, requests, response) = router_with_mock_predictor_intent_only();
     type_letters(&mut router, "kaifazhes");
+
+    // The locally verified one-key correction is displayed before any cloud response arrives.
+    let immediate = router.active_frame();
+    assert_eq!(immediate.sentence.as_deref(), Some("开发者"));
+    let queued = requests.lock().unwrap().clone();
+    assert_eq!(queued.last().map(|request| request.kind), Some(PredictionKind::Intent));
+    assert!(
+        queued.iter().all(|request| request.kind != PredictionKind::Translate),
+        "the long-typo path must not queue a blocking passive translation"
+    );
 
     let request = requests.lock().unwrap().last().cloned().expect("intent request");
     assert_eq!(request.kind, PredictionKind::Intent);

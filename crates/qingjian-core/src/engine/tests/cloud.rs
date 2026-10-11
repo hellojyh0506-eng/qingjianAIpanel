@@ -120,10 +120,16 @@ fn intent_pinyin_must_be_nearby_and_resolve_exactly_in_the_local_dictionary() {
 fn intent_candidate_must_be_a_current_local_candidate_with_the_matching_reading() {
     let mut engine = engine();
     engine.set_input("kaifazhes");
+    let local = engine.query().unwrap().candidates.items.clone();
     let developer: String = [0x5f00, 0x53d1, 0x8005]
         .into_iter()
         .map(|code| char::from_u32(code).unwrap())
         .collect();
+    assert_eq!(
+        engine.fast_local_intent_candidate(&local).as_deref(),
+        Some(developer.as_str()),
+        "simple trailing-key typo should have an immediate local suggestion"
+    );
     assert_eq!(
         engine.resolve_intent_candidate("kaifazhe", &developer).as_deref(),
         Some(developer.as_str())

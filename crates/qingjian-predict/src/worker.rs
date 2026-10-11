@@ -14,6 +14,64 @@ use crate::prompt::Reply;
 /// 缓存条数。
 const CACHE_CAPACITY: usize = 64;
 
+/// 完整长拼音的候选重排稍作延迟，给快速打字时可能紧随其后的尾部错字留出合并窗口。
+const LONG_RERANK_DEBOUNCE: Duration = Duration::from_millis(280);
+const INTENT_DEBOUNCE: Duration = Duration::from_millis(50);
+
+fn effective_debounce(request: &PredictionRequest, normal: Duration) -> Duration {
+    match request.kind {
+        qingjian_core::PredictionKind::Compare => Duration::ZERO,
+        qingjian_core::PredictionKind::Intent => INTENT_DEBOUNCE,
+        qingjian_core::PredictionKind::Rerank if request.letters.len() >= 7 => {
+            LONG_RERANK_DEBOUNCE
+        }
+        _ => normal,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(kind: qingjian_core::PredictionKind, letters: &str) -> PredictionRequest {
+        PredictionRequest {
+            sequence: 1,
+            kind,
+            before: String::new(),
+            after: String::new(),
+            pinyin: letters.to_owned(),
+            letters: letters.to_owned(),
+            syllables: 0,
+            candidates: Vec::new(),
+            candidate_readings: Vec::new(),
+            guess: String::new(),
+            current_expression: String::new(),
+            max_items: 0,
+            want_sentence: false,
+            text: String::new(),
+            target_language: String::new(),
+            user_attempt: String::new(),
+            reference: String::new(),
+        }
+    }
+
+    #[test]
+    fn long_rerank_waits_for_a_possible_trailing_typo_but_intent_is_fast() {
+        assert_eq!(
+            effective_debounce(&request(qingjian_core::PredictionKind::Rerank, "kaifazhe"), Duration::from_millis(150)),
+            Duration::from_millis(280)
+        );
+        assert_eq!(
+            effective_debounce(&request(qingjian_core::PredictionKind::Intent, "kaifazhes"), Duration::from_millis(150)),
+            Duration::from_millis(50)
+        );
+        assert_eq!(
+            effective_debounce(&request(qingjian_core::PredictionKind::Compare, "hello"), Duration::from_millis(150)),
+            Duration::ZERO
+        );
+    }
+}
+
 pub struct Worker {
     /// 请求入口。主线程 drop 掉发送端后通道自然关闭。
     requests: UnboundedReceiver<PredictionRequest>,
@@ -69,28 +127,24 @@ impl Worker {
                 },
             };
 
-            // 防抖窗口：在 debounce 期间持续收新请求，仅保留最新
-            // 组句过程中的翻译与联想走标准防抖（150ms），避免每个按键都高频触发云端；用户主动提交的对比评估零延迟
+            // Trailing-edge debounce: each newer keystroke resets the window. Long full-pinyin
+            // reranks wait briefly, so a trailing typo can replace the request with Intent before
+            // any network call starts.
             let mut req = request;
-            let effective_debounce = match req.kind {
-                qingjian_core::PredictionKind::Compare => Duration::from_millis(0),
-                qingjian_core::PredictionKind::Intent => Duration::from_millis(220),
-                _ => self.debounce,
-            };
-            if !effective_debounce.is_zero() {
-                let debounce_deadline = tokio::time::Instant::now() + effective_debounce;
-                while tokio::time::Instant::now() < debounce_deadline {
-                    let remaining =
-                        debounce_deadline.saturating_duration_since(tokio::time::Instant::now());
-                    tokio::select! {
-                        newer = self.requests.recv() => {
-                            match newer {
-                                Some(n) => req = n,
-                                None => return Ok(()),
-                            }
+            loop {
+                let effective = effective_debounce(&req, self.debounce);
+                if effective.is_zero() {
+                    break;
+                }
+                let deadline = tokio::time::Instant::now() + effective;
+                tokio::select! {
+                    newer = self.requests.recv() => {
+                        match newer {
+                            Some(new_request) => req = new_request,
+                            None => return Ok(()),
                         }
-                        _ = tokio::time::sleep(remaining) => break,
                     }
+                    _ = tokio::time::sleep_until(deadline) => break,
                 }
             }
 

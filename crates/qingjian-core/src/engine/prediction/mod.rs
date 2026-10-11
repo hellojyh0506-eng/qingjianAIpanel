@@ -209,6 +209,48 @@ impl Engine {
         Some(conversion.text)
     }
 
+    /// 毫秒级本地兜底：只接受与当前长拼音相差一个编辑、读音完整的现有候选。
+    /// 同读音时优先独立词条，后续 AI 可在输入尚未提交时异步修正该选择。
+    pub fn fast_local_intent_candidate(&self, candidates: &[Candidate]) -> Option<String> {
+        if self.private || self.shuangpin.is_some() || self.zhuyin || self.code.is_some() {
+            return None;
+        }
+        let original = self.composition.scope();
+        if original.bytes().any(|byte| !byte.is_ascii_lowercase())
+            || !(7..=64).contains(&original.len())
+            || !correction::eligible(original)
+        {
+            return None;
+        }
+
+        candidates
+            .iter()
+            .enumerate()
+            .filter_map(|(index, candidate)| {
+                if !matches!(candidate.kind, CandidateKind::Chinese | CandidateKind::Sentence)
+                    || candidate.syllables.len() < 2
+                    || candidate.syllables.iter().any(|syllable| !parser::is_syllable(syllable))
+                {
+                    return None;
+                }
+                let reading = candidate.syllables.concat();
+                if reading == original
+                    || !(7..=64).contains(&reading.len())
+                    || !within_edit_distance(original.as_bytes(), reading.as_bytes(), 1)
+                {
+                    return None;
+                }
+                let kind_rank = match candidate.kind {
+                    CandidateKind::Chinese => 0,
+                    CandidateKind::Sentence => 1,
+                    _ => return None,
+                };
+                Some(((kind_rank, index), candidate.text.clone()))
+            })
+            .min_by_key(|(rank, _)| *rank)
+            .map(|(_, text)| text)
+    }
+
     pub fn resolve_intent_candidate(
         &self,
         corrected_pinyin: &str,

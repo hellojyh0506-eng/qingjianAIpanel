@@ -20,7 +20,6 @@ impl Router {
         self.highlight = 0;
         self.navigated = false;
         self.sentence = None;
-        self.pending_intent = false;
         self.passive_translation = None;
         self.passive_translation_target = None;
         self.passive_learning_card = None;
@@ -49,11 +48,28 @@ impl Router {
             let (preedit, cursor, typed_keys) = marked_parts(&query);
             (query.candidates.items.clone(), preedit, cursor, typed_keys)
         });
-        let mut defer_intent_for_learning = false;
         self.composed = Some(match built {
             Some((items, preedit, cursor, typed_keys)) => {
-                let layout =
+                let mut layout =
                     CandidateLayout::new(items, self.config.page_size, self.config.cloud_slots);
+                // For an obvious one-key typo, promote the best locally verified full-pinyin
+                // candidate immediately; the cloud request below may refine the homophone later.
+                if intent_suspected {
+                    let local = layout.local().to_vec();
+                    if let Some(candidate_text) = self.engine.fast_local_intent_candidate(&local) {
+                        let mut order = vec![candidate_text.clone()];
+                        for candidate in &local {
+                            if matches!(candidate.kind, qingjian_core::CandidateKind::Chinese | qingjian_core::CandidateKind::Sentence)
+                                && !order.contains(&candidate.text)
+                            {
+                                order.push(candidate.text.clone());
+                            }
+                        }
+                        layout.reorder_local_by_text(&order);
+                        self.engine.note_candidate_order(&order);
+                        self.sentence = Some(candidate_text);
+                    }
+                }
                 let learning_on = !self.config.learning_language_off
                     && self.engine.learning_language() != Language::Chinese
                     && !self.is_private()
@@ -64,9 +80,6 @@ impl Router {
                 if learning_on {
                     if let Some(target) = first_target {
                         let target_changed = self.passive_translation_target.as_ref() != Some(&target);
-                        defer_intent_for_learning = intent_suspected
-                            && self.engine.prediction_enabled()
-                            && (target_changed || self.translation_start_time.is_some());
                         if target_changed {
                             self.passive_translation = None;
                             self.generation_id = self.generation_id.wrapping_add(1);
@@ -115,17 +128,19 @@ impl Router {
                                 review_total_count: due,
                                 upgrade: None,
                             });
-                            // 先请求当前本地候选重排；结果回来后再为重排后的首选请求被动译文。
-                            // 预测与翻译共用单个 Worker，串行调度避免翻译先占住通道并压掉候选重排。
                             self.translation_start_time = None;
-                            let surrounding = self.rerank_surrounding();
-                            if self.engine.request_rerank(surrounding, layout.local()).is_none() {
-                                // 候选不足以重排/输入太短时仍然保持被动翻译功能，不让卡片无限停留在 Loading。
-                                self.translation_start_time = Some(Instant::now());
-                                if let Some(sequence) = self.engine.request_translation(&target) {
-                                    self.generation_id = sequence;
-                                } else {
-                                    self.translation_start_time = None;
+                            if !intent_suspected {
+                                // Normal input keeps Rerank -> Translate. A likely typo uses one
+                                // Intent request instead, so three serialized cloud calls do not block the hint.
+                                let surrounding = self.rerank_surrounding();
+                                if self.engine.request_rerank(surrounding, layout.local()).is_none() {
+                                    // If rerank is unavailable, still request the passive translation.
+                                    self.translation_start_time = Some(Instant::now());
+                                    if let Some(sequence) = self.engine.request_translation(&target) {
+                                        self.generation_id = sequence;
+                                    } else {
+                                        self.translation_start_time = None;
+                                    }
                                 }
                             }
                         }
@@ -155,8 +170,7 @@ impl Router {
                 Composed::Raw { text, cursor }
             }
         });
-        self.pending_intent = defer_intent_for_learning;
-        if intent_suspected && self.engine.prediction_enabled() && !defer_intent_for_learning {
+        if intent_suspected && self.engine.prediction_enabled() {
             let surrounding = self.rerank_surrounding();
             self.engine.request_intent_suggestion(surrounding, &intent_candidate_hints);
         }
@@ -268,9 +282,91 @@ impl Router {
             return;
         }
         if self.engine.last_prediction_kind() == PredictionKind::Intent {
-            // 意图纠错只能显示经过 Core 本地拼音/词典验证的短语；用户按 Tab 再采用。
+            // Intent is asynchronous: apply it only while the original composition is still active.
+            // A local one-edit guess may already be visible; the model may confirm or refine it.
             if !self.navigated && self.highlight == 0 {
-                self.sentence = prediction.sentence;
+                if let Some(candidate_text) = prediction.sentence {
+                    let local_candidate_exists = self.composed.as_ref().is_some_and(|composed| {
+                        matches!(composed, Composed::Candidates { layout, .. }
+                            if layout.local().iter().any(|candidate| candidate.text == candidate_text))
+                    });
+                    if local_candidate_exists {
+                        let order_to_note = if let Some(Composed::Candidates { layout, .. }) = self.composed.as_mut() {
+                            let local = layout.local().to_vec();
+                            let mut order = vec![candidate_text.clone()];
+                            for candidate in &local {
+                                if matches!(candidate.kind, qingjian_core::CandidateKind::Chinese | qingjian_core::CandidateKind::Sentence)
+                                    && !order.contains(&candidate.text)
+                                {
+                                    order.push(candidate.text.clone());
+                                }
+                            }
+                            layout.reorder_local_by_text(&order).then_some(order)
+                        } else {
+                            None
+                        };
+                        if let Some(order) = order_to_note.as_deref() {
+                            self.engine.note_candidate_order(order);
+                        }
+                        self.sentence = Some(candidate_text.clone());
+
+                        // If AI refines the fast local guess, update the learning gloss without
+                        // delaying or blocking the corrected candidate itself.
+                        if self.passive_learning_card.is_some()
+                            && self.passive_translation_target.as_deref() != Some(candidate_text.as_str())
+                        {
+                            let offline = self.engine
+                                .translate_word(&candidate_text)
+                                .and_then(|translation| translation.senses().first().map(|sense| sense.text.clone()))
+                                .filter(|text| is_valid_english_text(text))
+                                .or_else(|| fallback_idiom_english(&candidate_text));
+                            self.passive_translation = offline.clone();
+                            self.passive_translation_target = Some(candidate_text.clone());
+                            if let Some(card) = self.passive_learning_card.as_mut() {
+                                card.target_text = candidate_text.clone();
+                                card.primary = offline.as_ref().map(|text| qingjian_platform::protocol::LearningExpression {
+                                    text: text.clone(),
+                                    tag: "Common".to_string(),
+                                    meaning: candidate_text.clone(),
+                                    tone: "标准自然".to_string(),
+                                    scenario: "日常场景".to_string(),
+                                    commonality: "高频".to_string(),
+                                    why_natural: "本地离线词库释义".to_string(),
+                                });
+                                card.alternatives.clear();
+                                card.state = if card.primary.is_some() {
+                                    qingjian_platform::protocol::LearningState::Ready
+                                } else {
+                                    qingjian_platform::protocol::LearningState::Loading
+                                };
+                                card.upgrade = None;
+                            }
+                            self.translation_start_time = None;
+                            if offline.is_none() && self.engine.prediction_enabled() {
+                                self.translation_start_time = Some(Instant::now());
+                                if let Some(sequence) = self.engine.request_translation(&candidate_text) {
+                                    self.generation_id = sequence;
+                                } else {
+                                    self.translation_start_time = None;
+                                }
+                            }
+                        }
+                    }
+                } else if self.passive_learning_card.is_some()
+                    && self.translation_start_time.is_none()
+                    && self.engine.prediction_enabled()
+                {
+                    // If Intent returns no locally valid suggestion, keep the fast local hint (if any)
+                    // and restore the passive translation path instead of leaving its card Loading.
+                    if let Some(target) = self.passive_translation_target.clone() {
+                        self.translation_start_time = Some(Instant::now());
+                        if let Some(sequence) = self.engine.request_translation(&target) {
+                            self.generation_id = sequence;
+                        } else {
+                            self.translation_start_time = None;
+                        }
+                    }
+                }
                 let shown = self.self_drawn_frame();
                 self.reconcile_candidates(&shown);
             }
@@ -656,19 +752,6 @@ impl Router {
                     );
                 }
             }
-            if self.pending_intent {
-                self.pending_intent = false;
-                let candidates = self
-                    .composed
-                    .as_ref()
-                    .and_then(|composed| match composed {
-                        Composed::Candidates { layout, .. } => Some(layout.local().to_vec()),
-                        Composed::Raw { .. } => None,
-                    })
-                    .unwrap_or_default();
-                let surrounding = self.rerank_surrounding();
-                self.engine.request_intent_suggestion(surrounding, &candidates);
-            }
             return;
         }
         if let Some(Composed::Candidates { layout, .. }) = self.composed.as_mut() {
@@ -697,7 +780,6 @@ impl Router {
         }
         let next = (self.highlight as isize + delta).clamp(0, count as isize - 1) as usize;
         if next != self.highlight {
-            self.pending_intent = false;
             self.navigated = true;
             self.highlight = next;
             self.on_candidate_selection_changed();
@@ -716,7 +798,6 @@ impl Router {
         let current = (self.highlight / page_size) as isize;
         let target = (current + step).clamp(0, page_count as isize - 1) as usize;
         if target != current as usize {
-            self.pending_intent = false;
             self.navigated = true;
             self.engine.note_page_turn();
         }
