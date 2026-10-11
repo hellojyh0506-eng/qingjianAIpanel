@@ -21,4 +21,4 @@ The previous request order serialized three API calls for the screenshot input: 
 
 ## Deployment state
 
-This note is a record of the build before deployment. The live binary is still the prior stable version until a separately verified backup-and-deploy step completes. No TSF DLL changes are part of this work.
+Deployment completed on 2026-10-11. Live Windows Server PID: `21948`. Live / Release / desktop verification SHA-256: `CAEDC396FE43F3173A363949ADA3E72C3E2B635B40D57DCDA01B19758E0CA105`. Previous live binary backup: `E:\Qingjian\qingjian-server.exe.bak_fast_intent_20261011_115555`. Exactly one server process was present after restart. No TSF DLL changes are part of this work. Real-model p50/p95 latency remains unmeasured; the UX improvement is local-first rather than pretending the cloud request itself became sub-100ms.
