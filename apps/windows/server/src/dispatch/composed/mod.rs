@@ -130,17 +130,16 @@ impl Router {
                             });
                             self.translation_start_time = None;
                             if !intent_suspected {
-                                // Normal input keeps Rerank -> Translate. A likely typo uses one
-                                // Intent request instead, so three serialized cloud calls do not block the hint.
+                                // 重排在打字通道、翻译在学习通道，两路并行发出，互不等待；
+                                // 重排若改了首选，结果回来时会按新首选重发翻译。
+                                // A likely typo uses one Intent request instead of this pair.
                                 let surrounding = self.rerank_surrounding();
-                                if self.engine.request_rerank(surrounding, layout.local()).is_none() {
-                                    // If rerank is unavailable, still request the passive translation.
-                                    self.translation_start_time = Some(Instant::now());
-                                    if let Some(sequence) = self.engine.request_translation(&target) {
-                                        self.generation_id = sequence;
-                                    } else {
-                                        self.translation_start_time = None;
-                                    }
+                                let _ = self.engine.request_rerank(surrounding, layout.local());
+                                self.translation_start_time = Some(Instant::now());
+                                if let Some(sequence) = self.engine.request_translation(&target) {
+                                    self.generation_id = sequence;
+                                } else {
+                                    self.translation_start_time = None;
                                 }
                             }
                         }
@@ -281,7 +280,7 @@ impl Router {
             self.reconcile_candidates(&shown);
             return;
         }
-        if self.engine.last_prediction_kind() == PredictionKind::Intent {
+        if prediction.kind == PredictionKind::Intent {
             // Intent is asynchronous: apply it only while the original composition is still active.
             // A local one-edit guess may already be visible; the model may confirm or refine it.
             if !self.navigated && self.highlight == 0 {
@@ -372,7 +371,7 @@ impl Router {
             }
             return;
         }
-        if self.engine.last_prediction_kind() == PredictionKind::Rerank {
+        if prediction.kind == PredictionKind::Rerank {
             // Rerank 结果只能重排当前状态下的原有本地候选，绝不作为云词插入。
             // 已移动高亮/翻页就不再应用，避免 AI 回包抢走用户正在操作的候选。
             if !self.navigated && self.highlight == 0 {
@@ -421,11 +420,14 @@ impl Router {
                             };
                         }
                     }
-                    self.translation_start_time = Some(Instant::now());
-                    if let Some(sequence) = self.engine.request_translation(&target) {
-                        self.generation_id = sequence;
-                    } else {
-                        self.translation_start_time = None;
+                    // 翻译早已与重排并行发出；只有重排改了首选才需要对新首选重发。
+                    if changed_target {
+                        self.translation_start_time = Some(Instant::now());
+                        if let Some(sequence) = self.engine.request_translation(&target) {
+                            self.generation_id = sequence;
+                        } else {
+                            self.translation_start_time = None;
+                        }
                     }
                 }
             }
@@ -434,7 +436,7 @@ impl Router {
             return;
         }
 
-        if self.engine.last_prediction_kind() == PredictionKind::Compare {
+        if prediction.kind == PredictionKind::Compare {
             let compare_total_ms = self
                 .compare_start_time
                 .take()
@@ -499,7 +501,7 @@ impl Router {
             );
             return;
         }
-        if self.engine.last_prediction_kind() == PredictionKind::DeepLearn {
+        if prediction.kind == PredictionKind::DeepLearn {
             tracing::info!(
                 seq = prediction.sequence,
                 alts = prediction.alternatives.len(),
@@ -626,7 +628,7 @@ impl Router {
             self.candidates.show_companion(data, rect);
             return;
         }
-        if self.engine.last_prediction_kind() == PredictionKind::Translate {
+        if prediction.kind == PredictionKind::Translate {
             // Generation ID 校验：丢弃过期请求返回的结果，防止 Candidate 快速变化时的覆盖竞态
             if self.generation_id != 0 && prediction.sequence != self.generation_id {
                 tracing::debug!(

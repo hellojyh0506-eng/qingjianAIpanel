@@ -105,7 +105,7 @@ impl Host {
         if self.engine.composition().is_empty() {
             return;
         }
-        if self.engine.last_prediction_kind() == qingjian_core::PredictionKind::Rerank {
+        if prediction.kind == qingjian_core::PredictionKind::Rerank {
             // 当前输入重排不是云词：只能调整现有本地候选顺序，不能塞入额外候选或句子补全。
             // 已翻页或移动高亮时不应用异步重排，防止覆盖用户正在操作的位置。
             if self.session.page == 0 && self.session.highlighted == 0 {

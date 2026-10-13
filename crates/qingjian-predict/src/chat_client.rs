@@ -169,6 +169,7 @@ impl ChatClient {
         // 所有尝试共享一个总 deadline，响应体读取也受限；不能每次重试都再等完整 timeout。
         let max_attempts = 3;
         let mut last_err = None;
+        let mut rate_limited = false;
 
         for attempt in 0..max_attempts {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -176,7 +177,7 @@ impl ChatClient {
                 break;
             }
             if attempt > 0 {
-                let backoff = Duration::from_millis(250 * attempt as u64).min(remaining);
+                let backoff = retry_backoff(attempt, rate_limited).min(remaining);
                 tracing::warn!(attempt, delay_ms = backoff.as_millis(), "正在进行LLM网关自动重试...");
                 tokio::time::sleep(backoff).await;
                 if tokio::time::Instant::now() >= deadline {
@@ -235,6 +236,7 @@ impl ChatClient {
                     .unwrap_or_else(|| format!("HTTP status {code}: {raw_text}"));
 
                 last_err = Some(PredictError::Gateway(code, err_msg));
+                rate_limited = code == 429;
                 if (code == 429 || code >= 500) && attempt + 1 < max_attempts {
                     continue;
                 }
@@ -531,9 +533,24 @@ fn parse_reasoning_effort(value: &str) -> Option<ReasoningEffort> {
     }
 }
 
+/// 第 `attempt`（从 1 开始）次重试前的等待：指数退避；限流（429）基数更大，避免立刻再撞限流。
+fn retry_backoff(attempt: u32, rate_limited: bool) -> Duration {
+    let base_ms: u64 = if rate_limited { 400 } else { 250 };
+    Duration::from_millis(base_ms << attempt.saturating_sub(1).min(4))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_backoff_grows_exponentially_and_waits_longer_on_rate_limit() {
+        assert_eq!(retry_backoff(1, false), Duration::from_millis(250));
+        assert_eq!(retry_backoff(2, false), Duration::from_millis(500));
+        assert_eq!(retry_backoff(1, true), Duration::from_millis(400));
+        assert_eq!(retry_backoff(2, true), Duration::from_millis(800));
+        assert!(retry_backoff(30, true) <= Duration::from_secs(10));
+    }
 
     #[test]
     fn reasoning_effort_parses_known_values_and_ignores_the_rest() {

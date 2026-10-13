@@ -103,6 +103,8 @@
 **验收**：长拼音 + 学习模式场景，识别结果到达 ≈ 单次请求耗时。
 **提交**：`refactor(predict): 云端请求按打字/学习/深度三通道并行`
 
+状态：已完成（2026-10-13，Linux 沙箱）。core 新增 `PredictionLane` 与按通道判过期，`Prediction` 带 `kind`（壳据此分派，不再看 `last_prediction_kind`）；Worker 三通道并行；Windows 组句时重排与翻译同时发出；429 改指数退避。core / predict（含用本机假服务的并行测试）/ platform / cli 测试全过，`qingjian-windows-server`（含测试）、tsf、settings 用 zig 做 C 编译器在 Linux 上 `cargo check --target x86_64-pc-windows-gnu` 通过。**与计划的偏离**：① `Question` 归 Typing 通道（问字与打字一样每键换，放 Deep 会被慢请求占住）；② Deep 通道不占「并发上限 2」的名额（Typing + Learning 合计 ≤ 2），避免一个慢的深度请求挡住打字。**未验证**：Windows 测试只编译未运行（沙箱无 Windows）、macOS 壳（仅一处判断条件，无法编译）、真实接口下的并行延迟（无密钥）。
+
 ---
 
 ## P3　本地纠错增强（约 2 天，纯本地、即时）
