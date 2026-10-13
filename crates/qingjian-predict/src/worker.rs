@@ -26,10 +26,14 @@ const WARM_UP_AFTER_IDLE: Duration = Duration::from_secs(45);
 const LONG_RERANK_DEBOUNCE: Duration = Duration::from_millis(280);
 const INTENT_DEBOUNCE: Duration = Duration::from_millis(50);
 
+/// Resolve 防抖：快速连敲时只发最后一个，120 ms 内没有新键才发。
+const RESOLVE_DEBOUNCE: Duration = Duration::from_millis(120);
+
 fn effective_debounce(request: &PredictionRequest, normal: Duration) -> Duration {
     match request.kind {
         qingjian_core::PredictionKind::Compare => Duration::ZERO,
         qingjian_core::PredictionKind::Intent => INTENT_DEBOUNCE,
+        qingjian_core::PredictionKind::Resolve => RESOLVE_DEBOUNCE,
         qingjian_core::PredictionKind::Rerank if request.letters.len() >= 7 => {
             LONG_RERANK_DEBOUNCE
         }
@@ -43,6 +47,7 @@ mod tests {
 
     fn request(kind: qingjian_core::PredictionKind, letters: &str) -> PredictionRequest {
         PredictionRequest {
+            resolve_candidates: Vec::new(),
             sequence: 1,
             kind,
             before: String::new(),
@@ -72,6 +77,13 @@ mod tests {
         assert_eq!(
             effective_debounce(&request(qingjian_core::PredictionKind::Intent, "kaifazhes"), Duration::from_millis(150)),
             Duration::from_millis(50)
+        );
+        assert_eq!(
+            effective_debounce(
+                &request(qingjian_core::PredictionKind::Resolve, "kaifazhes"),
+                Duration::from_millis(300)
+            ),
+            Duration::from_millis(120)
         );
         assert_eq!(
             effective_debounce(&request(qingjian_core::PredictionKind::Compare, "hello"), Duration::from_millis(150)),
@@ -314,6 +326,7 @@ impl Shared {
             scenario: reply.scenario,
             nuance: reply.nuance,
             dialogue: reply.dialogue,
+            resolved: None,
         });
     }
 }

@@ -79,6 +79,7 @@ impl AiService {
     pub async fn translate_candidate(&self, text: &str) -> Result<Reply, PredictError> {
         self.metrics.translation_requests.fetch_add(1, Ordering::Relaxed);
         let request = PredictionRequest {
+            resolve_candidates: Vec::new(),
             sequence: 0,
             kind: PredictionKind::Translate,
             before: String::new(),
@@ -109,6 +110,7 @@ impl AiService {
     ) -> Result<Reply, PredictError> {
         self.metrics.compare_requests.fetch_add(1, Ordering::Relaxed);
         let request = PredictionRequest {
+            resolve_candidates: Vec::new(),
             sequence: 0,
             kind: PredictionKind::Compare,
             before: String::new(),
@@ -137,6 +139,7 @@ impl AiService {
         primary: &str,
     ) -> Result<Reply, PredictError> {
         let request = PredictionRequest {
+            resolve_candidates: Vec::new(),
             sequence: 0,
             kind: PredictionKind::DeepLearn,
             before: String::new(),

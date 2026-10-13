@@ -2,6 +2,20 @@ use std::collections::HashMap;
 
 use super::super::{Candidate, CandidateKind};
 use super::Cell;
+use crate::{ResolvePlacement, Resolved};
+
+/// [`CandidateLayout::apply_resolved`] 的摆放结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolveApplied {
+    /// 候选顺序或「纠」标记变了。
+    Placed,
+
+    /// 没动候选，调用方应把它放到提示位（Tab 采用）。
+    Hint,
+
+    /// 与现状一致，什么也没变。
+    Unchanged,
+}
 
 /// 本地候选 + 云端词的分页排布。索引空间是「格」：第一页先本地后云端，之后各页全是本地候选。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -169,6 +183,76 @@ impl CandidateLayout {
             .map(|index| self.local[*index].text.clone())
             .collect();
         after != before
+    }
+
+    /// 文字为 `text` 的普通本地候选排第几（0 起，Custom 固定位置不算）；没有返回 `None`。
+    pub fn local_position(&self, text: &str) -> Option<usize> {
+        self.local
+            .iter()
+            .filter(|c| !matches!(c.kind, CandidateKind::Custom(_)))
+            .position(|c| c.text == text)
+    }
+
+    /// 把 `candidate` 放到普通本地候选的第 `position` 位（0 起）：同文的已有候选先拿掉，其余顺次后移；
+    /// 候选不在列表里（AI 纠正拼音后重查本地得到的）就是插入。返回顺序或「纠」标记有没有变。
+    pub fn place_local(&mut self, candidate: Candidate, position: usize) -> bool {
+        let before = self.local.clone();
+        if let Some(existing) = self
+            .local
+            .iter()
+            .position(|c| c.text == candidate.text && !matches!(c.kind, CandidateKind::Custom(_)))
+        {
+            self.local.remove(existing);
+        }
+        let index = self
+            .local
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| !matches!(c.kind, CandidateKind::Custom(_)))
+            .nth(position)
+            .map_or(self.local.len(), |(index, _)| index);
+        self.local.insert(index, candidate);
+        self.local != before
+    }
+
+    /// 把通过校验的 Resolve 结果摆进本地候选，返回摆放结果。
+    ///
+    /// - 放第 1 位：与现在的第 1 位不同就插到最前面、原第 1 位顺延到第 2 位；同一条且 AI 改了拼音而它还没标「纠」，只补标记。
+    /// - 前三位内调整：候选现在恰好排第 3，就往前提到第 2；其余不动。
+    /// - 只留提示：不动顺序，由壳放到提示位。
+    pub fn apply_resolved(&mut self, resolved: &Resolved) -> ResolveApplied {
+        let candidate = &resolved.candidate;
+        match resolved.placement {
+            ResolvePlacement::First => {
+                let first = self
+                    .local
+                    .iter()
+                    .find(|c| !matches!(c.kind, CandidateKind::Custom(_)));
+                let changed = match first {
+                    Some(first) if first.text == candidate.text => {
+                        resolved.pinyin_changed
+                            && !first.corrected
+                            && self.place_local(candidate.clone(), 0)
+                    }
+                    _ => self.place_local(candidate.clone(), 0),
+                };
+                if changed {
+                    ResolveApplied::Placed
+                } else {
+                    ResolveApplied::Unchanged
+                }
+            }
+            ResolvePlacement::WithinThree => {
+                if self.local_position(&candidate.text) == Some(2)
+                    && self.place_local(candidate.clone(), 1)
+                {
+                    ResolveApplied::Placed
+                } else {
+                    ResolveApplied::Unchanged
+                }
+            }
+            ResolvePlacement::Hint => ResolveApplied::Hint,
+        }
     }
 
     pub fn len(&self) -> usize {

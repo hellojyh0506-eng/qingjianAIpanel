@@ -21,6 +21,9 @@ pub struct Outcome {
 
     /// AI 给出了通过本地校验的建议。
     pub accepted: bool,
+
+    /// 套上 AI 结果之后，第 1 位带「纠」标记。
+    pub marked_first: bool,
 }
 
 impl Outcome {
@@ -33,6 +36,7 @@ impl Outcome {
             sent: false,
             latency: None,
             accepted: false,
+            marked_first: false,
         }
     }
 }

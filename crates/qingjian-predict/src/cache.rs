@@ -28,6 +28,13 @@ impl PredictionCache {
 
     /// 序号不参与：同样的上下文与拼音就是同一个请求。
     pub fn key(request: &PredictionRequest) -> String {
+        // Resolve 的回复存的是拼音与选中的文字（不是编号），同样的字母与前后文换了候选列表也可复用
+        if request.kind == qingjian_core::PredictionKind::Resolve {
+            return format!(
+                "{:?}\u{1}{}\u{1}{}\u{1}{}",
+                request.kind, request.letters, request.before, request.after
+            );
+        }
         format!(
             "{:?}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}",
             request.kind,

@@ -14,6 +14,10 @@ pub enum PredictionKind {
     /// 只对当前输入的本地候选做重排；不得生成候选之外的新词或后文续写。
     Rerank,
 
+    /// 当前这一串到底想打什么：同时判断拼音有没有敲错、结合光标前后文选同音字。
+    /// 合并了 Rerank 与 Intent，回复必须经过 Core 本地校验后才会生效。
+    Resolve,
+
     /// 问字模式（`?` 开头）：用拼音问「三个木是什么字」之类的问题，要答案（字或短答案）与读音。
     Question,
 
@@ -31,7 +35,9 @@ impl PredictionKind {
     /// 这类请求走哪条通道。问字和打字一样每键都会换，所以归打字通道。
     pub fn lane(self) -> PredictionLane {
         match self {
-            Self::Compose | Self::Intent | Self::Rerank | Self::Question => PredictionLane::Typing,
+            Self::Compose | Self::Intent | Self::Rerank | Self::Resolve | Self::Question => {
+                PredictionLane::Typing
+            }
             Self::Translate => PredictionLane::Learning,
             Self::Compare | Self::DeepLearn => PredictionLane::Deep,
         }

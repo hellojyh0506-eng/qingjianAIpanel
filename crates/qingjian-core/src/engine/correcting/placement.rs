@@ -44,6 +44,11 @@ impl Engine {
         if trusted { Slot::First } else { Slot::Second }
     }
 
+    /// 这一串是不是已经连续被拒绝过纠正：是的话 AI 的纠正也只留作提示，不再放第 1 位。
+    pub(in crate::engine) fn correction_demoted(&self, scope: &str) -> bool {
+        self.learner.rejected_correction_count(scope) >= REJECTIONS_TO_DEMOTE
+    }
+
     /// 上屏时对账本地摆出来的纠正：用户选了纠正候选就清掉拒绝记录；
     /// 纠正候选在前两位而用户把整串上屏成了别的候选（选回原串），记一次拒绝。
     /// `consumed` 是这次上屏吃掉的原串字母数，只吃了一部分的不算表态。

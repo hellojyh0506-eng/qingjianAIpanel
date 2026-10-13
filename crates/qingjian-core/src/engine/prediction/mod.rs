@@ -14,6 +14,7 @@ mod policy;
 mod predictor;
 mod question;
 mod request;
+mod resolve;
 mod response;
 mod script;
 mod surrounding_text;
@@ -25,7 +26,9 @@ pub use lane::PredictionLane;
 pub use policy::PredictionPolicy;
 pub use predictor::{NoPredictor, Predictor};
 pub use question::restates_question;
-pub use request::PredictionRequest;
+pub use request::{PredictionRequest, ResolveCandidate};
+pub use resolve::{ResolvePlacement, Resolved};
+pub(super) use resolve::ResolveContext;
 pub use response::{Prediction, PredictionAlternative};
 pub use script::translation_target;
 pub use surrounding_text::SurroundingText;
@@ -152,6 +155,7 @@ impl Engine {
             }
         }
         let request = PredictionRequest {
+            resolve_candidates: Vec::new(),
             sequence: self.prediction_sequence,
             kind: PredictionKind::Intent,
             before,
@@ -434,6 +438,7 @@ impl Engine {
             candidates.first().map(|candidate| candidate.text.clone()).unwrap_or_else(|| guess.clone())
         };
         let request = PredictionRequest {
+            resolve_candidates: Vec::new(),
             sequence: self.prediction_sequence,
             kind,
             before,
@@ -469,6 +474,7 @@ impl Engine {
         }
         self.bump_lane(PredictionLane::Learning);
         let request = PredictionRequest {
+            resolve_candidates: Vec::new(),
             sequence: self.prediction_sequence,
             kind: PredictionKind::Translate,
             // 严格隔离：翻译目标（选区或候选词）必须是唯一翻译源，绝对不得携带宿主前文，防止云端模型发生上下文串译与隐私泄漏
@@ -508,6 +514,7 @@ impl Engine {
         }
         self.bump_lane(PredictionLane::Deep);
         let request = PredictionRequest {
+            resolve_candidates: Vec::new(),
             sequence: self.prediction_sequence,
             kind: PredictionKind::Compare,
             before: String::new(),
@@ -543,6 +550,7 @@ impl Engine {
         }
         self.bump_lane(PredictionLane::Deep);
         let request = PredictionRequest {
+            resolve_candidates: Vec::new(),
             sequence: self.prediction_sequence,
             kind: PredictionKind::DeepLearn,
             before: String::new(),
@@ -652,6 +660,29 @@ impl Engine {
                     );
                     prediction.words.clear();
                     prediction.alternatives.clear();
+                } else if kind == PredictionKind::Resolve {
+                    let corrected_pinyin = prediction.sentence.take();
+                    let pick = prediction.words.first().map(|word| word.text.clone());
+                    prediction.words.clear();
+                    prediction.alternatives.clear();
+                    tracing::debug!(
+                        sequence = prediction.sequence,
+                        letters = %self.composition.scope(),
+                        pinyin = ?corrected_pinyin,
+                        pick = ?pick,
+                        "Resolve reply"
+                    );
+                    prediction.resolved = self.resolve_reply(
+                        prediction.sequence,
+                        corrected_pinyin.as_deref(),
+                        pick.as_deref(),
+                    );
+                    tracing::info!(
+                        sequence = prediction.sequence,
+                        accepted = prediction.resolved.is_some(),
+                        changed = prediction.resolved.as_ref().is_some_and(|r| r.pinyin_changed),
+                        "Resolve result passed local validation"
+                    );
                 } else if kind == PredictionKind::Question {
                     let guess = &self.last_question_guess;
                     prediction

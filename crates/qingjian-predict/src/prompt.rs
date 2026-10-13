@@ -200,6 +200,7 @@ pub fn system_prompt(request: &PredictionRequest) -> &'static str {
         PredictionKind::Compose => SYSTEM_PROMPT,
         PredictionKind::Intent => INTENT_SYSTEM_PROMPT,
         PredictionKind::Rerank => RERANK_SYSTEM_PROMPT,
+        PredictionKind::Resolve => crate::resolve::prompt::RESOLVE_SYSTEM_PROMPT,
         PredictionKind::Question => QUESTION_SYSTEM_PROMPT,
         PredictionKind::Translate => {
             if request.target_language == "zh" {
@@ -288,6 +289,9 @@ struct CompareMessage<'a> {
 }
 
 pub fn user_prompt(request: &PredictionRequest) -> String {
+    if request.kind == PredictionKind::Resolve {
+        return crate::resolve::user_prompt(request);
+    }
     if request.kind == PredictionKind::DeepLearn {
         return serde_json::to_string(&serde_json::json!({
             "chinese": &request.text,
@@ -518,7 +522,7 @@ struct RawWord {
 }
 
 /// 提取模型输出里的有效 JSON 字符串（自动剥离 ```json 等 markdown 标记与外层无关文字）
-fn extract_json_str(content: &str) -> &str {
+pub(crate) fn extract_json_str(content: &str) -> &str {
     let trimmed = content.trim();
     if let Some(rest) = trimmed.strip_prefix("```json") {
         if let Some(end) = rest.rfind("```") {
@@ -667,6 +671,9 @@ fn habitual_use_brain_alternatives() -> Vec<PredictionAlternative> {
 
 /// 解析模型回复：去空、去重、去换行，截到 `max_items`。不要与本地首选相同的词，也不要没给拼音的词。
 pub fn parse_reply(content: &str, request: &PredictionRequest) -> Reply {
+    if request.kind == PredictionKind::Resolve {
+        return crate::resolve::parse_reply(content, request);
+    }
     let json_str = extract_json_str(content);
     let raw: RawReply = match serde_json::from_str(json_str) {
         Ok(raw) => raw,
@@ -1434,6 +1441,7 @@ mod tests {
 
     fn request(pinyin: &str, want_sentence: bool) -> PredictionRequest {
         PredictionRequest {
+            resolve_candidates: Vec::new(),
             sequence: 1,
             kind: PredictionKind::Compose,
             before: "我们今天".into(),

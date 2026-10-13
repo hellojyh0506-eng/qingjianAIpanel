@@ -9,6 +9,6 @@ mod candidate_layout;
 mod cell;
 mod grid;
 
-pub use candidate_layout::CandidateLayout;
+pub use candidate_layout::{CandidateLayout, ResolveApplied};
 pub use cell::Cell;
 pub use grid::{GRID_ROWS, Grid, MAX_CELL_EMS};

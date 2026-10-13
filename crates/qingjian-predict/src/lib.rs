@@ -14,6 +14,7 @@ mod connection;
 mod error;
 mod gloss;
 mod prompt;
+mod resolve;
 mod thinking;
 mod worker;
 

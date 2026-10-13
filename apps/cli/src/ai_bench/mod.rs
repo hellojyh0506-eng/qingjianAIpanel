@@ -1,6 +1,7 @@
 //! 云端打字识别测速：把样本集逐条喂给引擎，用真实接口跑当前的意图纠错链路，按模型出 Markdown 对比表。
 //!
-//! 只测 `request_intent_suggestion` 这一条（长拼音纠错）；它走的就是输入法里的 `CloudPredictor`，
+//! 测的是打字通道的 `request_resolve`（错拼纠正 + 按上下文选字），结果按候选窗口的摆放规则
+//! （`CandidateLayout::apply_resolved`）套到本地候选上再算名次；它走的就是输入法里的 `CloudPredictor`，
 //! 所以延迟包含防抖、网络与本地校验。每轮重建 Predictor，避免缓存让后几轮的耗时失真。
 
 mod error;
@@ -11,7 +12,7 @@ mod sample;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use qingjian_core::{Candidate, CandidateKind, Engine, SurroundingText};
+use qingjian_core::{Candidate, CandidateKind, CandidateLayout, Engine, SurroundingText};
 use qingjian_platform::Config;
 use qingjian_predict::CloudPredictor;
 
@@ -22,6 +23,9 @@ use sample::Sample;
 /// 轮询间隔；比接口超时多留的余量，让超时请求也能自己返回。
 const POLL: Duration = Duration::from_millis(10);
 const WAIT_SLACK: Duration = Duration::from_millis(1500);
+
+/// 模拟的候选窗口每页格数。
+const PAGE_SIZE: usize = 9;
 
 /// 跑完所有模型，返回完整的 Markdown 报告。
 pub fn run(
@@ -121,16 +125,17 @@ fn measure(engine: &mut Engine, sample: &Sample, wait: Duration) -> Outcome {
         before: sample.before.clone(),
         after: sample.after.clone(),
     };
+    let mut layout = CandidateLayout::new(query.candidates.items.clone(), PAGE_SIZE, 0);
     let sent = engine
-        .request_intent_suggestion(Some(surrounding), &query.candidates.items)
+        .request_resolve(Some(surrounding), layout.local())
         .is_some();
     let mut latency = None;
-    let mut suggestion = None;
+    let mut resolved = None;
     if sent {
         let start = Instant::now();
         loop {
             if let Some(prediction) = engine.poll_prediction() {
-                suggestion = prediction.sentence;
+                resolved = prediction.resolved;
                 latency = Some(start.elapsed());
                 break;
             }
@@ -142,20 +147,19 @@ fn measure(engine: &mut Engine, sample: &Sample, wait: Duration) -> Outcome {
         }
     }
     engine.cancel_prediction();
-    let final_rank = match &suggestion {
-        Some(text) if *text == sample.expected => Some(0),
-        Some(text) => {
-            rank_of(&local, &sample.expected).map(|rank| rank + usize::from(!local.contains(text)))
-        }
-        None => local_rank,
-    };
+    let accepted = resolved.is_some();
+    if let Some(resolved) = &resolved {
+        layout.apply_resolved(resolved);
+    }
+    let shown = texts(layout.local());
     Outcome {
         category: sample.category.clone(),
         local_rank,
-        final_rank,
+        final_rank: rank_of(&shown, &sample.expected),
         sent,
         latency,
-        accepted: suggestion.is_some(),
+        accepted,
+        marked_first: layout.local().first().is_some_and(|first| first.corrected),
     }
 }
 

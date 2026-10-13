@@ -1,6 +1,7 @@
 use super::cloud_word::CloudWord;
 use super::kind::PredictionKind;
 use super::lane::PredictionLane;
+use super::resolve::Resolved;
 
 /// 翻译给出的单条表达候选与学习细览。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -58,6 +59,9 @@ pub struct Prediction {
 
     /// 真实情境短对话：(speaker, text, zh)
     pub dialogue: Vec<(String, String, String)>,
+
+    /// Resolve 结果：经过 Core 本地校验、可以放进候选窗口的那一条；没通过校验或模型没把握时为 `None`。
+    pub resolved: Option<Resolved>,
 }
 
 impl Prediction {

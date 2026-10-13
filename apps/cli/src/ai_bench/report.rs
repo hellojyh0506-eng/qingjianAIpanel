@@ -16,8 +16,8 @@ pub fn render(model: &str, rounds: usize, outcomes: &[Outcome]) -> String {
             .push(outcome);
     }
     let mut out = format!("## {model}（{rounds} 轮）\n\n");
-    out.push_str("| 类别 | 条数 | 发请求 | 本地 Top1 | 本地 Top3 | +AI Top1 | +AI Top3 | P50 | P95 | 无有效建议 |\n");
-    out.push_str("|---|---|---|---|---|---|---|---|---|---|\n");
+    out.push_str("| 类别 | 条数 | 发请求 | 本地 Top1 | 本地 Top3 | +AI Top1 | +AI Top3 | P50 | P95 | 无有效建议 | 首位标「纠」 |\n");
+    out.push_str("|---|---|---|---|---|---|---|---|---|---|---|\n");
     for (category, rows) in &by_category {
         let sent: Vec<&&Outcome> = rows.iter().filter(|row| row.sent).collect();
         let mut latencies: Vec<Duration> = sent.iter().filter_map(|row| row.latency).collect();
@@ -25,7 +25,7 @@ pub fn render(model: &str, rounds: usize, outcomes: &[Outcome]) -> String {
         let empty = sent.iter().filter(|row| !row.accepted).count();
         let _ = writeln!(
             out,
-            "| {category} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {category} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             rows.len(),
             sent.len(),
             percent(hits(rows, |row| row.local_rank, 1), rows.len()),
@@ -35,6 +35,10 @@ pub fn render(model: &str, rounds: usize, outcomes: &[Outcome]) -> String {
             millis(percentile(&latencies, 50)),
             millis(percentile(&latencies, 95)),
             percent(empty, sent.len()),
+            percent(
+                rows.iter().filter(|row| row.marked_first).count(),
+                rows.len()
+            ),
         );
     }
     let eligible: Vec<&Outcome> = outcomes
@@ -43,11 +47,11 @@ pub fn render(model: &str, rounds: usize, outcomes: &[Outcome]) -> String {
         .collect();
     let misfired = eligible
         .iter()
-        .filter(|row| row.final_rank != Some(0))
+        .filter(|row| row.final_rank != Some(0) || row.marked_first)
         .count();
     let _ = writeln!(
         out,
-        "\n误纠率（本地首选本来就对的 clean 样本，被改走的比例）：{}（{misfired} / {}）\n",
+        "\n误纠率（本地首选本来就对的 clean 样本，首选被改走或被标「纠」的比例）：{}（{misfired} / {}）\n",
         percent(misfired, eligible.len()),
         eligible.len()
     );
@@ -160,6 +164,7 @@ mod tests {
             sent: true,
             latency: Some(Duration::from_millis(ms)),
             accepted: final_rank != local,
+            marked_first: false,
         }
     }
 
@@ -185,7 +190,7 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("误纠率（本地首选本来就对的 clean 样本，被改走的比例）：50.0%（1 / 2）"),
+            text.contains("误纠率（本地首选本来就对的 clean 样本，首选被改走或被标「纠」的比例）：50.0%（1 / 2）"),
             "{text}"
         );
     }

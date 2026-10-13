@@ -25,6 +25,7 @@ fn kinds_map_to_their_lanes() {
         PredictionKind::Compose,
         PredictionKind::Intent,
         PredictionKind::Rerank,
+        PredictionKind::Resolve,
         PredictionKind::Question,
     ] {
         assert_eq!(kind.lane(), PredictionLane::Typing, "{kind:?}");

@@ -489,6 +489,9 @@ impl Engine {
                 choice_key(decoded.pinyin(), pinyin_len),
             );
         }
+        if let Some(consumed) = self.ai_resolved_consumption(candidate) {
+            return (consumed, choice_key(keys, consumed));
+        }
         let consumed = match self.active_correction(keys) {
             Some(c) => c
                 .edit

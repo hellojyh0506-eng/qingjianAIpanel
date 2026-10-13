@@ -76,6 +76,7 @@ fn predictor() -> CloudPredictor {
 
 fn request(sequence: u64, kind: PredictionKind) -> PredictionRequest {
     PredictionRequest {
+        resolve_candidates: Vec::new(),
         sequence,
         kind,
         before: String::new(),

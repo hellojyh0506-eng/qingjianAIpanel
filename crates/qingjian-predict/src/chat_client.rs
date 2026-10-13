@@ -19,6 +19,7 @@ use crate::thinking::ThinkingSwitch;
 const TRANSLATE_MAX_TOKENS: u32 = 120;
 const COMPOSE_MAX_TOKENS: u32 = 500;
 const RERANK_MAX_TOKENS: u32 = 512;
+const RESOLVE_MAX_TOKENS: u32 = 48;
 const QUESTION_MAX_TOKENS: u32 = 300;
 const COMPARE_MAX_TOKENS: u32 = 800;
 const DEEP_LEARN_MAX_TOKENS: u32 = 1800;
@@ -427,6 +428,7 @@ impl CallProfile {
             Kind::Compose => (COMPOSE_MAX_TOKENS, 0.3, false, false),
             Kind::Intent => (96, 0.0, false, false),
             Kind::Rerank => (RERANK_MAX_TOKENS, 0.0, false, false),
+            Kind::Resolve => (RESOLVE_MAX_TOKENS, 0.0, false, false),
             Kind::Question => (QUESTION_MAX_TOKENS, 0.3, false, false),
             Kind::Compare => (COMPARE_MAX_TOKENS, 0.5, true, true),
             Kind::DeepLearn => (DEEP_LEARN_MAX_TOKENS, 0.5, true, true),
@@ -593,7 +595,14 @@ mod tests {
     fn typing_requests_force_thinking_off_on_siliconflow_even_without_config() {
         use qingjian_core::PredictionKind as Kind;
         let client = client_for("https://api.siliconflow.cn/v1", "");
-        for kind in [Kind::Rerank, Kind::Intent, Kind::Translate, Kind::Compose, Kind::Question] {
+        for kind in [
+            Kind::Rerank,
+            Kind::Resolve,
+            Kind::Intent,
+            Kind::Translate,
+            Kind::Compose,
+            Kind::Question,
+        ] {
             let body = body_for(&client, kind);
             assert_eq!(body["enable_thinking"], false, "{kind:?}");
             assert_eq!(body["model"], "Qwen/Qwen3-8B", "{kind:?}");

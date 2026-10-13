@@ -3,7 +3,7 @@
 /// 上下文只来自应用给出的光标前后文本；应用给不出就只靠拼音。本地输入历史是跨应用拼起来的碎片，不当上下文用。
 use super::kind::PredictionKind;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PredictionRequest {
     /// 请求序号，单调递增；回来的结果序号对不上就是过期结果。
     pub sequence: u64,
@@ -32,6 +32,9 @@ pub struct PredictionRequest {
     /// Current candidate readings verified by the local dictionary; populated only for Intent requests.
     pub candidate_readings: Vec<String>,
 
+    /// Resolve 请求带的本地候选（编号从 1 起，对应回复里的 `pick`），含读音与是否已被本地纠正；其他种类为空。
+    pub resolve_candidates: Vec<ResolveCandidate>,
+
     /// 本地整句转换把这段拼音转成的汉字（问字模式是问题本身的汉字形式），可能有错字；转不出为空。
     pub guess: String,
 
@@ -55,4 +58,17 @@ pub struct PredictionRequest {
 
     /// 主动回忆对比：参考地道口语表达。
     pub reference: String,
+}
+
+/// Resolve 请求里的一个本地候选。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResolveCandidate {
+    /// 候选文字。
+    pub text: String,
+
+    /// 读音，音节用 `'` 连接；没有读音时为空。
+    pub reading: String,
+
+    /// 本地已经把它当作纠正候选（用户敲错了，输入法替他改了）。
+    pub corrected: bool,
 }

@@ -25,7 +25,7 @@ pub mod zhuyin;
 pub use custom_phrase::CustomPhrase;
 
 pub use candidate::{
-    Candidate, CandidateKind, CandidateLayout, CandidateList, Cell, GRID_ROWS, Grid, Language,
+    Candidate, CandidateKind, CandidateLayout, ResolveApplied, CandidateList, Cell, GRID_ROWS, Grid, Language,
     MAX_CELL_EMS, PartOfSpeech, Sense, Translation,
 };
 pub use composition::Composition;
@@ -37,7 +37,7 @@ pub use engine::{
     InputLogEntry, InputLogger, InputSource, Learner, LevelCount, MarkedKind, MarkedSegment,
     ModeKeys, NEURAL_MARGIN, NEURAL_WEIGHT, NoGlossFiller, NoInputLogger, NoLearner, NoPredictor,
     NoTranslator, NoUsageMeter, NoVocabularyTracker, Prediction, PredictionAlternative, PredictionKind, PredictionLane, PredictionPolicy,
-    PredictionRequest, Predictor, QUESTION_PREFIX, Query, RESCORE_CONTEXT_CHARS, RawPreedit,
+    PredictionRequest, Predictor, QUESTION_PREFIX, ResolveCandidate, ResolvePlacement, Resolved, Query, RESCORE_CONTEXT_CHARS, RawPreedit,
     RecallAttempt, RecallItem, RecallOutcome, RecallTracker, NoRecallTracker,
     ComparisonResult, ComparisonStatus, ErrorMajorCategory, ErrorSubcategory,
     EvaluationFourDimensions, ExpressionUpgradeRecord, FeedbackItem,
