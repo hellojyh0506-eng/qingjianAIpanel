@@ -88,6 +88,9 @@ pub struct Router {
 
     /// 记录当前被动翻译触发时刻（T0），用于端到端延迟诊断。
     pub(crate) translation_start_time: Option<Instant>,
+
+    /// 疑似敲错时被动翻译延后到 Resolve 回来再发；回来之后补发并清掉。
+    pub(crate) translation_deferred: bool,
     pub(crate) compare_start_time: Option<Instant>,
     pub(crate) daily_show_english: bool,
     pub(crate) generation_id: u64,
@@ -202,6 +205,7 @@ impl Router {
             learning_mode: config.learning_mode,
             previous_learning_mode: config.learning_mode,
             translation_start_time: None,
+            translation_deferred: false,
             compare_start_time: None,
             daily_show_english: true,
             generation_id: 0,

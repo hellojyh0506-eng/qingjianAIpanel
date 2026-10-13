@@ -123,8 +123,11 @@ fn latest_translate_request(
         router.tick();
         let _ = router.handle(ClientMessage::Poll { session: SESSION });
         request = requests.lock().unwrap().last().cloned().expect("translate request follows rerank");
-    } else if request.kind == PredictionKind::Intent {
-        // A long typo prioritizes Intent. If no candidate is accepted, the passive-translation path resumes.
+    } else if matches!(
+        request.kind,
+        PredictionKind::Intent | PredictionKind::Resolve
+    ) {
+        // A likely typo defers the passive translation until Resolve returns; an empty reply resumes it.
         *response.lock().unwrap() = Some(Prediction {
             sequence: request.sequence,
             words: Vec::new(),
@@ -134,14 +137,19 @@ fn latest_translate_request(
         });
         router.tick();
         let _ = router.handle(ClientMessage::Poll { session: SESSION });
-        request = requests.lock().unwrap().last().cloned().expect("fallback Translate follows empty Intent");
+        request = requests
+            .lock()
+            .unwrap()
+            .last()
+            .cloned()
+            .expect("deferred Translate follows an empty Resolve");
     }
     assert_eq!(request.kind, PredictionKind::Translate);
     request
 }
 
 #[test]
-fn long_typo_intent_is_validated_locally_and_only_commits_on_tab() {
+fn long_typo_resolve_is_validated_locally_and_marks_the_first_candidate() {
     let (mut router, requests, response) = router_with_mock_predictor_intent_only();
     type_letters(&mut router, "kaifazhes");
 
@@ -149,25 +157,43 @@ fn long_typo_intent_is_validated_locally_and_only_commits_on_tab() {
     let immediate = router.active_frame();
     assert_eq!(immediate.sentence.as_deref(), Some("开发者"));
     let queued = requests.lock().unwrap().clone();
-    assert_eq!(queued.last().map(|request| request.kind), Some(PredictionKind::Intent));
+    assert_eq!(
+        queued.last().map(|request| request.kind),
+        Some(PredictionKind::Resolve)
+    );
+    assert!(
+        queued.iter().all(|request| !matches!(
+            request.kind,
+            PredictionKind::Rerank | PredictionKind::Intent
+        )),
+        "the typing path sends one Resolve request instead of Rerank + Intent"
+    );
     assert!(
         queued.iter().all(|request| request.kind != PredictionKind::Translate),
         "the long-typo path must not queue a blocking passive translation"
     );
 
-    let request = requests.lock().unwrap().last().cloned().expect("intent request");
-    assert_eq!(request.kind, PredictionKind::Intent);
+    let request = requests
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .expect("resolve request");
+    assert_eq!(request.kind, PredictionKind::Resolve);
     assert_eq!(request.letters, "kaifazhes");
     assert!(!request.want_sentence);
-    assert_eq!(request.max_items, 0);
+    assert!(
+        request
+            .resolve_candidates
+            .iter()
+            .any(|candidate| candidate.text == "开发者" && candidate.reading == "kai'fa'zhe"),
+        "the request lists local candidates with their readings"
+    );
 
     *response.lock().unwrap() = Some(Prediction {
         sequence: request.sequence,
         words: vec![CloudWord {
-            text: [0x5f00u32, 0x53d1, 0x8005]
-                .into_iter()
-                .map(|code| char::from_u32(code).unwrap())
-                .collect(),
+            text: "开发者".to_owned(),
             syllables: Vec::new(),
             reading: None,
         }],
@@ -177,16 +203,21 @@ fn long_typo_intent_is_validated_locally_and_only_commits_on_tab() {
     router.tick();
     let _ = router.handle(ClientMessage::Poll { session: SESSION });
     let frame = router.active_frame();
-    assert_eq!(frame.sentence.as_deref(), Some("开发者"));
+    let first = frame.candidates.items.first().expect("a first candidate");
+    assert_eq!(first.text, "开发者");
+    assert!(
+        first.corrected,
+        "an AI-confirmed correction carries the 纠 mark"
+    );
     assert!(preedit(&frame).contains('s'), "the user's actual input must remain unchanged");
 
     let (outcome, commit, after) = press(
         &mut router,
-        KeyEvent::new(0x09, Some('\t'), Default::default()),
+        KeyEvent::new(0x20, Some(' '), Default::default()),
     );
     assert_eq!(outcome, KeyOutcome::Consumed);
     assert_eq!(commit.as_deref(), Some("开发者"));
-    assert!(after.is_empty());
+    assert!(after.is_empty(), "the whole typed string is consumed");
 }
 
 #[test]

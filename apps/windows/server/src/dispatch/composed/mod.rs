@@ -3,7 +3,7 @@
 mod state;
 
 use qingjian_core::{
-    Candidate, CandidateLayout, CandidateList, CloudWord,
+    Candidate, CandidateLayout, CandidateList, CloudWord, ResolveApplied,
     ErrorMajorCategory, ErrorSubcategory, FeedbackItem, Language, PredictionKind, Query,
     Sense, Translation,
 };
@@ -24,6 +24,7 @@ impl Router {
         self.passive_translation_target = None;
         self.passive_learning_card = None;
         self.recall_session = None;
+        self.translation_deferred = false;
         if self.engine.composition().is_empty() {
             self.surrounding_before = None;
             self.composed = None;
@@ -40,10 +41,6 @@ impl Router {
             && !self.engine.expression_mode()
             && !self.is_private()
             && should_request_intent(query.as_ref(), &typed_scope);
-        let intent_candidate_hints = query
-            .as_ref()
-            .map(|query| query.candidates.items.clone())
-            .unwrap_or_default();
         let built = query.map(|query| {
             let (preedit, cursor, typed_keys) = marked_parts(&query);
             (query.candidates.items.clone(), preedit, cursor, typed_keys)
@@ -69,6 +66,12 @@ impl Router {
                         self.engine.note_candidate_order(&order);
                         self.sentence = Some(candidate_text);
                     }
+                }
+                // 打字通道只发一个 Resolve 请求：弄清这一串想打什么（纠错 + 按上下文选字）。
+                // 在本地的快速纠正之后发，AI 看到的就是用户眼前的候选顺序。
+                if self.engine.prediction_enabled() {
+                    let surrounding = self.rerank_surrounding();
+                    let _ = self.engine.request_resolve(surrounding, layout.local());
                 }
                 let learning_on = !self.config.learning_language_off
                     && self.engine.learning_language() != Language::Chinese
@@ -129,12 +132,12 @@ impl Router {
                                 upgrade: None,
                             });
                             self.translation_start_time = None;
-                            if !intent_suspected {
-                                // 重排在打字通道、翻译在学习通道，两路并行发出，互不等待；
-                                // 重排若改了首选，结果回来时会按新首选重发翻译。
-                                // A likely typo uses one Intent request instead of this pair.
-                                let surrounding = self.rerank_surrounding();
-                                let _ = self.engine.request_rerank(surrounding, layout.local());
+                            if intent_suspected {
+                                // 疑似敲错：首选多半会被 Resolve 改掉，翻译等它回来再发，免得先翻一个错词。
+                                self.translation_deferred = true;
+                            } else {
+                                // Resolve 在打字通道、翻译在学习通道，两路并行发出，互不等待；
+                                // Resolve 若改了首选，结果回来时会按新首选重发翻译。
                                 self.translation_start_time = Some(Instant::now());
                                 if let Some(sequence) = self.engine.request_translation(&target) {
                                     self.generation_id = sequence;
@@ -143,13 +146,7 @@ impl Router {
                                 }
                             }
                         }
-                    } else if self.engine.prediction_enabled() && !intent_suspected {
-                        let surrounding = self.rerank_surrounding();
-                        self.engine.request_rerank(surrounding, layout.local());
                     }
-                } else if self.engine.prediction_enabled() && !intent_suspected {
-                    let surrounding = self.rerank_surrounding();
-                    self.engine.request_rerank(surrounding, layout.local());
                 }
                 Composed::Candidates {
                     preedit,
@@ -169,11 +166,100 @@ impl Router {
                 Composed::Raw { text, cursor }
             }
         });
-        if intent_suspected && self.engine.prediction_enabled() {
-            let surrounding = self.rerank_surrounding();
-            self.engine.request_intent_suggestion(surrounding, &intent_candidate_hints);
-        }
         self.schedule_rescoring();
+    }
+
+    /// 首选候选变了：被动翻译卡片的目标跟着换（先用本地离线释义占位），并对新首选重发翻译。
+    fn retarget_passive_translation(&mut self) {
+        // 重排结束后才启动被动翻译，确保共享 Worker 不会让翻译请求挤掉本轮重排。
+        let target = match self.composed.as_ref() {
+            Some(Composed::Candidates { layout, .. }) => layout.candidate(0).map(|candidate| candidate.text.clone()),
+            _ => None,
+        };
+        if let Some(target) = target.filter(|_| self.passive_learning_card.is_some()) {
+            let changed_target = self.passive_translation_target.as_ref() != Some(&target);
+            if changed_target {
+                let offline = self.engine
+                    .translate_word(&target)
+                    .and_then(|translation| translation.senses().first().map(|sense| sense.text.clone()))
+                    .filter(|text| is_valid_english_text(text))
+                    .or_else(|| fallback_idiom_english(&target));
+                self.passive_translation = offline.clone();
+                self.passive_translation_target = Some(target.clone());
+                if let Some(card) = self.passive_learning_card.as_mut() {
+                    card.target_text = target.clone();
+                    card.primary = offline.map(|text| qingjian_platform::protocol::LearningExpression {
+                        text,
+                        tag: "Common".to_string(),
+                        meaning: target.clone(),
+                        tone: "标准自然".to_string(),
+                        scenario: "日常场景".to_string(),
+                        commonality: "高频".to_string(),
+                        why_natural: "本地离线词库释义".to_string(),
+                    });
+                    card.alternatives.clear();
+                    card.state = if card.primary.is_some() {
+                        qingjian_platform::protocol::LearningState::Ready
+                    } else {
+                        qingjian_platform::protocol::LearningState::Loading
+                    };
+                }
+            }
+            // 翻译早已与重排并行发出；只有重排改了首选才需要对新首选重发。
+            if changed_target {
+                self.translation_start_time = Some(Instant::now());
+                if let Some(sequence) = self.engine.request_translation(&target) {
+                    self.generation_id = sequence;
+                } else {
+                    self.translation_start_time = None;
+                }
+            }
+        }
+    }
+
+    /// 疑似敲错时被动翻译被延后了：Resolve 回来后补发一次（首选换了的话 [`Self::retarget_passive_translation`] 已经发过）。
+    fn flush_deferred_translation(&mut self) {
+        if !std::mem::take(&mut self.translation_deferred) {
+            return;
+        }
+        if self.passive_learning_card.is_some()
+            && self.translation_start_time.is_none()
+            && self.engine.prediction_enabled()
+            && let Some(target) = self.passive_translation_target.clone()
+        {
+            self.translation_start_time = Some(Instant::now());
+            if let Some(sequence) = self.engine.request_translation(&target) {
+                self.generation_id = sequence;
+            } else {
+                self.translation_start_time = None;
+            }
+        }
+    }
+
+    /// Resolve 结果：只在输入没被用户动过（没翻页、没移动高亮）时套到候选上。
+    fn apply_resolve(&mut self, resolved: Option<qingjian_core::Resolved>) {
+        if !self.navigated && self.highlight == 0 {
+            if let (Some(resolved), Some(Composed::Candidates { layout, .. })) =
+                (resolved.as_ref(), self.composed.as_mut())
+            {
+                match layout.apply_resolved(resolved) {
+                    ResolveApplied::Placed => {
+                        let order: Vec<String> = layout
+                            .local()
+                            .iter()
+                            .map(|candidate| candidate.text.clone())
+                            .collect();
+                        self.engine.note_candidate_order(&order);
+                        self.sentence = None;
+                    }
+                    // 把握不够：不动候选，留作提示位，Tab 采用
+                    ResolveApplied::Hint => self.sentence = Some(resolved.candidate.text.clone()),
+                    ResolveApplied::Unchanged => {}
+                }
+            }
+            self.retarget_passive_translation();
+        }
+        self.flush_deferred_translation();
     }
 
     /// 拉一次云联想结果：云端词并进候选布局，整句补全记下；翻译评审时结果是译文。
@@ -276,6 +362,12 @@ impl Router {
                     }
                 }
             }
+            let shown = self.self_drawn_frame();
+            self.reconcile_candidates(&shown);
+            return;
+        }
+        if prediction.kind == PredictionKind::Resolve {
+            self.apply_resolve(prediction.resolved);
             let shown = self.self_drawn_frame();
             self.reconcile_candidates(&shown);
             return;
@@ -386,50 +478,7 @@ impl Router {
                     self.engine.note_candidate_order(order);
                 }
 
-                // 重排结束后才启动被动翻译，确保共享 Worker 不会让翻译请求挤掉本轮重排。
-                let target = match self.composed.as_ref() {
-                    Some(Composed::Candidates { layout, .. }) => layout.candidate(0).map(|candidate| candidate.text.clone()),
-                    _ => None,
-                };
-                if let Some(target) = target.filter(|_| self.passive_learning_card.is_some()) {
-                    let changed_target = self.passive_translation_target.as_ref() != Some(&target);
-                    if changed_target {
-                        let offline = self.engine
-                            .translate_word(&target)
-                            .and_then(|translation| translation.senses().first().map(|sense| sense.text.clone()))
-                            .filter(|text| is_valid_english_text(text))
-                            .or_else(|| fallback_idiom_english(&target));
-                        self.passive_translation = offline.clone();
-                        self.passive_translation_target = Some(target.clone());
-                        if let Some(card) = self.passive_learning_card.as_mut() {
-                            card.target_text = target.clone();
-                            card.primary = offline.map(|text| qingjian_platform::protocol::LearningExpression {
-                                text,
-                                tag: "Common".to_string(),
-                                meaning: target.clone(),
-                                tone: "标准自然".to_string(),
-                                scenario: "日常场景".to_string(),
-                                commonality: "高频".to_string(),
-                                why_natural: "本地离线词库释义".to_string(),
-                            });
-                            card.alternatives.clear();
-                            card.state = if card.primary.is_some() {
-                                qingjian_platform::protocol::LearningState::Ready
-                            } else {
-                                qingjian_platform::protocol::LearningState::Loading
-                            };
-                        }
-                    }
-                    // 翻译早已与重排并行发出；只有重排改了首选才需要对新首选重发。
-                    if changed_target {
-                        self.translation_start_time = Some(Instant::now());
-                        if let Some(sequence) = self.engine.request_translation(&target) {
-                            self.generation_id = sequence;
-                        } else {
-                            self.translation_start_time = None;
-                        }
-                    }
-                }
+                self.retarget_passive_translation();
             }
             let shown = self.self_drawn_frame();
             self.reconcile_candidates(&shown);
