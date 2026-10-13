@@ -210,10 +210,49 @@ impl Engine {
         items
     }
 
+    /// 用纠正后的拼音重查本地：编辑距离在上限内、能完整切分，且重查有整串同读音的中文候选才算数。
+    /// `pick` 出现在前 [`REQUERY_WINDOW`] 个里就用它，否则用第 1 个。
+    fn requery_for_resolve(
+        &mut self,
+        letters: &str,
+        pinyin: &str,
+        pick: Option<&str>,
+    ) -> Option<Candidate> {
+        if !within_edit_distance(
+            letters.as_bytes(),
+            pinyin.as_bytes(),
+            edit_limit(letters.len()),
+        ) {
+            return None;
+        }
+        let segmentation = correction::complete_segmentation(pinyin)?;
+        let rebuilt: String = segmentation
+            .syllables
+            .iter()
+            .map(|syllable| syllable.text.as_str())
+            .collect();
+        if rebuilt != pinyin {
+            return None;
+        }
+        let fresh: Vec<Candidate> = self
+            .query_reading(pinyin)
+            .into_iter()
+            .filter(|candidate| {
+                is_chinese(candidate)
+                    && !candidate.syllables.is_empty()
+                    && candidate.syllables.concat() == pinyin
+            })
+            .collect();
+        pick.and_then(|text| fresh.iter().take(REQUERY_WINDOW).find(|c| c.text == text))
+            .or_else(|| fresh.first())
+            .cloned()
+    }
+
     /// 校验模型给的 Resolve 回复，通过才给出能放进候选窗口的那一条。
     ///
     /// `pinyin` 是模型认为的完整拼音，`pick` 是它选中的本地候选文字（没有合适的为 `None`）。
-    /// `pick` 是请求里给过的、带读音的候选时，以它的读音为准（模型常抄错拼音、却选对候选）；否则用模型给的拼音。
+    /// `pick` 是请求里给过的、带读音的候选时，先以它的读音为准（模型常抄错拼音、却选对候选）；
+    /// 它的读音重查不出整句（本地候选本身就是错键拼出来的），或者没有 `pick`，再用模型给的拼音。
     /// - 拼音与敲的字母相同：只是选字，`pick` 必须是请求里给过的候选。
     /// - 拼音不同：编辑距离在上限内、能完整切分，用纠正后的拼音重查本地；`pick` 在新结果前 9 个里就用它，
     ///   否则用新结果第 1 个。
@@ -249,46 +288,32 @@ impl Engine {
                 .iter()
                 .find(|candidate| candidate.text == text && !candidate.syllables.is_empty())
         });
-        let pinyin = match (picked, model_pinyin) {
-            (Some(picked), _) => picked.syllables.concat(),
-            (None, Some(pinyin)) => pinyin,
-            (None, None) => return None,
-        };
+        let picked_reading = picked.map(|picked| picked.syllables.concat());
 
-        let (mut candidate, pinyin_changed) = if pinyin == letters {
-            (picked?.clone(), false)
-        } else {
-            if !within_edit_distance(
-                letters.as_bytes(),
-                pinyin.as_bytes(),
-                edit_limit(letters.len()),
-            ) {
-                return None;
+        // 先试所选候选自己的读音；它重查不出像样的整句（读音本身就是错键拼出来的），再试模型给的拼音。
+        let mut readings: Vec<String> = Vec::new();
+        readings.extend(picked_reading.clone());
+        if let Some(model_pinyin) = model_pinyin
+            && !readings.contains(&model_pinyin)
+        {
+            readings.push(model_pinyin);
+        }
+
+        let mut resolved: Option<(Candidate, bool, String)> = None;
+        for pinyin in readings {
+            if pinyin == letters {
+                if let Some(picked) = picked {
+                    resolved = Some((picked.clone(), false, pinyin));
+                    break;
+                }
+                continue;
             }
-            let segmentation = correction::complete_segmentation(&pinyin)?;
-            if segmentation
-                .syllables
-                .iter()
-                .map(|syllable| syllable.text.as_str())
-                .collect::<String>()
-                != pinyin
-            {
-                return None;
+            if let Some(candidate) = self.requery_for_resolve(letters, &pinyin, pick) {
+                resolved = Some((candidate, true, pinyin));
+                break;
             }
-            let fresh: Vec<Candidate> = self
-                .query_reading(&pinyin)
-                .into_iter()
-                .filter(|candidate| {
-                    is_chinese(candidate)
-                        && !candidate.syllables.is_empty()
-                        && candidate.syllables.concat() == pinyin
-                })
-                .collect();
-            let chosen = pick
-                .and_then(|text| fresh.iter().take(REQUERY_WINDOW).find(|c| c.text == text))
-                .or_else(|| fresh.first())?;
-            (chosen.clone(), true)
-        };
+        }
+        let (mut candidate, pinyin_changed, pinyin) = resolved?;
 
         let placement = if self.correction_demoted(letters) {
             ResolvePlacement::Hint

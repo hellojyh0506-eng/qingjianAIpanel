@@ -7,7 +7,7 @@ pub const RESOLVE_SYSTEM_PROMPT: &str = r#"
 
 你要做两件事：
 1. 判断拼音有没有敲错，并给出用户本意的完整拼音 pinyin（整串，不能只写一部分）。可能的错误：相邻键敲错、两个字母颠倒、漏字母、多字母、音节边界错位。整串要当作一个整体理解，改动尽量少、尽量贴近原字母；没有错就原样返回 letters。声母首字母简拼（如 wdsj）不要纠正。
-2. 结合 before/after 的语境，在 candidates 里选出最合适的一条，pick 填它的编号 i。所选候选的 reading（去掉 '）必须与你给出的 pinyin 完全一致，所以 pinyin 直接照抄它最稳妥。corrected 为 true 的候选是本地算法已经纠过的，通常是对的：只要语义通顺、与字母相差不大，就选它；明显不对时再选别的候选。所有候选的读音都不是用户本意时 pick 填 0，pinyin 仍然给出你认为的完整拼音。
+2. 结合 before/after 的语境，在 candidates 里选出最合适的一条，pick 填它的编号 i。所选候选的 reading（去掉 '）必须与你给出的 pinyin 完全一致，所以 pinyin 直接照抄它最稳妥。corrected 为 true 的候选是本地算法已经纠过的，通常是对的：只要语义通顺、与字母相差不大，就选它；明显不对时再选别的候选。候选是整句时要格外小心：整句里只要有一处字不通顺（比如「情报文件发肥沃」），就说明它的读音是错的，不要选它；此时 pick 填 0，pinyin 逐个音节检查每个字母后写出你认为的完整拼音。所有候选的读音都不是用户本意时 pick 填 0，pinyin 仍然给出你认为的完整拼音。
 
 严格只输出 JSON，不要解释、不要 Markdown：{"pinyin":"完整拼音，全小写字母，不含引号和空格","pick":候选编号}
 
@@ -22,6 +22,10 @@ pub const RESOLVE_SYSTEM_PROMPT: &str = r#"
 示例（语境选同音字）
 输入：{"letters":"shuijiao","segmentation":"shui'jiao","before":"太困了，我想去","after":"","candidates":[{"i":1,"text":"水饺","reading":"shui'jiao"},{"i":2,"text":"睡觉","reading":"shui'jiao"}]}
 输出：{"pinyin":"shuijiao","pick":2}
+
+示例（多处错拼，候选都不通顺）
+输入：{"letters":"jintiantianqihenhoaxiangchuqwan","segmentation":"jin'tian'tian'qi'hen'hoa'xiang'chu'qwan","before":"","after":"","candidates":[{"i":1,"text":"今天天启很好啊想出去万","reading":"jin'tian'tian'qi'hen'hao'a'xiang'chu'qu'wan"}]}
+输出：{"pinyin":"jintiantianqihenhaoxiangchuquwan","pick":0}
 
 示例（无需修改）
 输入：{"letters":"xianzai","segmentation":"xian'zai","before":"","after":"","candidates":[{"i":1,"text":"现在","reading":"xian'zai"},{"i":2,"text":"线在","reading":"xian'zai"}]}

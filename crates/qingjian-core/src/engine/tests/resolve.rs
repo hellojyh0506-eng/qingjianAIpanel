@@ -303,3 +303,26 @@ fn the_picked_candidates_own_reading_wins_over_a_miscopied_pinyin() {
         assert_eq!(resolved.candidate.syllables.concat(), "kaifazhe");
     }
 }
+
+#[test]
+fn model_pinyin_is_the_fallback_when_the_picked_reading_cannot_be_used() {
+    // 模型把本地一个读音差得太远的候选（开饭）选成了 pick，但它给的拼音是对的：不能因为 pick 站不住就整条丢掉
+    let (mut engine, submitted) = resolve_engine(vec![reply(1, "kaifazhe", Some("开饭"))]);
+    engine.set_input("kaifazhes");
+    let items = local(&mut engine);
+    engine.request_resolve(None, &items);
+    assert!(
+        submitted.borrow()[0]
+            .resolve_candidates
+            .iter()
+            .any(|candidate| candidate.text == "开饭"),
+        "the far-off candidate is part of the request"
+    );
+    let resolved = engine
+        .poll_prediction()
+        .unwrap()
+        .resolved
+        .expect("the model's own pinyin is still valid");
+    assert_eq!(resolved.candidate.text, "开发者");
+    assert!(resolved.pinyin_changed);
+}
