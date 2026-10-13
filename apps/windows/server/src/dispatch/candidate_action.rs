@@ -9,8 +9,20 @@ pub enum CandidateAction {
     /// 关闭独立 English Assistant
     CloseAssistant,
 
-    /// 切换学习助手 Tab (0: 更多译法, 1: 用法说明, 2: 相关搭配, 3: 场景示例)
-    SwitchAssistantTab(usize),
+    /// 学习助手面板切到还没生成过的标签（0 语感解析、1 更自然地说、2 真实对话）
+    CompanionSelectTab(usize),
+
+    /// 学习助手面板切到还没生成过的对话场景
+    CompanionSelectScene(usize),
+
+    /// 学习助手面板重新生成某个标签（对话标签带场景序号）
+    CompanionRetry { tab: usize, scene: usize },
+
+    /// 学习助手面板：收藏当前表达并加入间隔复习
+    CompanionSave,
+
+    /// 学习助手面板：练一句（挖空补全）
+    CompanionPractice,
 
     /// 切换展开/收起「更多译法」（兼容旧接口）
     ToggleExpand,

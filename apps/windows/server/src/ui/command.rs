@@ -1,8 +1,8 @@
 //! 交给 UI 线程执行的命令。
 
 use qingjian_platform::protocol::{Frame, ScreenRect};
+use qingjian_predict::companion::Block;
 
-use super::companion::CompanionData;
 use super::drill::DrillResultData;
 use crate::dispatch::{RenderSettings, StatusView};
 
@@ -23,23 +23,26 @@ pub(super) enum UiCommand {
     /// 换画法（渲染器 / 字体）。
     Configure(RenderSettings),
 
-    /// 显示 / 更新 English Assistant（学习助手伴侣窗）。
-    CompanionShow(Box<(CompanionData, ScreenRect)>),
+    /// 打开学习助手面板：(中文原意, 英文表达, 是否已收藏, 组句矩形)。
+    CompanionShow(Box<(String, String, bool, ScreenRect)>),
 
-    /// 学习助手伴侣窗指定标签的流式增量文本到达
-    CompanionChunk { tab: usize, chunk: String },
+    /// 学习助手面板某个标签（对话标签还带场景序号）收到一个区块。
+    CompanionBlock { tab: usize, scene: usize, block: Block },
 
-    /// 学习助手伴侣窗指定标签的流式生成完成
-    CompanionFinish(usize),
+    /// 学习助手面板某个标签生成完成。
+    CompanionFinish { tab: usize, scene: usize },
 
-    /// 学习助手伴侣窗指定标签的流式生成异常
-    CompanionError { tab: usize, message: String },
+    /// 学习助手面板某个标签生成失败。
+    CompanionError { tab: usize, scene: usize, message: String },
+
+    /// 学习助手面板底部短暂提示；`saved` 为真同时把收藏按钮置为已收藏。
+    CompanionNotice { text: String, saved: bool },
 
     /// 收起 English Assistant。
     CompanionHide,
 
     /// 启动 Drill（主动练习独立窗口）。
-    DrillStart(Box<(String, String, ScreenRect)>),
+    DrillStart(Box<(String, String, Option<String>, ScreenRect)>),
 
     /// 下发 Drill 对比批改结果。
     DrillResult(Box<DrillResultData>),

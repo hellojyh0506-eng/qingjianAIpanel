@@ -34,6 +34,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{Error, Result};
 
 use qingjian_platform::protocol::{Frame, ScreenRect};
+use qingjian_predict::companion::Block;
 
 use self::candidates::CandidateWindow;
 use self::command::UiCommand;
@@ -102,28 +103,32 @@ impl CandidateSink for UiHandle {
         self.post(UiCommand::Configure(settings));
     }
 
-    fn show_companion(&self, data: companion::CompanionData, rect: ScreenRect) {
-        self.post(UiCommand::CompanionShow(Box::new((data, rect))));
+    fn show_companion(&self, zh: String, en: String, saved: bool, rect: ScreenRect) {
+        self.post(UiCommand::CompanionShow(Box::new((zh, en, saved, rect))));
     }
 
-    fn send_companion_chunk(&self, tab: usize, chunk: String) {
-        self.post(UiCommand::CompanionChunk { tab, chunk });
+    fn companion_block(&self, tab: usize, scene: usize, block: Block) {
+        self.post(UiCommand::CompanionBlock { tab, scene, block });
     }
 
-    fn finish_companion_stream(&self, tab: usize) {
-        self.post(UiCommand::CompanionFinish(tab));
+    fn finish_companion(&self, tab: usize, scene: usize) {
+        self.post(UiCommand::CompanionFinish { tab, scene });
     }
 
-    fn fail_companion_stream(&self, tab: usize, message: String) {
-        self.post(UiCommand::CompanionError { tab, message });
+    fn fail_companion(&self, tab: usize, scene: usize, message: String) {
+        self.post(UiCommand::CompanionError { tab, scene, message });
+    }
+
+    fn companion_notice(&self, text: String, saved: bool) {
+        self.post(UiCommand::CompanionNotice { text, saved });
     }
 
     fn hide_companion(&self) {
         self.post(UiCommand::CompanionHide);
     }
 
-    fn start_drill(&self, target_chinese: String, reference: String, rect: ScreenRect) {
-        self.post(UiCommand::DrillStart(Box::new((target_chinese, reference, rect))));
+    fn start_drill(&self, target_chinese: String, reference: String, cloze: Option<String>, rect: ScreenRect) {
+        self.post(UiCommand::DrillStart(Box::new((target_chinese, reference, cloze, rect))));
     }
 
     fn show_drill_result(&self, result: drill::DrillResultData) {
@@ -314,7 +319,7 @@ fn apply(
         UiCommand::Hide => {
             window.hide();
             if let Some(comp) = companion {
-                if !comp.is_pinned.get() {
+                if !comp.is_pinned() {
                     comp.hide();
                 }
             }
@@ -331,25 +336,29 @@ fn apply(
         }
         UiCommand::Configure(settings) => Painter::configure(painter, &settings),
         UiCommand::CompanionShow(payload) => {
-            let (data, rect) = *payload;
+            let (zh, en, saved, rect) = *payload;
             if let Some(comp) = companion {
-                comp.update_data(data);
-                let _ = comp.show_at(to_win_rect(rect));
+                comp.show(&zh, &en, saved, to_win_rect(rect));
             }
         }
-        UiCommand::CompanionChunk { tab, chunk } => {
+        UiCommand::CompanionBlock { tab, scene, block } => {
             if let Some(comp) = companion {
-                comp.append_stream_chunk(tab, &chunk);
+                comp.apply_block(tab, scene, block);
             }
         }
-        UiCommand::CompanionFinish(tab) => {
+        UiCommand::CompanionFinish { tab, scene } => {
             if let Some(comp) = companion {
-                comp.finish_stream(tab);
+                comp.finish(tab, scene);
             }
         }
-        UiCommand::CompanionError { tab, message } => {
+        UiCommand::CompanionError { tab, scene, message } => {
             if let Some(comp) = companion {
-                comp.fail_stream(tab, message);
+                comp.fail(tab, scene, message);
+            }
+        }
+        UiCommand::CompanionNotice { text, saved } => {
+            if let Some(comp) = companion {
+                comp.set_notice(text, saved);
             }
         }
         UiCommand::CompanionHide => {
@@ -358,9 +367,9 @@ fn apply(
             }
         }
         UiCommand::DrillStart(payload) => {
-            let (target_chinese, reference, rect) = *payload;
+            let (target_chinese, reference, cloze, rect) = *payload;
             if let Some(dr) = drill {
-                dr.start_session(&target_chinese, &reference, to_win_rect(rect));
+                dr.start_session(&target_chinese, &reference, cloze, to_win_rect(rect));
             }
         }
         UiCommand::DrillResult(payload) => {

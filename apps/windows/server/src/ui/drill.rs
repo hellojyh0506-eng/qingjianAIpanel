@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateFontW, DeleteObject, GetTextExtentPoint32W, HDC, HFONT, SelectObject,
+    CreateFontW, DT_NOPREFIX, DT_WORDBREAK, DeleteObject, DrawTextW, GetTextExtentPoint32W, HDC, HFONT, SelectObject,
     SetBkMode, SetTextColor, TRANSPARENT, TextOutW, FW_BOLD, FW_NORMAL,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
@@ -53,6 +53,8 @@ pub struct DrillResultData {
 pub struct DrillSessionData {
     pub target_chinese: String,
     pub reference_expression: String,
+    /// 挖空练习：英文句里被挖掉的短语换成 `____`；有它就让用户补空，而不是整句翻译。
+    pub cloze_sentence: Option<String>,
     pub user_input: String,
     pub is_comparing: bool,
     pub show_answer: bool,
@@ -67,6 +69,7 @@ impl Default for DrillSessionData {
         Self {
             target_chinese: "一点都没区别".to_string(),
             reference_expression: "There's no difference at all.".to_string(),
+            cloze_sentence: None,
             user_input: String::new(),
             is_comparing: false,
             show_answer: false,
@@ -122,10 +125,11 @@ impl DrillWindow {
         Ok(instance)
     }
 
-    pub fn start_session(&self, target_chinese: &str, reference: &str, anchor: RECT) {
+    pub fn start_session(&self, target_chinese: &str, reference: &str, cloze: Option<String>, anchor: RECT) {
         let mut d = self.data.borrow_mut();
         d.target_chinese = target_chinese.to_string();
         d.reference_expression = reference.to_string();
+        d.cloze_sentence = cloze;
         d.user_input.clear();
         d.is_comparing = false;
         d.show_answer = false;
@@ -300,18 +304,28 @@ fn paint_drill(hdc: HDC, data: &DrillSessionData, client: RECT, dark: bool) {
         draw_text_gdi(hdc, font_body, COLORREF(0x00FFFFFF), client.right - 104, btn_y + 5, "完成 (Enter)");
     } else {
         // ========== 题目主动输入模式 ==========
-        draw_text_gdi(hdc, font_body, sub_color, 16, 42, "请用英文表达：");
-        draw_text_gdi(hdc, font_prompt, text_color, 16, 64, &data.target_chinese);
+        let box_top = if data.cloze_sentence.is_some() { 146 } else { 100 };
+        if let Some(cloze) = &data.cloze_sentence {
+            draw_text_gdi(hdc, font_body, sub_color, 16, 42, "补全句子里的空缺：");
+            draw_text_gdi(hdc, font_prompt, text_color, 16, 64, &data.target_chinese);
+            let rect = RECT { left: 16, top: 92, right: client.right - 16, bottom: box_top - 6 };
+            draw_wrapped_gdi(hdc, font_large, brand_color, rect, cloze);
+        } else {
+            draw_text_gdi(hdc, font_body, sub_color, 16, 42, "请用英文表达：");
+            draw_text_gdi(hdc, font_prompt, text_color, 16, 64, &data.target_chinese);
+        }
 
         // 用户输入框
-        let box_rect = RECT { left: 16, top: 100, right: client.right - 16, bottom: 200 };
+        let box_rect = RECT { left: 16, top: box_top, right: client.right - 16, bottom: 200 };
         super::candidates::view::fill_round_rect(hdc, box_rect, badge_bg, 8);
 
+        let text_top = box_top + 12;
         if data.user_input.is_empty() {
-            draw_text_gdi(hdc, font_body, sub_color, 26, 112, "输入你的英文……（直接打字）");
+            let hint = if data.cloze_sentence.is_some() { "输入空缺处的英文……" } else { "输入你的英文……（直接打字）" };
+            draw_text_gdi(hdc, font_body, sub_color, 26, text_top, hint);
         } else {
             let input_with_cursor = format!("{}|", data.user_input);
-            draw_text_gdi(hdc, font_body, text_color, 26, 112, &input_with_cursor);
+            draw_text_gdi(hdc, font_body, text_color, 26, text_top, &input_with_cursor);
         }
 
         // 字数统计
@@ -374,6 +388,18 @@ fn create_font(size: i32, weight: windows::Win32::Graphics::Gdi::FONT_WEIGHT, it
             0,
             w!("Segoe UI"),
         )
+    }
+}
+
+/// 在 `rect` 里自动换行画文字，放不下的部分被裁掉。
+fn draw_wrapped_gdi(hdc: HDC, font: HFONT, color: COLORREF, rect: RECT, text: &str) {
+    let mut wide: Vec<u16> = text.encode_utf16().collect();
+    let mut rect = rect;
+    unsafe {
+        let old = SelectObject(hdc, font.into());
+        SetTextColor(hdc, color);
+        DrawTextW(hdc, &mut wide, &mut rect, DT_WORDBREAK | DT_NOPREFIX);
+        SelectObject(hdc, old);
     }
 }
 

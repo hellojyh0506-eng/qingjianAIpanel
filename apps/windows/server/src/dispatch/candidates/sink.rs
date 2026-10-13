@@ -23,30 +23,38 @@ pub trait CandidateSink: Send {
     /// 换画法：装上时与配置热加载后调，只在设置变了时调。
     fn configure(&self, settings: RenderSettings);
 
-    /// 显示 / 更新 English Assistant 学习助手伴侣窗
-    fn show_companion(&self, data: crate::ui::companion::CompanionData, rect: ScreenRect) {
-        let _ = (data, rect);
+    /// 打开学习助手面板：中文原意、英文表达、是否已收藏，`rect` 是组句矩形。
+    fn show_companion(&self, zh: String, en: String, saved: bool, rect: ScreenRect) {
+        let _ = (zh, en, saved, rect);
     }
 
-    /// 发送指定标签的流式文本增量到 English Assistant 学习助手伴侣窗
-    fn send_companion_chunk(&self, tab: usize, chunk: String) {
-        let _ = (tab, chunk);
+    /// 学习助手某个标签（对话标签带场景序号）收到一个区块。
+    fn companion_block(&self, tab: usize, scene: usize, block: qingjian_predict::companion::Block) {
+        let _ = (tab, scene, block);
     }
 
-    /// 指定标签的学习助手流式生成完成
-    fn finish_companion_stream(&self, _tab: usize) {}
+    /// 学习助手某个标签生成完成。
+    fn finish_companion(&self, tab: usize, scene: usize) {
+        let _ = (tab, scene);
+    }
 
-    /// 指定标签的学习助手流式生成异常
-    fn fail_companion_stream(&self, tab: usize, message: String) {
-        let _ = (tab, message);
+    /// 学习助手某个标签生成失败。
+    fn fail_companion(&self, tab: usize, scene: usize, message: String) {
+        let _ = (tab, scene, message);
+    }
+
+    /// 学习助手面板底部短暂提示；`saved` 为真同时把收藏按钮置为已收藏。
+    fn companion_notice(&self, text: String, saved: bool) {
+        let _ = (text, saved);
     }
 
     /// 收起 English Assistant
     fn hide_companion(&self) {}
 
     /// 启动 Drill 独立练习窗口
-    fn start_drill(&self, target_chinese: String, reference: String, rect: ScreenRect) {
-        let _ = (target_chinese, reference, rect);
+    /// `cloze` 是挖空练习的英文句（被挖掉的短语换成 `____`），没有就是整句翻译练习。
+    fn start_drill(&self, target_chinese: String, reference: String, cloze: Option<String>, rect: ScreenRect) {
+        let _ = (target_chinese, reference, cloze, rect);
     }
 
     /// 下发 Drill 对比批改结果

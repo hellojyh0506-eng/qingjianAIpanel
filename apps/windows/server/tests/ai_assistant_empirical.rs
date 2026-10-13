@@ -285,11 +285,11 @@ fn test_ai_assistant_and_companion_pinned_by_default() {
     // 验证 English Assistant 伴侣窗默认开启置顶，且支持动态图钉切换
     let comp_win = qingjian_windows_server::ui::companion::CompanionWindow::new(Box::new(|_| {}))
         .expect("create CompanionWindow");
-    assert!(comp_win.is_pinned.get(), "English Assistant 学习面板必须默认高亮置顶 (is_pinned = true)");
-    comp_win.is_pinned.set(false);
-    assert!(!comp_win.is_pinned.get(), "English Assistant 伴侣窗支持取消置顶");
-    comp_win.is_pinned.set(true);
-    assert!(comp_win.is_pinned.get(), "English Assistant 伴侣窗支持再次置顶");
+    assert!(comp_win.is_pinned(), "English Assistant 学习面板必须默认高亮置顶 (is_pinned = true)");
+    comp_win.set_pinned(false);
+    assert!(!comp_win.is_pinned(), "English Assistant 伴侣窗支持取消置顶");
+    comp_win.set_pinned(true);
+    assert!(comp_win.is_pinned(), "English Assistant 伴侣窗支持再次置顶");
 }
 
 #[test]
