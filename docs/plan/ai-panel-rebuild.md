@@ -195,6 +195,10 @@ core / learning / render / predict / platform / cli 测试全过，Windows serve
 **验收**：在记事本里光标放在一句话中间敲拼音，日志显示 `after` 非空（只记长度，不记内容）。
 **提交**：`feat(tsf): 组句时读取光标后文供智能识别使用`
 
+状态：已完成代码与测试，**真机验收未做**（2026-10-13，Linux 沙箱）。`text_after_caret`（TSF，克隆插入点 range + `ShiftEnd(+32)`）、`ClientMessage::Surrounding` 的 `#[serde(default)] after`、Server 的 `surrounding: Option<SurroundingText>` 与 `rerank_surrounding()` 返回真实 `after`、Surrounding 迟到时重发 Resolve（原来重发的是旧 Rerank）。platform 兼容用例（旧消息无 `after` 能解析、新消息旧 Server 能忽略）与 Server 端到端用例（`after` 进入 Resolve 请求）通过，core / predict / platform / cli 等测试全过，Windows server / tsf / settings 交叉 `cargo check --tests` 通过。
+**与计划的偏离**：**没有升 `PROTOCOL_VERSION`**（仍是 7）。计划写「本周期没升过才 +1」，但新字段是可选的，旧 DLL / 旧 Server 互通；升版本会让 `SessionOpened` 挡住没换 DLL 的进程，也会让「换回旧 DLL 回滚」断连，所以不升。互通矩阵与部署 / 回滚见 `docs/notes/tsf-surrounding-after.md`。Linux 插件写死的版本号因此没动。另：前后文任一非空就发 Surrounding（以前只有前文才发，光标在开头时 `after` 会丢）。
+**未验证**：TSF 的 `ShiftEnd` / `GetText` 在真实宿主（记事本、Chrome、Word）里能读到多少——沙箱没有 Windows，TSF 只编译；`after` 非空的日志验收（记事本里光标放句中）需要在真机做；DLL 在被占用时的替换流程只写了说明、没演练。
+
 ---
 
 ## P6　选定打字模型（约 0.5 天）

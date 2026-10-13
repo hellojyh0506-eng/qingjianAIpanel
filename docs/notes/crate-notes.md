@@ -100,7 +100,7 @@ TSV 解析、查询与生成工具把 `lue` / `nue` 统一成 `lve` / `nve`。
   **Core 校验**（`resolve_reply`）：选中的候选必须在请求列表里；候选带读音时**以候选自己的读音为准**（模型常把拼音抄错），否则用模型拼音。拼音 == letters 只选字；不同则按长度限编辑距离（<10：2，10–15：3，16–39：4，≥40：5）+ 完整切分，再用 `Engine::query_reading`（临时换 composition 查本地，不动输入）重查，top9 里有 pick 就用它，否则第 1 个。过期（序号 / 翻页 / 动高亮 / 组句变化）一律丢弃。
   **放置**（`ResolvePlacement`）：改了拼音或有上下文 → 放第 1 位并标「纠」（原第 1 位降到第 2，记入 `last_query.offered`）；无上下文的同音换词只在前 3 位内调整；同一输入连续被拒绝 ≥2 次 → 只给拼音行右侧提示（Tab 采用，旧行为）。`CandidateLayout::apply_resolved` 返回 `Placed / Hint / Unchanged`。选了 AI 纠正候选上屏时吃掉整段 scope（`ai_resolved_consumption`），**不会**把这次当作敲错对去学习。
   旧 `request_rerank` / `request_intent_suggestion` 与它们的结果处理保留，macOS 壳仍在用；Windows Server 的 recompose 改为本地快速纠正之后统一发 Resolve，疑似敲错（`intent_suspected`）时被动翻译延后到 Resolve 回来再发（`translation_deferred`）。`before` 来自 Surrounding，`after` 暂时恒为空（P5 才读光标后文）。
-  旧 `request_prediction` / `PredictionKind::Compose` 仍保留兼容行为，用于显式旧调用与测试，但默认 Windows/macOS/CLI 打字入口不再调用它。简拼候选不足时禁止 AI 凭声母造词。Windows/macOS 的真实 AI 在线体验和延迟仍待真实运行验收；Windows Rerank 复用 TSF 既有 Surrounding 消息携带的最多 64 个光标前字符；不新增协议字段、不读取光标后文。TSF 会在密码/私密输入框跳过读取，Server 缓存仅限当前组句，在私密和结束组句时清空并使在途重排失效。能否获得前文仍取决于具体宿主控件。
+  旧 `request_prediction` / `PredictionKind::Compose` 仍保留兼容行为，用于显式旧调用与测试，但默认 Windows/macOS/CLI 打字入口不再调用它。简拼候选不足时禁止 AI 凭声母造词。Windows/macOS 的真实 AI 在线体验和延迟仍待真实运行验收；Windows 的上下文来自 TSF 的 Surrounding 消息：光标前最多 64 字，P5 起还有光标后最多 32 字（`after`，可选字段，见 apps/windows 小节）。TSF 会在密码/私密输入框跳过读取，Server 缓存仅限当前组句，在私密和结束组句时清空并使在途重排失效。能否获得前文仍取决于具体宿主控件。
 - 关思考与模型分档（P1）：`thinking.rs` 的 `ThinkingSwitch` 按接口地址决定关思考的写法，智谱发 `thinking: {type: disabled}`，SiliconFlow / 阿里百炼（DashScope）发 `enable_thinking: false`，其余接口只按 `reasoning_effort` 配置走。
   打字类请求（Translate / Compose / Intent / Rerank / Question）在有专用开关的接口上无视配置强制关思考，只有 DeepLearn / Compare 允许思考；流式客户端 `StreamChatClient` 默认也关，`with_thinking(true)` 才放开。
   温度：Intent / Rerank 0.0，Translate / Compose / Question 0.3，DeepLearn / Compare 0.5，流式 0.7。`PredictConfig` 的 `typing_model`（打字链路）与 `panel_model`（学习助手、AI 问答、DeepLearn / Compare）留空都回落到 `model`，用 `typing_model()` / `panel_model()` 取值。
@@ -268,6 +268,12 @@ Server 每次轮询比对用户 `dicts` 的路径 / mtime / 长度快照，配�
 所以由 **Server 读配置、经协议下发**（`InputSettings`：`OpenSession` 回包带一次，之后每拍 `SyncMode` 跟着走），
 DLL 不读文件、不查 mtime。`SessionOpened` 只回过协议版本对得上的 DLL——老的 `open` 是只写不读，
 多回一条会被它当成下一次 `Poll` 的应答而报错，那条连接就废了；老 DLL 从 `ModeSync` 那一拍也能拿到同一份（新字段直接忽略）。
+
+**光标后文（P5）**：起组句时 DLL 在同一次编辑会话里除了光标前文（64 字）再读光标后文（32 字，`com/edit/surrounding.rs::text_after_caret`：克隆插入点 range、`ShiftEnd(+32)` 后 `GetText`），
+私密输入框一律不读；`ClientMessage::Surrounding` 多了 `#[serde(default)] after: String`，前后文任一非空就发，日志只记字数。Server 把 `surrounding_before` 换成 `surrounding: Option<SurroundingText>`，
+`rerank_surrounding()` 现在返回真实 `after`，Resolve 请求带上它；本地整句模型的前文（`set_rescoring_context`）仍只用前文。Surrounding 迟于首键到达时，Server 用新前后文重发 Resolve（以前重发的是旧 Rerank）。
+**没有升 `PROTOCOL_VERSION`（仍是 7）**：新字段是可选的，旧 DLL 不带它按空处理，旧 Server 忽略它；升版本会让 `SessionOpened` 把还没换 DLL 的进程挡在外面，也让「换回旧 DLL 回滚」变成断连。
+兼容用例在 `crates/qingjian-platform/tests/protocol_compat.rs`。部署与回滚见 `docs/notes/tsf-surrounding-after.md`。
 
 ## assets
 
