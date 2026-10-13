@@ -126,6 +126,12 @@
 **验收**：本地 Top-1 ≥ 55%（120 条错拼）；clean 误纠 ≤ 1%；本地候选 P95 ≤ 3 ms（`qingjian-cli` 逐键计时）。
 **提交**：`feat(correction): 长串多处错拼的分段修复与「纠」标记`
 
+状态：已完成（2026-10-13，Linux 沙箱）。`correction/segment_repair.rs`（逐音节动态规划）+ `Candidate.corrected` + 两套渲染的「纠」胶囊 + `engine/correcting/placement.rs` 放置规则 + 拒绝纠正计数 + `fast_local_intent_candidate` 放宽到 ≥4 位；
+core / learning / render / predict / platform / cli 测试全过，Windows server / tsf / settings 交叉 `cargo check --tests` 通过。本地数字见 `docs/notes/ai-latency-baseline.md`：typo Top1 65.8%（≥55% 满足）、clean 首选标「纠」0.3%（≤1% 满足）、新增 multi 类 Top1 1.0% → 14.9%、首选字符相似度 63.5% → 78.1%。
+**与计划的偏离 / 没做到**：① 「本地候选 P95 ≤ 3 ms」只在 ≤12 位的输入上成立（P95 ≤ 8 ms，clean P95 1 ms）；20+ 位长串逐键平均 3.6 ms、最慢 6.9 ms，`multi` 查询 P95 21 ms，没有达标。② 计划第 2 条「同一音节内 1 次颠倒 + 1 次别的编辑」没做（分段修复每个音节只允许 1 处编辑；颠倒本身代价已降到与相邻键同级）。
+③ 分段修复没用「束宽 8」：宽度 96，外加按代价上界（最便宜路径 + 3 nat）剪枝，否则 `multi` 样本召回太低；多处错整句精确命中率仍低，是因为被敲错的音节本身常是合法音节，要靠 P4 的 AI Resolve。④ 原串合法且有精确候选时，纠正候选以前被直接丢掉，现在按计划放第 2 位并标「纠」（`jineng` 的 近藤 就是这样）。⑤ 「拒绝纠正」只在纠正与原串候选同时在列表里时记（整串替换的纠正里没有原串候选可选回，仍靠回车原样上屏的 `record_raw`）。⑥ 只记同一串**连续**拒绝，选纠正候选会清零。
+**未验证**：Windows 测试只编译未运行；两套渲染的「纠」胶囊没有在真机看过（沙箱没有系统字体，`qingjian-render` 的胶囊测试在沙箱里自动跳过，只在有字体的 macOS / Windows 上跑）；macOS 只接了数据通路（`Row.corrected`、位图渲染），AppKit 原生视图没画；Linux 壳（`apps/linux/server`）原本就缺 `Frame` 字段、编不过，只补了 `Candidate` 字段；真实 AI 链路不受影响但没有联网验证。
+
 ---
 
 ## P4　AI 智能识别 Resolve（约 2 天）
