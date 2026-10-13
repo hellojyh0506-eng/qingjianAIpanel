@@ -11,7 +11,7 @@ mod state;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use qingjian_core::CandidateLayout;
+use qingjian_core::{CandidateLayout, SurroundingText};
 use qingjian_platform::LocalModelConfig;
 use qingjian_platform::protocol::SessionId;
 
@@ -110,27 +110,30 @@ impl Router {
         self.engine.set_rescoring_context(None);
     }
 
-    /// DLL 送来聚焦会话的光标前文：给 Engine 当前文，缓存里按旧前文记的「要打分的」作废，重新攒一次并重新计时。
-    /// 组句已经结束 / 不是聚焦会话的丢掉。
-    pub(super) fn set_surrounding(&mut self, session: SessionId, text: String) {
+    /// DLL 送来聚焦会话的光标前后文：前文给 Engine 当本地整句模型的前文，缓存里按旧前文记的「要打分的」作废，重新攒一次并重新计时；
+    /// 前后文一起留给云端 Resolve。组句已经结束 / 不是聚焦会话的丢掉。
+    pub(super) fn set_surrounding(&mut self, session: SessionId, text: String, after: String) {
         if self.focused != Some(session) || self.engine.composition().is_empty() {
             return;
         }
-        self.surrounding_before = (!text.is_empty()).then_some(text.clone());
+        self.surrounding = (!text.is_empty() || !after.is_empty()).then(|| SurroundingText {
+            before: text.clone(),
+            after,
+        });
         self.engine
             .set_rescoring_context((!text.is_empty()).then_some(text));
         if matches!(self.composed, Some(Composed::Candidates { .. })) {
             // 查一次只为按新前文重新记下要打分的文本，候选顺序此刻不变。
             let _ = self.engine.query();
             self.schedule_rescoring();
-            // 首键可能在 Surrounding 消息之前就触发过无上下文重排；用已隐私过滤的前文立即刷新本轮请求。
+            // 首键可能在 Surrounding 消息之前就触发过无上下文的 Resolve；用已隐私过滤的前后文立即刷新本轮请求。
             let local = match self.composed.as_ref() {
                 Some(Composed::Candidates { layout, .. }) => layout.local().to_vec(),
                 _ => Vec::new(),
             };
-            if local.len() >= 2 {
+            if !local.is_empty() {
                 let context = self.rerank_surrounding();
-                let _ = self.engine.request_rerank(context, &local);
+                let _ = self.engine.request_resolve(context, &local);
             }
         }
     }

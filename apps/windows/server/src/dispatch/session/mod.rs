@@ -50,7 +50,7 @@ impl Router {
             self.engine.set_private(private);
             if private {
                 // 一旦进入私密输入立即清除缓存的前文，并使已发出的 AI 重排结果失效。
-                self.surrounding_before = None;
+                self.surrounding = None;
                 self.cancel_prediction();
             }
         }
@@ -66,7 +66,7 @@ impl Router {
 
     /// 清掉组句、展示状态、在飞的云联想与翻译评审，收起候选窗口。
     pub(super) fn reset_composition(&mut self) {
-        self.surrounding_before = None;
+        self.surrounding = None;
         self.engine.break_chain();
         self.engine.clear();
         self.cancel_prediction();

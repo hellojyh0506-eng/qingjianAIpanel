@@ -26,7 +26,7 @@ impl Router {
         self.recall_session = None;
         self.translation_deferred = false;
         if self.engine.composition().is_empty() {
-            self.surrounding_before = None;
+            self.surrounding = None;
             self.composed = None;
             self.cancel_prediction();
             self.stop_rescoring();

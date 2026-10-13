@@ -528,6 +528,7 @@ fn test_chongddren_passive_translation_strictly_binds_to_candidate_text_never_su
     router.handle(ClientMessage::Surrounding {
         session: SESSION,
         text: historic_context.to_string(),
+        after: String::new(),
     });
 
     // 2. 用户键入 "chongddren"
@@ -686,3 +687,28 @@ fn test_three_state_learning_mode_daily_learn_drill_switching_and_isolation() {
 }
 
 
+
+#[test]
+fn surrounding_after_caret_reaches_the_resolve_request() {
+    let (mut router, requests, _response) = router_with_mock_predictor_intent_only();
+    type_letters(&mut router, "kaifazhes");
+    assert_eq!(
+        router.handle(ClientMessage::Surrounding {
+            session: SESSION,
+            text: "我是一名".to_owned(),
+            after: "在公司上班".to_owned(),
+        }),
+        None
+    );
+
+    let request = requests
+        .lock()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|request| request.kind == PredictionKind::Resolve)
+        .cloned()
+        .expect("a Resolve request follows the surrounding text");
+    assert_eq!(request.before, "我是一名");
+    assert_eq!(request.after, "在公司上班");
+}
