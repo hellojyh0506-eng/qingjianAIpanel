@@ -4,17 +4,21 @@
 //! 这里只管文本协议，不碰网络与界面：请求由调用方用 [`messages`] 的结果加 [`Tab::max_tokens`] 交给 `StreamChatClient`。
 
 mod block;
+mod cache;
 mod jsonl;
 mod prompt;
 mod request;
+mod runner;
 mod scene;
 mod tab;
 mod validate;
 
 pub use block::{Block, Speaker};
+pub use cache::{BlockCache, CAPACITY as CACHE_CAPACITY};
 pub use jsonl::{BlockParser, ParseStats};
 pub use prompt::messages;
 pub use request::CompanionRequest;
+pub use runner::{Outcome, consume};
 pub use scene::Scene;
 pub use tab::Tab;
 

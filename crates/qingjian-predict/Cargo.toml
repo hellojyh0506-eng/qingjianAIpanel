@@ -15,7 +15,7 @@ qingjian-core.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "macros"] }
+tokio = { workspace = true, features = ["sync", "macros", "rt"] }
 tracing.workspace = true
 reqwest.workspace = true
 uuid.workspace = true
