@@ -258,6 +258,8 @@ core / learning / render / predict / platform / cli 测试全过，Windows serve
 | radius | 卡片 10 px、标签与按钮 8 px、胶囊 6 px | |
 | 窗口宽度 | 420 px | |
 
+状态：已完成代码与测试，**预览与真机验收未全部做**（2026-10-13，Linux 沙箱）。`panel/` 新增 `tokens / area / hitmap / panel_text / color_pair / avatar / avatar_cache / renderer / surface / icon/{mod,data,svg_path}`；文字层新增换行与富文本（`RichSpan`、字重），各平台字体清单新增粗体文件；`tools/lucide-icons/gen.py` 生成 33 个 Lucide 图标；`tools/ui-diff/diff.py` 做并排 / 叠加。render 测试 36 个全过（含路径解析器、全部图标可解析、命中层级与边界、token 与计划表一致、头像解码尺寸、换行高度、位置 / 颜色像素断言），Windows 目标 `cargo check --tests --examples` 通过。**与计划的偏离**：① `--panel` 现在只有 `kit`（样式表：色板、图标、头像、标签栏、胶囊、卡片、对话气泡、错误条），`companion-tab0|tab1|tab2|loading|streaming|error|empty|ai-chat` 的整页预览要等 P8 / P9 的布局才有内容，到时补进同一个参数；② 头像解码用 tiny-skia 自带的 `Pixmap::decode_png`（底层即工作区 `png`），没有新增依赖；③ Lucide 当前版本没有 `smile`、`trash-2`，用 `trash` 与 `clock` 代替，另加 `check / chevron-up / arrow-up / pencil` 备用；④ 小于 16 pt 的图标描边按比例减细（不低于 1.25 pt），不是全部固定 1.75；⑤ 顺手修了既有测试 `corrected_rows_grow_wider…`：竖排有最小宽度，原来的 7 字样例在 Linux 字体下低于它，换成更长的样例。**未验证**：Windows 真机的粗体回退（`segoeuib.ttf` / `msyhbd.ttc` 按清单加载，从未在 Windows 上渲染过）、中文标点避头尾（cosmic-text 不处理）、预览图只在沙箱字体（Liberation Sans / Noto Sans SC）下看过，字形与真机 Segoe UI / 微软雅黑不同，只能核布局与颜色。
+
 ---
 
 ## P8　学习助手面板重构（约 3 天）
@@ -328,6 +330,12 @@ Tab2（每个场景一次请求）:
 `ui/companion.rs` 拆成 `ui/companion/{mod.rs, model.rs, layout_header.rs, tab_nuance.rs, tab_alternatives.rs, tab_dialogue.rs, states.rs, input.rs}`，每个文件 < 500 行；`dispatch/mod.rs` 里的三路请求挪到 `dispatch/companion/mod.rs`。
 
 验收：七种状态的预览 PNG 与参考裁图并排对比通过；钉住时打字不覆盖内容（保留现有行为）；所有按钮点击命中区与绘制一致（hitmap 单测）。
+
+### 8.7 面板产品决定补充（2026-10-13，用户确认）
+- **「真实对话」统一 3 句**：每个场景 3 句（每句 ≤ 15 词，目标表达加粗）；IELTS 场景改成「题目 + 3 句高分回答」；底部「表达亮点」从 3 条压到 2 条。`max_tokens` 与 JSONL 的 `turn` 条数随之改为 3。
+- **收藏接入间隔复习**：收藏即在 `LearningVault::save_expression`（已用 FSRS）里存一张记忆卡，正面中文、背面英文 + 1 条例句；「练一句」改成**挖空**——把高亮短语挖掉让用户补。
+- **发音默认美音（en-US）**：SAPI 只选 en-US 语音，不做英音开关；没装美音语音时给提示，不静默回退英音。
+- **其余按“适合学习、别太繁杂”处理**：语感解析只保留 1 条例句、搭配细节默认折叠；等级胶囊旁的「口语可用 / 写作可用 / 雅思加分」与「中式表达提醒」、紧凑模式视布局余量轻量实现，做不下就在状态行写明省略，不额外加设置项。
 
 ---
 

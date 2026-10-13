@@ -169,6 +169,14 @@ Engine 侧在 `engine/rescoring/`：接了打分器就取 Viterbi 前 `RESCORE_P
 （过渡期退路，偏好设置「候选窗口」页可选）；`[general] font` 是候选窗字族名（空为系统字体，`bitmap/font_files.rs` 用 CoreText 按字族名找文件只加载那几个，没装就回系统字体；
 设置页 `preferences/font_picker/` 是搜索框 + 列表）。设计与验收见 `docs/design/rendering.md`。
 
+面板渲染基础（`panel/`，学习助手与 AI 问答两个面板共用，P7）：`PanelRenderer`（持字体与头像缓存，`set_scale` 设点→像素倍数，`measure*` 量文字）→ `begin(宽, 高, 阴影)` 开画布 →
+`PanelSurface` 上画并同步 `hit(区域, 命中值)` 登记点击区域 → `finish()` 得 `PanelFrame { pixmap, hits, margin }`；对外坐标一律是点，原点为窗口左上角（不含阴影边距）。
+文字走 `TextPainter` 新增的换行与富文本：`RichSpan` 可给一段加粗、换色（高亮短语），宽度用 `Wrap::WordOrGlyph` 排版，中文逐字可换行但没有标点避头尾；加粗需要平台清单里的粗体文件
+（`fonts/*::bold_fonts`，缺了就退回常规字重，候选窗不受影响）。图标是 Lucide（ISC，`panel/icon/LICENSE-lucide`），24×24 path 数据由 `tools/lucide-icons/gen.py` 生成进 `panel/icon/data.rs`，
+`panel/icon/svg_path.rs` 解析（M L H V C S Q T A Z，圆弧转三次贝塞尔）后统一描边（≥16 pt 为 1.75 pt，更小按比例减细、不低于 1.25）。头像 PNG 用 `include_bytes!` 内嵌，
+`Pixmap::decode_png`（tiny-skia 自带，底层就是工作区的 `png`）解码，按目标像素边长选 @1x/@2x/@3x/512 原图，不再做圆形裁切。设计 token 在 `panel/tokens.rs`，与计划 P7 的表一一对应（有单测）。
+`cargo run --release -p qingjian-render --example preview -- --panel kit` 出样式表，`tools/ui-diff/diff.py` 把预览图与 `docs/design/reference/` 的参考图并排 / 叠加。
+
 ## crates/qingjian-update
 
 检查更新（设计见 `docs/design/update.md`）：`index/` 是索引的类型、下载（`fetch.rs`，复用 workspace 的 reqwest + 单线程 tokio，20 秒超时、2 MB 上限）与验签
