@@ -3,6 +3,7 @@
 //! 末尾列出验收行每个字形落到了哪家字体。不是日常工具，改渲染器时拿来核对。
 //! `--panel kit` 输出面板渲染基础的样式表（token 色板、图标、头像、标签栏、卡片、错误条），不画候选窗。
 
+mod panel_companion;
 mod panel_kit;
 
 use std::path::PathBuf;
@@ -33,7 +34,7 @@ struct Args {
     #[arg(long)]
     no_shadow: bool,
 
-    /// 输出面板预览而不是候选窗：现有 `kit`（样式表）；学习助手与 AI 问答的整页预览随 P8 / P9 的布局补。
+    /// 输出面板预览而不是候选窗：现有 `kit`（样式表）；`companion-tab0/tab1/tab2/loading/streaming/error/empty/...`（学习助手整页）；AI 问答随 P9 补。
     #[arg(long)]
     panel: Option<String>,
 
@@ -53,6 +54,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&args.out)?;
 
     if let Some(name) = args.panel.as_deref() {
+        if name.starts_with("companion-") {
+            return panel_companion::run(name, &args.out, args.scale, &args.locale, !args.no_shadow);
+        }
         return panel_kit::run(name, &args.out, args.scale, &args.locale);
     }
 

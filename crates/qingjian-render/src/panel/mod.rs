@@ -7,6 +7,7 @@ mod area;
 mod avatar;
 mod avatar_cache;
 mod color_pair;
+pub mod companion;
 mod hitmap;
 mod icon;
 mod panel_text;
