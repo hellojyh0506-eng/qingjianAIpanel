@@ -4,8 +4,8 @@ import time
 import statistics
 import os
 
-API_KEY = "sk-qryjgvkzekfbbdlpjlvepwbeexnzakeffvjqpgwrystkjzef"
-BASE_URL = "https://api.siliconflow.cn/v1/chat/completions"
+API_KEY = os.environ.get("QINGJIAN_API_KEY", "")
+BASE_URL = os.environ.get("QINGJIAN_API_URL", "https://api.siliconflow.cn/v1/chat/completions")
 MODEL = "Qwen/Qwen2.5-7B-Instruct"
 
 SYSTEM_PROMPT = """你是一个拼音输入法的云端联想引擎。用户正在打拼音，还没选词。你会收到一段 JSON：
