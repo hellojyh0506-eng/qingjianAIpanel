@@ -8,6 +8,7 @@
 pub mod ai_service;
 mod cache;
 mod chat_client;
+pub mod companion;
 mod cloud_predictor;
 mod config;
 mod connection;

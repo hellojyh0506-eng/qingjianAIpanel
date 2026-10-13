@@ -55,6 +55,9 @@ pub struct StreamChatClient {
 
     /// 允许模型思考；默认关，面板要的是首字快。
     allow_thinking: bool,
+
+    /// 采样温度；问答默认 0.7，学习助手要稳定的结构化输出，用 [`with_temperature`](Self::with_temperature) 调低。
+    temperature: f32,
 }
 
 impl StreamChatClient {
@@ -71,12 +74,19 @@ impl StreamChatClient {
             api_key,
             model,
             allow_thinking: false,
+            temperature: 0.7,
         }
     }
 
     /// 允许思考（「深度」模式）。只对有专用开关的接口有区别。
     pub fn with_thinking(mut self, allow: bool) -> Self {
         self.allow_thinking = allow;
+        self
+    }
+
+    /// 采样温度。
+    pub fn with_temperature(mut self, temperature: f32) -> Self {
+        self.temperature = temperature;
         self
     }
 
@@ -175,7 +185,7 @@ impl StreamChatClient {
             headers.insert("X-KILOCODE-MACHINEID", HeaderValue::from_static("DESKTOP-FOMGFJO"));
         }
 
-        let body = self.request_body(&messages, true, max_tokens, 0.7);
+        let body = self.request_body(&messages, true, max_tokens, self.temperature);
 
         let req = match self.http.post(&url).headers(headers).json(&body).build() {
             Ok(r) => r,
