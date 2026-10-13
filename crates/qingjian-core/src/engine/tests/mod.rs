@@ -8,6 +8,7 @@ mod custom;
 mod disambiguation;
 mod emoji;
 mod english;
+mod lanes;
 mod learning;
 mod lookup;
 mod privacy;

@@ -9,6 +9,7 @@
 mod cloud_word;
 mod fuzzy;
 mod kind;
+mod lane;
 mod policy;
 mod predictor;
 mod question;
@@ -20,6 +21,7 @@ mod surrounding_text;
 pub use cloud_word::CloudWord;
 pub use fuzzy::{mismatch_count, tolerance};
 pub use kind::PredictionKind;
+pub use lane::PredictionLane;
 pub use policy::PredictionPolicy;
 pub use predictor::{NoPredictor, Predictor};
 pub use question::restates_question;
@@ -29,6 +31,9 @@ pub use script::translation_target;
 pub use surrounding_text::SurroundingText;
 
 use super::*;
+
+/// 记住最近多少个请求的种类；够覆盖三条通道各自的在飞请求。
+const REQUEST_KIND_HISTORY: usize = 32;
 
 fn within_edit_distance(left: &[u8], right: &[u8], limit: usize) -> bool {
     if left.len().abs_diff(right.len()) > limit {
@@ -83,7 +88,7 @@ impl Engine {
         surrounding: Option<SurroundingText>,
         candidates: &[Candidate],
     ) -> Option<u64> {
-        self.prediction_sequence += 1;
+        self.bump_lane(PredictionLane::Typing);
         if !self.predictor.is_enabled()
             || self.private
             || self.english_mode
@@ -163,8 +168,8 @@ impl Engine {
             user_attempt: String::new(),
             reference: String::new(),
         };
-        self.last_prediction_kind = PredictionKind::Intent;
         self.last_prediction_scope = scope.to_owned();
+        self.note_request(PredictionKind::Intent);
         self.predictor.submit(request);
         Some(self.prediction_sequence)
     }
@@ -333,7 +338,7 @@ impl Engine {
             return None;
         }
         // 不发也要换序号：正在飞的旧结果对应的是上一个输入状态，回来了也不能显示
-        self.prediction_sequence += 1;
+        self.bump_lane(PredictionLane::Typing);
         // 辅码态在按码筛词，云端词没有码、进来只会打乱；不发请求，槽位自然收起
         if self.aux_filter().is_some() {
             return None;
@@ -446,8 +451,8 @@ impl Engine {
             user_attempt: String::new(),
             reference: String::new(),
         };
-        self.last_prediction_kind = kind;
         self.last_prediction_scope = scope.to_owned();
+        self.note_request(kind);
         self.predictor.submit(request);
         Some(self.prediction_sequence)
     }
@@ -460,7 +465,7 @@ impl Engine {
         if !self.predictor.is_enabled() || self.private || text.is_empty() {
             return None;
         }
-        self.prediction_sequence += 1;
+        self.bump_lane(PredictionLane::Learning);
         let request = PredictionRequest {
             sequence: self.prediction_sequence,
             kind: PredictionKind::Translate,
@@ -483,7 +488,7 @@ impl Engine {
             user_attempt: String::new(),
             reference: String::new(),
         };
-        self.last_prediction_kind = PredictionKind::Translate;
+        self.note_request(PredictionKind::Translate);
         self.predictor.submit(request);
         Some(self.prediction_sequence)
     }
@@ -499,7 +504,7 @@ impl Engine {
         if !self.predictor.is_enabled() || self.private || user_attempt.is_empty() {
             return None;
         }
-        self.prediction_sequence += 1;
+        self.bump_lane(PredictionLane::Deep);
         let request = PredictionRequest {
             sequence: self.prediction_sequence,
             kind: PredictionKind::Compare,
@@ -519,7 +524,7 @@ impl Engine {
             user_attempt: user_attempt.to_owned(),
             reference: reference.to_owned(),
         };
-        self.last_prediction_kind = PredictionKind::Compare;
+        self.note_request(PredictionKind::Compare);
         self.predictor.submit(request);
         Some(self.prediction_sequence)
     }
@@ -534,7 +539,7 @@ impl Engine {
         if !self.predictor.is_enabled() || self.private || chinese.is_empty() {
             return None;
         }
-        self.prediction_sequence += 1;
+        self.bump_lane(PredictionLane::Deep);
         let request = PredictionRequest {
             sequence: self.prediction_sequence,
             kind: PredictionKind::DeepLearn,
@@ -554,7 +559,7 @@ impl Engine {
             user_attempt: String::new(),
             reference: primary_english.to_owned(),
         };
-        self.last_prediction_kind = PredictionKind::DeepLearn;
+        self.note_request(PredictionKind::DeepLearn);
         self.predictor.submit(request);
         Some(self.prediction_sequence)
     }
@@ -589,18 +594,48 @@ impl Engine {
 
     /// 作废正在飞的联想（用户清空了拼音、关掉了联想框）。
     pub fn cancel_prediction(&mut self) {
+        self.invalidate_predictions();
+    }
+
+    /// 给这条通道换新序号：同通道里在飞的旧结果因此过期，其他通道不受影响。
+    pub(super) fn bump_lane(&mut self, lane: PredictionLane) {
         self.prediction_sequence += 1;
+        self.lane_sequence[lane.index()] = self.prediction_sequence;
+    }
+
+    /// 所有通道的在飞结果一律作废（清空输入、进私密输入）。
+    pub(super) fn invalidate_predictions(&mut self) {
+        self.prediction_sequence += 1;
+        self.lane_sequence = [self.prediction_sequence; PredictionLane::COUNT];
+    }
+
+    /// 请求已交给 Predictor：记下序号对应的种类，结果回来时按它分派。
+    fn note_request(&mut self, kind: PredictionKind) {
+        self.last_prediction_kind = kind;
+        if self.request_kinds.len() >= REQUEST_KIND_HISTORY {
+            self.request_kinds.remove(0);
+        }
+        self.request_kinds.push((self.prediction_sequence, kind));
+    }
+
+    /// 结果对应哪类请求；查不到（历史已滚过）时按最近一次请求算。
+    fn kind_of(&self, sequence: u64) -> PredictionKind {
+        self.request_kinds
+            .iter()
+            .rev()
+            .find(|(seq, _)| *seq == sequence)
+            .map_or(self.last_prediction_kind, |(_, kind)| *kind)
     }
 
     /// 取回最近一次请求的结果；过期结果直接丢。没有就绪的结果返回 `None`，不阻塞。
     /// 结果可能是空的（模型没给出可用条目），壳据此停止等待。
     pub fn poll_prediction(&mut self) -> Option<Prediction> {
         while let Some(mut prediction) = self.predictor.poll() {
-            let is_learning = self.last_prediction_kind == PredictionKind::DeepLearn
-                || self.last_prediction_kind == PredictionKind::Compare;
-            if prediction.sequence == self.prediction_sequence || is_learning {
+            let kind = self.kind_of(prediction.sequence);
+            prediction.kind = kind;
+            if kind.outlives_typing() || prediction.sequence == self.lane_sequence[kind.lane().index()] {
                 // 问字的答案、翻译的译文和敲的拼音本来就对不上，只有组句联想的云端词要校验
-                if self.last_prediction_kind == PredictionKind::Intent {
+                if kind == PredictionKind::Intent {
                     let corrected_pinyin = prediction.sentence.take();
                     let candidate_text = prediction.words.first().map(|word| word.text.clone());
                     prediction.sentence = corrected_pinyin
@@ -615,12 +650,12 @@ impl Engine {
                     );
                     prediction.words.clear();
                     prediction.alternatives.clear();
-                } else if self.last_prediction_kind == PredictionKind::Question {
+                } else if kind == PredictionKind::Question {
                     let guess = &self.last_question_guess;
                     prediction
                         .words
                         .retain(|word| !restates_question(&word.text, guess));
-                } else if self.last_prediction_kind == PredictionKind::Compose
+                } else if kind == PredictionKind::Compose
                     && !self.question_mode()
                 {
                     if self.predictor.policy().slots == 0 {
@@ -639,8 +674,8 @@ impl Engine {
                     }
                 }
                 if self.traditional
-                    && self.last_prediction_kind != PredictionKind::Translate
-                    && self.last_prediction_kind != PredictionKind::Rerank
+                    && kind != PredictionKind::Translate
+                    && kind != PredictionKind::Rerank
                     && let Some(opencc) = &self.opencc
                 {
                     for word in &mut prediction.words {
@@ -662,7 +697,7 @@ impl Engine {
             }
             tracing::debug!(
                 sequence = prediction.sequence,
-                current = self.prediction_sequence,
+                current = self.lane_sequence[kind.lane().index()],
                 "丢弃过期的联想结果"
             );
         }

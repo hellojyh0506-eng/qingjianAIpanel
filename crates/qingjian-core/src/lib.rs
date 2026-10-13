@@ -36,7 +36,7 @@ pub use engine::{
     Engine, EngineSession, FRESH_UNTIL, FilledGloss, Forgotten, GlossFiller, INPUT_LOG_VERSION,
     InputLogEntry, InputLogger, InputSource, Learner, LevelCount, MarkedKind, MarkedSegment,
     ModeKeys, NEURAL_MARGIN, NEURAL_WEIGHT, NoGlossFiller, NoInputLogger, NoLearner, NoPredictor,
-    NoTranslator, NoUsageMeter, NoVocabularyTracker, Prediction, PredictionAlternative, PredictionKind, PredictionPolicy,
+    NoTranslator, NoUsageMeter, NoVocabularyTracker, Prediction, PredictionAlternative, PredictionKind, PredictionLane, PredictionPolicy,
     PredictionRequest, Predictor, QUESTION_PREFIX, Query, RESCORE_CONTEXT_CHARS, RawPreedit,
     RecallAttempt, RecallItem, RecallOutcome, RecallTracker, NoRecallTracker,
     ComparisonResult, ComparisonStatus, ErrorMajorCategory, ErrorSubcategory,

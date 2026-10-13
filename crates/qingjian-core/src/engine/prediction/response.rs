@@ -1,4 +1,6 @@
 use super::cloud_word::CloudWord;
+use super::kind::PredictionKind;
+use super::lane::PredictionLane;
 
 /// 翻译给出的单条表达候选与学习细览。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -17,6 +19,9 @@ pub struct PredictionAlternative {
 pub struct Prediction {
     /// 对应的请求序号。
     pub sequence: u64,
+
+    /// 这是哪类请求的结果。由 Engine 按序号回填，Predictor 实现不用管；壳据此分派，不要再看 `last_prediction_kind`。
+    pub kind: PredictionKind,
 
     /// 这段拼音可能对应的词（已按拼音校验）。
     pub words: Vec<CloudWord>,
@@ -56,6 +61,10 @@ pub struct Prediction {
 }
 
 impl Prediction {
+    pub fn lane(&self) -> PredictionLane {
+        self.kind.lane()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.words.is_empty()
             && self.sentence.is_none()

@@ -1,3 +1,5 @@
+use super::lane::PredictionLane;
+
 /// 一次联想请求要的是什么。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum PredictionKind {
@@ -23,4 +25,20 @@ pub enum PredictionKind {
 
     /// 深度英语学习与伴侣助手：生成音标、地道释义、多语域变体、高频搭配与例句。
     DeepLearn,
+}
+
+impl PredictionKind {
+    /// 这类请求走哪条通道。问字和打字一样每键都会换，所以归打字通道。
+    pub fn lane(self) -> PredictionLane {
+        match self {
+            Self::Compose | Self::Intent | Self::Rerank | Self::Question => PredictionLane::Typing,
+            Self::Translate => PredictionLane::Learning,
+            Self::Compare | Self::DeepLearn => PredictionLane::Deep,
+        }
+    }
+
+    /// 深度类结果不随输入变化而过期：用户继续打字时它仍然有效。
+    pub fn outlives_typing(self) -> bool {
+        matches!(self, Self::Compare | Self::DeepLearn)
+    }
 }

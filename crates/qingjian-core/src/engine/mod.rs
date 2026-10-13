@@ -49,8 +49,8 @@ pub use learning::{Forgotten, Learner, NoLearner};
 pub use marked::{AuxSegment, MarkedKind, MarkedSegment};
 pub use mode_keys::{ModeKeys, QUESTION_PREFIX};
 pub use prediction::{
-    CloudWord, NoPredictor, Prediction, PredictionAlternative, PredictionKind, PredictionPolicy,
-    PredictionRequest, Predictor, SurroundingText,
+    CloudWord, NoPredictor, Prediction, PredictionAlternative, PredictionKind, PredictionLane,
+    PredictionPolicy, PredictionRequest, Predictor, SurroundingText,
 };
 
 pub use query::Query;
@@ -234,8 +234,14 @@ pub struct Engine {
     /// 本次会话经我们上屏的文本，应用不给上下文时用它联想。
     history: InputHistory,
 
-    /// 最近一次联想请求的序号，0 表示还没发过。
+    /// 最近一次联想请求的序号，0 表示还没发过。所有通道共用一个递增计数，序号全局唯一。
     prediction_sequence: u64,
+
+    /// 每条通道最近一次请求的序号：结果序号等于它才算没过期。
+    lane_sequence: [u64; PredictionLane::COUNT],
+
+    /// 最近发出的请求序号与种类，结果回来时据此分派。
+    request_kinds: Vec<(u64, PredictionKind)>,
 
     /// 最近一次联想请求的种类：只有组句联想的结果要按拼音校验。
     last_prediction_kind: PredictionKind,
@@ -431,6 +437,8 @@ impl Engine {
             recording: Vec::new(),
             history: InputHistory::default(),
             prediction_sequence: 0,
+            lane_sequence: [0; PredictionLane::COUNT],
+            request_kinds: Vec::new(),
             last_prediction_kind: PredictionKind::Compose,
             last_question_guess: String::new(),
             chain: CommitChain::default(),
