@@ -77,6 +77,11 @@ mod tests {
             "ellipsis",
             "book-plus",
             "message-circle",
+            "maximize-2",
+            "minimize-2",
+            "globe",
+            "brain",
+            "square",
         ] {
             assert!(names.contains(&needed), "缺图标 {needed}");
         }

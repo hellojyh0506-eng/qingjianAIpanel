@@ -18,6 +18,7 @@ ICONS = """
 pin minus x volume-2 copy star mic message-square sparkles file-text scan-text target lightbulb
 chevron-down chevron-right chevron-up plus settings paperclip image send refresh-cw circle-alert
 loader-circle circle-check ellipsis book-plus message-circle check trash clock arrow-up pencil
+maximize-2 minimize-2 globe brain square
 """.split()
 
 OUT = Path(__file__).resolve().parents[2] / "crates/qingjian-render/src/panel/icon/data.rs"

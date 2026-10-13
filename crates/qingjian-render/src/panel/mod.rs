@@ -6,6 +6,7 @@
 mod area;
 mod avatar;
 mod avatar_cache;
+pub mod chat;
 mod color_pair;
 pub mod companion;
 mod hitmap;

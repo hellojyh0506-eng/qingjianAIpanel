@@ -36,7 +36,7 @@ pub use frame::{
 };
 pub use layout::Layout;
 pub use panel::{
-    Area, Avatar, ColorPair, HitMap, Icon, PanelFrame, PanelRenderer, PanelSurface, PanelText, companion,
+    Area, Avatar, ColorPair, HitMap, Icon, PanelFrame, PanelRenderer, PanelSurface, PanelText, chat, companion,
     tokens,
 };
 pub use renderer::{Rendered, RenderedStatus, Renderer, StatusCell};

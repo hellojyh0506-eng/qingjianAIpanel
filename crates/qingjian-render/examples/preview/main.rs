@@ -3,6 +3,7 @@
 //! 末尾列出验收行每个字形落到了哪家字体。不是日常工具，改渲染器时拿来核对。
 //! `--panel kit` 输出面板渲染基础的样式表（token 色板、图标、头像、标签栏、卡片、错误条），不画候选窗。
 
+mod panel_chat;
 mod panel_companion;
 mod panel_kit;
 
@@ -34,7 +35,7 @@ struct Args {
     #[arg(long)]
     no_shadow: bool,
 
-    /// 输出面板预览而不是候选窗：现有 `kit`（样式表）；`companion-tab0/tab1/tab2/loading/streaming/error/empty/...`（学习助手整页）；AI 问答随 P9 补。
+    /// 输出面板预览而不是候选窗：现有 `kit`（样式表）；`companion-tab0/tab1/tab2/loading/streaming/error/empty/...`（学习助手整页）；`ai-chat`（默认尺寸）/ `ai-chat-strict`（对照参考图的尺寸）/ `ai-chat-conversation/reasoning/streaming/waiting/error/input/composition/maximized/free`（AI 问答）。
     #[arg(long)]
     panel: Option<String>,
 
@@ -54,6 +55,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&args.out)?;
 
     if let Some(name) = args.panel.as_deref() {
+        if name.starts_with("ai-chat") {
+            return panel_chat::run(name, &args.out, args.scale, &args.locale, !args.no_shadow);
+        }
         if name.starts_with("companion-") {
             return panel_companion::run(name, &args.out, args.scale, &args.locale, !args.no_shadow);
         }
