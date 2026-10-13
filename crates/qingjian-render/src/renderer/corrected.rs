@@ -78,7 +78,7 @@ mod tests {
     use crate::theme::Theme;
 
     fn frame(corrected: bool) -> Frame {
-        let mut row = Row::plain(0, "今天我们去吃饭");
+        let mut row = Row::plain(0, "今天我们一起去楼下的小饭馆吃饭好不好");
         row.corrected = corrected;
         Frame {
             rows: vec![row, Row::plain(1, "今天我们")],
