@@ -21,6 +21,8 @@ pub struct ChatMessage {
 pub enum StreamEvent {
     /// 真实到达的文本 Token 增量
     Delta(String),
+    /// 模型的思考过程增量，只在允许思考（`with_thinking(true)`）时发出；界面折叠显示。
+    Reasoning(String),
     /// 联网搜索提取的真实来源列表
     WebSources(Vec<SearchResult>),
     /// 成功结束通知，附带首 Token 延迟 (TTFT) 与总耗时
@@ -44,6 +46,8 @@ struct StreamChoice {
 #[derive(Deserialize)]
 struct StreamDelta {
     content: Option<String>,
+    // OpenRouter 叫 reasoning，DeepSeek / 硅基流动 / 百炼叫 reasoning_content。
+    #[serde(alias = "reasoning_content")]
     reasoning: Option<String>,
 }
 
@@ -268,6 +272,11 @@ impl StreamChatClient {
                                     if let Some(reasoning) = delta.reasoning {
                                         if !reasoning.is_empty() {
                                             accumulated_reasoning.push_str(&reasoning);
+                                            if self.allow_thinking
+                                                && event_tx.send(StreamEvent::Reasoning(reasoning)).await.is_err()
+                                            {
+                                                return;
+                                            }
                                         }
                                     }
                                     if let Some(content) = delta.content {
@@ -315,6 +324,16 @@ mod tests {
 
     fn client(base_url: &str) -> StreamChatClient {
         StreamChatClient::new(base_url.to_owned(), "k".to_owned(), "Qwen/Qwen3-14B".to_owned())
+    }
+
+    #[test]
+    fn both_reasoning_field_names_are_read() {
+        for field in ["reasoning", "reasoning_content"] {
+            let line = format!(r#"{{"choices":[{{"delta":{{"{field}":"想一想"}}}}]}}"#);
+            let parsed: StreamChunkResponse = serde_json::from_str(&line).expect("合法的流式块");
+            let delta = parsed.choices.and_then(|c| c.into_iter().next()).and_then(|c| c.delta);
+            assert_eq!(delta.and_then(|d| d.reasoning).as_deref(), Some("想一想"));
+        }
     }
 
     #[test]

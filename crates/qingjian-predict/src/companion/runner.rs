@@ -45,7 +45,7 @@ pub async fn consume(
                 }
             }
             StreamEvent::Error(message) => error = Some(message),
-            StreamEvent::Done { .. } | StreamEvent::WebSources(_) => {}
+            StreamEvent::Done { .. } | StreamEvent::Reasoning(_) | StreamEvent::WebSources(_) => {}
         }
     }
     if cancelled() {
