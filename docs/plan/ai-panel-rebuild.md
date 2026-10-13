@@ -88,6 +88,8 @@
 **验收**：`--ai-bench` 跑通；Intent 空回复率 < 5%；P50 较改前下降 ≥ 40%。
 **提交**：`perf(predict): 关闭 Qwen3 思考并拆分打字与面板模型`、`test(cli): 新增 ai-bench 测速与样本集`
 
+状态：已完成（2026-10-13，Linux 沙箱）。`perf(predict)` 关思考 / 拆模型 / 预热、`test(cli)` ai-bench 与 480 条样本，predict / platform / cli 测试全过。**未验证**：真实接口延迟（沙箱无密钥，见 `docs/notes/ai-latency-baseline.md`）、Windows Server 编译（无 mingw，仅改了两处取模型名）。本地基线：typo Top1 64.2%、clean 97.0%、context 40.0%。
+
 ---
 
 ## P2　多通道并行（约 1–1.5 天）

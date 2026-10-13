@@ -3,6 +3,7 @@
 //! 输入拼音，打印候选（词性 + 译文）和各阶段耗时；输入序号上屏并记入用户词频。
 //! 不依赖任何平台 API，是 Core 的第一个「壳」。
 
+mod ai_bench;
 mod args;
 mod display;
 mod error;
@@ -67,6 +68,23 @@ fn run() -> Result<(), CliError> {
         // （`build_engine` 那份的所有权已经交给引擎了）
         let code_table = args.wubi.as_ref().map(CodeTable::from_path).transpose()?;
         let report = replay::run(&mut engine, path, args.misses, code_table)?;
+        print!("{report}");
+        return Ok(());
+    }
+    if let Some(samples) = &args.ai_bench {
+        let config_path = args
+            .config
+            .clone()
+            .unwrap_or_else(args::default_config_file);
+        let config = Config::load(&config_path)?;
+        let report = ai_bench::run(
+            &mut engine,
+            &config,
+            samples,
+            &args.models,
+            args.rounds,
+            args.bench_limit,
+        )?;
         print!("{report}");
         return Ok(());
     }

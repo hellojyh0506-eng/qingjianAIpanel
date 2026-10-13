@@ -144,6 +144,23 @@ pub struct Args {
     #[arg(long)]
     pub eval_save: Option<PathBuf>,
 
+    /// 云端打字测速：读样本集（`apps/cli/fixtures/typing_samples.tsv` 的格式），对 `--models` 里的每个模型跑真实接口，
+    /// 出延迟分位数、命中率、误纠率的 Markdown 表。会产生接口费用，密钥来自配置或环境变量
+    #[arg(long)]
+    pub ai_bench: Option<PathBuf>,
+
+    /// `--ai-bench` 要比的打字模型，逗号分隔
+    #[arg(long, value_delimiter = ',')]
+    pub models: Vec<String>,
+
+    /// `--ai-bench` 每个模型跑几轮（缺省 3），取多轮看延迟分布
+    #[arg(long, default_value_t = 3)]
+    pub rounds: usize,
+
+    /// `--ai-bench` 每个类别最多取多少条样本（缺省 0 = 全部），先小规模试跑时用
+    #[arg(long, default_value_t = 0)]
+    pub bench_limit: usize,
+
     /// 直接查询这些拼音后退出；不给则进入交互模式
     pub inputs: Vec<String>,
 }

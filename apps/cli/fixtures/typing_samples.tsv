@@ -1,0 +1,481 @@
+# letters	before	after	expected	category	note
+wolaoop			我老婆	typo	transpose
+haoduoel			好多了	typo	transpose
+shihuode			时候的	typo	transpose
+shenemgui			什么鬼	typo	transpose
+ubzaihu			不在乎	typo	transpose
+tebiexihuna			特别喜欢	typo	transpose
+owzhidaoni			我知道你	typo	transpose
+naemduo			那么多	typo	transpose
+zhemeliahi			这么厉害	typo	transpose
+sihhoujiu			时候就	typo	transpose
+mieshuguan			美术馆	typo	transpose
+shenemjiao			什么叫	typo	transpose
+yoaziji			要自己	typo	transpose
+doaxianzai			到现在	typo	transpose
+niagnma			你干嘛	typo	transpose
+taoyanin			讨厌你	typo	transpose
+huigoasu			会告诉	typo	transpose
+nameukai			那么快	typo	transpose
+haociha			好吃啊	typo	transpose
+niugla			尼古拉	typo	transpose
+woshouni			我说你	typo	transpose
+sichunasheng			四川省	typo	transpose
+goadingle			搞定了	typo	transpose
+niewisha			你为啥	typo	transpose
+zhenhoakan			真好看	typo	transpose
+buchulzi			不出来	typo	adjacent
+suoyuni			所以你	typo	adjacent
+sgixiongya			是匈牙	typo	adjacent
+robgyia			容易啊	typo	adjacent
+nubuyao			你不要	typo	adjacent
+guolaiee			过来的	typo	adjacent
+nkhaizai			你还在	typo	adjacent
+jieshulr			结束了	typo	adjacent
+jieoucing			解耦性	typo	adjacent
+yidioian			异地恋	typo	adjacent
+nihaiyiu			你还有	typo	adjacent
+haoxinky			好辛苦	typo	adjacent
+zhegeco			这个词	typo	adjacent
+keliso			克里斯	typo	adjacent
+zhangfanqu			张单曲	typo	adjacent
+zjegeren			这个人	typo	adjacent
+xiawekyi			夏威夷	typo	adjacent
+yiheshi			一个是	typo	adjacent
+wodouneiyou			我都没有	typo	adjacent
+zijiq			自己啊	typo	adjacent
+wunaer			去哪儿	typo	adjacent
+shihoufe			时候的	typo	adjacent
+xiangwenyixka			想问一下	typo	adjacent
+joangxisheng			江西省	typo	adjacent
+guofenoe			过分了	typo	adjacent
+kexueja			科学家	typo	missing
+shiqinia			十七年	typo	missing
+bushzai			不是在	typo	missing
+yehokan			也好看	typo	missing
+hiyouren			还有人	typo	missing
+woshebian			我身边	typo	missing
+yihoyao			以后要	typo	missing
+musili			穆斯林	typo	missing
+zidaota			知道他	typo	missing
+shuangynpi			双眼皮	typo	missing
+jiujude			就觉得	typo	missing
+renmnbi			人民币	typo	missing
+zhayixia			找一下	typo	missing
+kexuyuan			科学院	typo	missing
+yigesi			一个是	typo	missing
+jibuneng			就不能	typo	missing
+yekenng			也可能	typo	missing
+meigere			每个人	typo	missing
+qingrenji			情人节	typo	missing
+jianzushi			建筑师	typo	missing
+zzaixuexiao			在学校	typo	extra
+yiinweini			因为你	typo	extra
+wenyiixia			问一下	typo	extra
+quchjifan			去吃饭	typo	extra
+woritagbe			我日他哥	typo	extra
+malatangt			麻辣烫	typo	extra
+mioshuzhang			秘书长	typo	extra
+tyiyuchang			体育场	typo	extra
+yizhijuedew			一直觉得	typo	extra
+zhememjei			这么美	typo	extra
+ganjuezijmi			感觉自己	typo	extra
+haioshiting			还是挺	typo	extra
+diiangezan			点个赞	typo	extra
+shentiihao			身体好	typo	extra
+douyyijing			都已经	typo	extra
+buyinmggai			不应该	typo	extra
+buugaoxing			不高兴	typo	extra
+shiwunianm			十五年	typo	extra
+haodduoren			好多人	typo	extra
+haoqilaik			好起来	typo	extra
+ilhhaia			厉害啊	typo	multi
+rejuiashi			人家是	typo	multi
+womnbanm			我们班	typo	multi
+shanghidse			上海的	typo	multi
+ahebeiziu			这辈子	typo	multi
+huialigwi			回来给	typo	multi
+woxiiaoshihouj			我小时候	typo	multi
+hzixuyaoo			还需要	typo	multi
+jianbgsuseng			江苏省	typo	multi
+yuaokaixn			要开心	typo	multi
+hiashioxiang			还是想	typo	multi
+yniweiweo			因为我	typo	multi
+wopbuguna			我不管	typo	multi
+nayasngdd			那样的	typo	multi
+haitoufen			还有人	typo	multi
+wobiahidao			我不知道	typo	multi
+sshizhehang			是这样	typo	multi
+naayesho			那也是	typo	multi
+inzuijn			你最近	typo	multi
+yunnaseng			云南省	typo	multi
+jnitianwomenquchiofan			今天我们去吃饭	typo	phrase
+wojihtianqchifan			我今天去吃饭	typo	phrase
+inhaomazuijimnang			你好吗最近忙	typo	phrase
+wozhengzaiafiaruanjian			我正在开发软件	typo	phrase
+mingtantinqizenmeyang			明天天气怎么样	typo	phrase
+qingwenzhergedushaoqian			请问这个多少钱	typo	phrase
+woxiangdinngyixhangjipiao			我想订一张机票	typo	phrase
+zhomoyiqiqupaxhan			周末一起去爬山	typo	phrase
+zhegeongennghaimeizuowan			这个功能还没做完	typo	phrase
+mafannibangwokanyixoz			麻烦你帮我看一下	typo	phrase
+ta	我哥哥在北京工作，	每天都很忙	他	context	
+ta	我妹妹今年上大学了，	学的是医学	她	context	
+ta	那只小猫很可爱，	总是喜欢睡觉	它	context	
+ta	小王是我的同事，	昨天请假了	他	context	
+ta	我女朋友喜欢画画，	画得很好	她	context	
+ta	我的狗叫小黑，	今年三岁了	它	context	
+de	他跑	很快	得	context	
+de	她高兴	跳了起来	地	context	
+de	这是我	书	的	context	
+de	慢慢	走过去	地	context	
+de	他说	很清楚	得	context	
+de	红色	衣服很好看	的	context	
+de	你做	太好了	得	context	
+de	认真	完成作业	地	context	
+zai	我现在	北京工作	在	context	
+zai	明天	来一次	再	context	
+zai	请你	说一遍	再	context	
+zai	书放	桌子上	在	context	
+zai	他住	上海	在	context	
+zai	等一会	走吧	再	context	
+zuo	他在家里	饭	做	context	
+zuo	这是他的	品	作	context	
+zuo	我今天要	作业	做	context	
+zuo	我喜欢写	文	作	context	
+zuo	请	下	坐	context	
+zuo	他	在椅子上	坐	context	
+yi	我	经吃过了	已	context	
+yi	可	后再说	以	context	
+yi	他	经走了	已	context	
+yi	你可	试试	以	context	
+xiang	大	是陆地上最大的动物	象	context	
+xiang	他长得很	他爸爸	像	context	
+xiang	好	要下雨了	像	context	
+na	请	一下那本书	拿	context	
+na	你要去	里	哪	context	
+na	我喜欢	个红色的	那	context	
+he	我	你一起去	和	context	
+he	请	点水	喝	context	
+he	这条	很宽	河	context	
+zhong	他是	国人	中	context	
+kan	我	到他了	看	context	
+yinwei	比赛取消了，	下雨	因为	context	
+jixu	我们	讨论吧	继续	context	
+jixu	灾区	物资	急需	context	
+shuiguo	他昨晚	了头	睡过	context	
+tongzhi	各位	们好	同志	context	
+zhizuo	她在	一件衣服	制作	context	
+zuoye	我今天的	还没写完	作业	context	
+yiqi	我们	去看电影吧	一起	context	
+yiqi	实验室里的	很贵	仪器	context	
+shiqing	这件	我知道了	事情	context	
+shijian	现在的	是三点	时间	context	
+shijian	昨天发生的	引起了关注	事件	context	
+quanli	公民有	选举	权利	context	
+quanli	他掌握着	很大	权力	context	
+zhidao	我不	他在哪	知道	context	
+zhidao	老师给我们	作业	指导	context	
+yiyi	这件事很有		意义	context	
+yiyi	他对这个	提出了	异议	context	
+biaoyan	她在舞台上的	很精彩	表演	context	
+zhongkouwei			重口味	clean	
+yujiaxue			雨夹雪	clean	
+nenggaosuwo			能告诉我	clean	
+nvhaizhi			女孩纸	clean	
+zhenzhengde			真正的	clean	
+disijie			第四届	clean	
+keyile			可以了	clean	
+tingqilai			听起来	clean	
+womeikan			我没看	clean	
+wozuowan			我昨晚	clean	
+zenmejiu			怎么就	clean	
+youmuyou			有木有	clean	
+haowande			好玩的	clean	
+saipulu			塞浦路	clean	
+buhuilai			不回来	clean	
+chongqingshi			重庆市	clean	
+disanqi			第三期	clean	
+baoshoupai			保守派	clean	
+makesi			马克思	clean	
+jiaoduwenti			角度问题	clean	
+chubanshe			出版社	clean	
+xianshi			西安市	clean	
+bowuyuan			博物院	clean	
+tianxiezuo			天蝎座	clean	
+gangganghao			刚刚好	clean	
+meishide			没事的	clean	
+wanshouji			玩手机	clean	
+bugaosu			不告诉	clean	
+wojieshao			我介绍	clean	
+shifeichang			是非常	clean	
+shibushi			时不时	clean	
+motiandalou			摩天大楼	clean	
+zuihouyige			最后一个	clean	
+doubugei			都不给	clean	
+ailisi			爱丽丝	clean	
+jidele			记得了	clean	
+haishimeiyou			还是没有	clean	
+ergaidi			而该地	clean	
+yaoqingsai			邀请赛	clean	
+kanzhehao			看着好	clean	
+keyiyong			可以用	clean	
+benlaixiang			本来想	clean	
+cunzaide			存在的	clean	
+fenbianlv			分辨率	clean	
+yizhizai			一直在	clean	
+quankeyisheng			全科医生	clean	
+woshizhen			我是真	clean	
+qushenzhen			去深圳	clean	
+nifaxian			你发现	clean	
+zonghezheng			综合症	clean	
+datiqin			大提琴	clean	
+lunruike			伦瑞克	clean	
+gushide			故事的	clean	
+zhugeliang			诸葛亮	clean	
+woxiangqu			我想去	clean	
+xiangshenme			想什么	clean	
+jiushiwode			就是我的	clean	
+quyiyuan			去医院	clean	
+sijiruchun			四季如春	clean	
+shanxisheng			山西省	clean	
+xiuxia			休息啊	clean	
+shiyidian			十一点	clean	
+yilupingan			一路平安	clean	
+zenmekeneng			怎么可能	clean	
+jiushizhege			就是这个	clean	
+buliwo			不理我	clean	
+sangeyue			三个月	clean	
+xiexienin			谢谢您	clean	
+jiejieni			姐姐你	clean	
+yizhidoushi			一直都是	clean	
+suomusheng			索姆省	clean	
+nongshalei			弄啥类	clean	
+weiersi			威尔斯	clean	
+zaixinli			在心里	clean	
+yemeiyong			也没用	clean	
+zaiyiqide			在一起的	clean	
+shunshizhen			顺时针	clean	
+ximina			西米纳	clean	
+ruguoshi			如果是	clean	
+wohaoxiang			我好像	clean	
+tuokouxiu			脱口秀	clean	
+xiwanzao			洗完澡	clean	
+aisaiebi			埃塞俄比	clean	
+ninali			你那里	clean	
+zonglingshi			总领事	clean	
+mingguwu			名古屋	clean	
+keaia			可爱啊	clean	
+yeshio			也是哦	clean	
+jieernuo			捷尔诺	clean	
+xiaolongxia			小龙虾	clean	
+kaixinjiu			开心就	clean	
+kanbieren			看别人	clean	
+wuxuke			戊戌科	clean	
+nenggeiwo			能给我	clean	
+kandaowo			看到我	clean	
+jiaoyubu			教育部	clean	
+ziyuzile			自娱自乐	clean	
+diyici			第一次	clean	
+chiwufan			吃午饭	clean	
+zongjingli			总经理	clean	
+zizhixian			自治县	clean	
+wenniya			文尼亚	clean	
+shinali			是哪里	clean	
+kebukeyi			可不可以	clean	
+danbaizhi			蛋白质	clean	
+niyezai			你也在	clean	
+shejiaomeiti			社交媒体	clean	
+huifude			回复的	clean	
+xiwangni			希望你	clean	
+luowenniya			洛文尼亚	clean	
+guangshengsiben			广胜寺本	clean	
+fengkuangda			疯狂打	clean	
+xinmeiti			新媒体	clean	
+buchumen			不出门	clean	
+jiekesen			杰克森	clean	
+youshijian			有时间	clean	
+huanyige			换一个	clean	
+yuanwailang			员外郎	clean	
+lusenbao			卢森堡	clean	
+xianshizhuyi			现实主义	clean	
+shenmeyisi			什么意思	clean	
+woyiwei			我以为	clean	
+haokanle			好看了	clean	
+nigula			尼古拉	clean	
+xihuanni			喜欢你	clean	
+manzhouguo			满洲国	clean	
+xiangnide			想你的	clean	
+yaoname			要那么	clean	
+jiushige			就是个	clean	
+zaishangban			在上班	clean	
+huzhiming			胡志明	clean	
+zuotianwanshang			昨天晚上	clean	
+kanyangzi			看样子	clean	
+hepengyou			和朋友	clean	
+nahaishi			那还是	clean	
+zhongwuchi			中午吃	clean	
+qisile			气死了	clean	
+shijintian			是今天	clean	
+tuantisai			团体赛	clean	
+dashiguan			大使馆	clean	
+meiyouhao			没有好	clean	
+jigengwan			基庚烷	clean	
+shuolesuan			说了算	clean	
+leneifeier			勒内费尔	clean	
+xiangshuoni			想说你	clean	
+biyezhao			毕业照	clean	
+daqumoze			大区摩泽	clean	
+shiqishidai			石器时代	clean	
+ershisi			二十四	clean	
+binhaixia			滨海夏	clean	
+yingyongchengxu			应用程序	clean	
+genghaode			更好的	clean	
+aiqiyi			爱奇艺	clean	
+haoxinren			好心人	clean	
+gexingqi			个星期	clean	
+dasuanqu			打算去	clean	
+meiyoushuo			没有说	clean	
+guobuqu			过不去	clean	
+pengyoushuo			朋友说	clean	
+resile			热死了	clean	
+yeshizheyang			也是这样	clean	
+zhebushi			这不是	clean	
+yebuzhidao			也不知道	clean	
+yangguangyu			杨光宇	clean	
+duyiwuer			独一无二	clean	
+jiuziji			就自己	clean	
+niaini			你爱你	clean	
+ainide			爱你的	clean	
+haozhuyi			好主意	clean	
+nirenshi			你认识	clean	
+shengtaihuanjing			生态环境	clean	
+shitamen			是他们	clean	
+shangbuqu			上不去	clean	
+yijingbushi			已经不是	clean	
+sanshiwunian			三十五年	clean	
+yaokaishi			要开始	clean	
+yaobuwo			要不我	clean	
+lilunshang			理论上	clean	
+zhixihuan			只喜欢	clean	
+meiyudao			没遇到	clean	
+keyilijie			可以理解	clean	
+juedeta			觉得他	clean	
+yiqide			一起的	clean	
+buyongdanxin			不用担心	clean	
+xinniankuaile			新年快乐	clean	
+diandongji			电动机	clean	
+haohaokan			好好看	clean	
+shipengyou			是朋友	clean	
+laoshiren			老实人	clean	
+latuoweiya			拉脱维亚	clean	
+yujianni			遇见你	clean	
+anweini			安慰你	clean	
+haimeine			还没呢	clean	
+yixingxian			宜兴县	clean	
+nizenme			你怎么	clean	
+nanpengyoule			男朋友了	clean	
+nizhunbei			你准备	clean	
+laduzi			拉肚子	clean	
+zhizhengdang			执政党	clean	
+keyishuoshi			可以说是	clean	
+taitannike			泰坦尼克	clean	
+laoyeye			老爷爷	clean	
+bulietani			布列塔尼	clean	
+zuikeai			最可爱	clean	
+budongde			不懂的	clean	
+nixianzai			你现在	clean	
+yizhengtian			一整天	clean	
+jianzhuqun			建筑群	clean	
+laideji			来得及	clean	
+dizhenju			地震局	clean	
+jinchukou			进出口	clean	
+henhaode			很好的	clean	
+buqia			不起啊	clean	
+buguilu			不归路	clean	
+qiansuoweiyou			前所未有	clean	
+zizhiqu			自治区	clean	
+suoyijiu			所以就	clean	
+nashishenme			那是什么	clean	
+dierpi			第二批	clean	
+shenyangshi			沈阳市	clean	
+zuijinde			最近的	clean	
+nigaosu			你告诉	clean	
+weijiniya			维吉尼亚	clean	
+meiyige			每一个	clean	
+keshiwo			可是我	clean	
+zuizhongyao			最重要	clean	
+meikanjian			没看见	clean	
+nihewo			你和我	clean	
+shitaiyin			施泰因	clean	
+woturan			我突然	clean	
+mujizhe			目击者	clean	
+wozhiyou			我只有	clean	
+xingmulu			形目鲈	clean	
+dijiujie			第九届	clean	
+renzenme			人怎么	clean	
+kanzhejiu			看着就	clean	
+woxiangxin			我相信	clean	
+meishiba			没事吧	clean	
+xianjiyong			县即用	clean	
+zhihuiguan			指挥官	clean	
+huashengdunzhou			华盛顿州	clean	
+yaokuaile			要快乐	clean	
+chizhege			吃这个	clean	
+xiaoqilai			笑起来	clean	
+baikequanshu			百科全书	clean	
+qizheme			起这么	clean	
+jiehunde			结婚的	clean	
+yishunjian			一瞬间	clean	
+disanji			第三季	clean	
+ruguoshuo			如果说	clean	
+duanwujie			端午节	clean	
+yunyingshang			运营商	clean	
+yiqilai			一起来	clean	
+shuoqingchu			说清楚	clean	
+gaiyunkeng			该陨坑	clean	
+baolisi			鲍里斯	clean	
+alasi			阿拉斯	clean	
+shuomingshu			说明书	clean	
+xijiesuo			西接索	clean	
+dahuitang			大会堂	clean	
+bukaixin			不开心	clean	
+jihuide			机会的	clean	
+nanzhiniefu			南至涅夫	clean	
+jipigeda			鸡皮疙瘩	clean	
+jiushijuede			就是觉得	clean	
+xiaciwo			下次我	clean	
+qingzhensi			清真寺	clean	
+jiangdaoli			讲道理	clean	
+tailihaile			太厉害了	clean	
+buyunxu			不允许	clean	
+zhipianren			制片人	clean	
+waixingren			外星人	clean	
+zuopengyou			做朋友	clean	
+suoyouren			所有人	clean	
+xianmujidu			羡慕嫉妒	clean	
+wozhendefule			我真的服了	clean	
+shengdanlaoren			圣诞老人	clean	
+zhemejiu			这么久	clean	
+hainianqing			还年轻	clean	
+quwangdaisheng			区旺代省	clean	
+ruoruowen			弱弱问	clean	
+zhangxueliang			张学良	clean	
+kannimen			看你们	clean	
+yantaohui			研讨会	clean	
+laiwuhan			来武汉	clean	
+womensushe			我们宿舍	clean	
+haiyouyige			还有一个	clean	
+jiazhiguan			价值观	clean	
+jiumeiyou			就没有	clean	
+niyige			你一个	clean	
+xingfuo			幸福哦	clean	
+shibixude			是必须的	clean	
+dajiangsai			大奖赛	clean	
+haishiting			还是挺	clean	
+nikeneng			你可能	clean	
+niyeshi			你也是	clean	
+yijingyou			已经有	clean	
+zhileide			之类的	clean	
+jixiangwu			吉祥物	clean	
+tieluju			铁路局	clean	
