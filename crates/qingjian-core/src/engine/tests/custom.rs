@@ -28,6 +28,7 @@ fn custom_positions_survive_normal_candidates_and_cloud() {
             reading: None,
             translation: None,
             aux_code: None,
+            corrected: false,
         }]);
         assert_eq!(layout.candidate(1).unwrap().text, "；");
     }

@@ -3,6 +3,7 @@
 //! 内部全用像素：主题里的点数进来先乘缩放倍数。文字的 y 都指行框顶边，字形在行高里垂直居中。
 
 mod columns;
+mod corrected;
 mod horizontal;
 mod item;
 mod learning;
@@ -277,13 +278,16 @@ impl Renderer {
         word_x += self.draw_text(canvas, &row.text, &style, word_x, top);
         if let Some(code) = &row.code {
             let style = m.annotation_style(m.tone_color(Tone::Code));
-            self.draw_text(
+            word_x += self.draw_text(
                 canvas,
                 code,
                 &style,
                 word_x,
                 top + m.small_offset(text_height),
             );
+        }
+        if row.corrected {
+            self.draw_corrected(canvas, m, word_x, top, text_height);
         }
     }
 

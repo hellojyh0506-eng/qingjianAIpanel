@@ -50,6 +50,17 @@ TSV 解析、查询与生成工具把 `lue` / `nue` 统一成 `lve` / `nve`。
   有「每个音节都完整、末尾不是落单单字母」的变体时残尾变体不参与，免得 `keyyi` 的 可以 被 `ke yi y…` 抢走），
   纠正之间比较时换位减 `TypoCosts::correction_transpose_discount`（1 nat，CLI `--tune correction-transpose=`），与原样比不减；
   2026-09-15 回放 283 词 / 23 句：词首选 89.0%、整句 82.6%，与改前持平（折扣若也用在与原样比，`zhongwne` 会误纠成 中文，整句掉一条）。
+- 多处敲错的长串（`correction/segment_repair.rs`，P3）：整段一处编辑救不回来时按音节逐段修复，每个音节只改一个字母
+  （相邻键替换、相邻换位、多敲删除、漏敲补 `aeiouvywnghr`），另允许 `gonyguan` → `gong yuan` 这种跨音节交界换位；
+  动态规划按 `TypoCosts` 计代价、再加音节冷僻度（`Engine::syllable_rarity`，主词库里该音节最常见单字的词频）做同价排序，
+  `SLACK` 之内的路径都留，总编辑数 ≤ `ceil(len / 6)`，最后敲的那个字母不碰；末尾留残缺音节不花编辑，所以原串 < 10 位时不许带残缺尾巴（`kaifaid` 是英文，不能纠），
+  同样编辑数的完整读法存在时残缺尾巴让路（`chifn` 补成 `chifan`，不是删 f 留个 `n`）。输出的候选按代价排序交给整句转换挑最通顺的；旧的有界两处纠错只在它也没结果时兜底。
+  已知没做：计划里「同一音节内 1 次颠倒 + 1 次别的编辑」（每个音节走法只允许 1 处编辑，颠倒本身已降到与相邻键同级）。
+- 「纠」标记与放置（`Candidate::corrected`，`engine/correcting/placement.rs`）：整串替换的纠正里，只有覆盖整个纠正后拼音的候选标「纠」；
+  词图里靠敲错边读出的整句（原串合法）也标，位置由 `Engine::correction_slot` 定：原串没有覆盖整串的精确候选放第 1 位；有就最多第 2 位，
+  除非每处敲错的 (敲的, 要的) 在个人敲错表里已接受 ≥ 2 次（高把握放第 1 位）；同一串连续两次选回原串（`Learner::record_rejected_correction`，
+  存在选择表里的 `<rejected>` 标记，不改存盘格式）后一律最多第 2 位，选纠正候选清零；摆出纠正候选时回车要原样会记 `record_raw`，以后这个串不再猜。
+  两套渲染都画胶囊（`qingjian-render::renderer::corrected`、Windows GDI `view.rs`）；macOS 只接了数据通路（位图渲染会画，AppKit 原生视图未画）。
 
 `EngineSession` 保存可挂起的组句、标点、历史与学习链，`Engine::swap_session` 在同一个引擎里交换输入状态，共用词库与落盘服务。切换上下文时清除查询及异步预测缓存，并由平台恢复各自私密状态。
 
@@ -167,7 +178,9 @@ Engine 侧在 `engine/rescoring/`：接了打分器就取 Viterbi 前 `RESCORE_P
 - `--predict` 强制开云联想并等结果打印，交互模式下上屏后也联想。
 - `--wubi <码表>` 用形码码表（`词\t编码\t词频` 的 TSV）替代拼音：按键当编码按前缀查表，候选不带音节，上屏吃掉整段编码。
 - `--typing` 逐键计时（性能测试用 release 构建跑，目标每键 10 ms 以内）。
-- `--ai-bench <样本.tsv> --models a,b --rounds 3 [--bench-limit N]` 云端打字测速：用真实接口跑当前的 Intent（长拼音纠错）链路，按模型出 P50 / P95、本地与加 AI 后的 Top1 / Top3、误纠率的 Markdown 表；会产生接口费用，每轮重建 Predictor 避免缓存。样本在 `apps/cli/fixtures/typing_samples.tsv`（typo 120 / clean 300 / context 60，五列 `letters before after expected category` 加备注），typo 与 clean 由同目录 `gen_typing_samples.py` 从基础词库按固定种子生成，context 为手写。
+- `--local-bench <样本.tsv> [--misses N] [--bench-limit N]` 只测本地（不碰网络）：按类别出 Top1 / Top3、首选与期望的字符相似度（最长公共子序列占期望长度）、首选带「纠」的比例、
+  逐样本查询耗时 P50 / P95，`--misses` 列出没排第 1 的样本（clean 里首选被标「纠」的也列，前缀「误纠」）。clean 类的「首选标纠」就是误纠率。
+- `--ai-bench <样本.tsv> --models a,b --rounds 3 [--bench-limit N]` 云端打字测速：用真实接口跑当前的 Intent（长拼音纠错）链路，按模型出 P50 / P95、本地与加 AI 后的 Top1 / Top3、误纠率的 Markdown 表；会产生接口费用，每轮重建 Predictor 避免缓存。样本在 `apps/cli/fixtures/typing_samples.tsv`（typo 120 / clean 300 / context 60，五列 `letters before after expected category` 加备注），typo 与 clean 由同目录 `gen_typing_samples.py` 从基础词库按固定种子生成，context 为手写；`multi`（100 句日常句各 2–3 处隔开的敲错，不碰末两位）由 `gen_multi_samples.py`（pypinyin、固定种子）生成并追加在同一文件里。
 - `--chinese-first` 打开中文优先（`[general] chinese_first = true` 的排法），配合 `--replay` 比两种英文词位置。
 - `--replay <input-log.jsonl>` 回放评测：把日志里每次上屏的键重新喂给引擎，按来源算首选 / 前五命中率、平均名次、不在候选的条数，打印没命中的例子（`--misses N`）；
   只在内存里学习不写文件，加 `--user-dict` 可带上现有学习数据。

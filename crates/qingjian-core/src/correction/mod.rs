@@ -16,6 +16,7 @@ mod costs;
 mod edit;
 pub mod recovery;
 mod result;
+pub mod segment_repair;
 pub mod typo;
 
 pub use costs::TypoCosts;

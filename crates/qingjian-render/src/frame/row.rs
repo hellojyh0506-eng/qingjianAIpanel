@@ -18,6 +18,9 @@ pub struct Row {
 
     /// 来自云联想：词前画一个小云朵，与本地候选区分。
     pub cloud: bool,
+
+    /// 这条是按纠正后的拼音转出来的：词后面画一枚「纠」标记。
+    pub corrected: bool,
 }
 
 impl Row {
@@ -29,6 +32,7 @@ impl Row {
             code: None,
             annotation: Vec::new(),
             cloud: false,
+            corrected: false,
         }
     }
 }

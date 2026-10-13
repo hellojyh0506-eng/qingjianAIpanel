@@ -162,6 +162,7 @@ impl Router {
                             reading: None,
                             translation: None,
                             aux_code: None,
+                            corrected: false,
                         })
                     })
                     .collect();

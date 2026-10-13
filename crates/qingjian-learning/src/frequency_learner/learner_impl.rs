@@ -42,6 +42,26 @@ impl Learner for FrequencyLearner {
         self.record_choice(input, RAW_MARK);
     }
 
+    fn record_rejected_correction(&mut self, input: &str) {
+        self.record_choice(input, REJECTED_MARK);
+    }
+
+    fn rejected_correction_count(&self, input: &str) -> u32 {
+        self.choice_weight(input, REJECTED_MARK)
+    }
+
+    fn clear_rejected_correction(&mut self, input: &str) {
+        let Some(texts) = self.choices.get_mut(input) else {
+            return;
+        };
+        if texts.remove(REJECTED_MARK).is_some() {
+            if texts.is_empty() {
+                self.choices.remove(input);
+            }
+            self.choices_dirty = true;
+        }
+    }
+
     fn unrecord(&mut self, text: &str) {
         if let Some(count) = self.counts.get_mut(text) {
             *count = count.saturating_sub(1);

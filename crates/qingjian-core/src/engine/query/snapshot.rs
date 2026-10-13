@@ -10,6 +10,9 @@ pub struct QuerySnapshot {
     /// 拼写纠错是否生效。
     pub corrected: bool,
 
+    /// 本地把纠正后的候选摆在了前两位时它的文本（原串还在候选里、用户可以选回去的那种纠正）；没有就是 `None`。
+    pub offered: Option<String>,
+
     /// 候选文本按顺序（只留前面一段，够定位选了第几个）。
     pub candidates: Vec<String>,
 

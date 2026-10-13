@@ -189,6 +189,7 @@ pub(super) fn cloud_candidate(text: String) -> Candidate {
         reading: None,
         translation: None,
         aux_code: None,
+        corrected: false,
     }
 }
 

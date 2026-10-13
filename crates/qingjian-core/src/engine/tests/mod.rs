@@ -81,6 +81,21 @@ impl Learner for CountingLearner {
         *self.0.entry(format!("{input}\t<raw>")).or_default() += 1;
     }
 
+    fn record_rejected_correction(&mut self, input: &str) {
+        *self.0.entry(format!("{input}\t<rejected>")).or_default() += 1;
+    }
+
+    fn rejected_correction_count(&self, input: &str) -> u32 {
+        self.0
+            .get(&format!("{input}\t<rejected>"))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn clear_rejected_correction(&mut self, input: &str) {
+        self.0.remove(&format!("{input}\t<rejected>"));
+    }
+
     fn record_typo(&mut self, typed: &str, intended: &str) {
         *self
             .0

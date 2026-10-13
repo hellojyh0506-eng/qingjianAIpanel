@@ -149,6 +149,10 @@ pub struct Args {
     #[arg(long)]
     pub ai_bench: Option<PathBuf>,
 
+    /// 只测本地（不联网）：读样本集，按类别出 Top1 / Top3 与查询耗时；配合 `--misses N` 列出没排第 1 的样本
+    #[arg(long)]
+    pub local_bench: Option<PathBuf>,
+
     /// `--ai-bench` 要比的打字模型，逗号分隔
     #[arg(long, value_delimiter = ',')]
     pub models: Vec<String>,

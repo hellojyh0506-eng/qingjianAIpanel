@@ -84,6 +84,22 @@ impl Learner for MutedLearner {
         self.inner.raw_count(input)
     }
 
+    fn record_rejected_correction(&mut self, input: &str) {
+        if !self.muted() {
+            self.inner.record_rejected_correction(input);
+        }
+    }
+
+    fn rejected_correction_count(&self, input: &str) -> u32 {
+        self.inner.rejected_correction_count(input)
+    }
+
+    fn clear_rejected_correction(&mut self, input: &str) {
+        if !self.muted() {
+            self.inner.clear_rejected_correction(input);
+        }
+    }
+
     fn unrecord(&mut self, text: &str) {
         if !self.muted() {
             self.inner.unrecord(text);

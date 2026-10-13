@@ -347,6 +347,15 @@ impl Engine {
             self.learner.record_raw(&scope);
             // 缓存里还是「要纠」，清掉让下次重算
             *self.correction_cache.borrow_mut() = None;
+        } else if !self.english_mode
+            && self
+                .last_query
+                .borrow()
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.scope == scope && snapshot.offered.is_some())
+        {
+            // 本地摆出了纠正候选而用户回车要原样：同样记下，以后不再猜
+            self.learner.record_raw(&scope);
         }
         let raw = self.raw_preedit().text;
         if raw.is_empty() {

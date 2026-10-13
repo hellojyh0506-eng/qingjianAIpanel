@@ -46,4 +46,8 @@ pub struct Candidate {
     /// 壳按 `[general] aux_code_show` 决定要不要显示。
     #[serde(default)]
     pub aux_code: Option<String>,
+
+    /// 这条是按纠正后的拼音转出来的（用户敲错了，输入法替他改了）；壳在候选后面画一个「纠」标记。
+    #[serde(default)]
+    pub corrected: bool,
 }

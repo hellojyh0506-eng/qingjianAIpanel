@@ -176,6 +176,7 @@ impl Engine {
                 self.whole_scope()
             }
         };
+        self.settle_correction_offer(candidate, consumed);
         self.apply_retraction(&input, &candidate.text);
         self.recording.clear();
         for (typed, intended) in &typos {
@@ -338,6 +339,7 @@ impl Engine {
             reading: None,
             translation: None,
             aux_code: None,
+            corrected: false,
         };
         if !self.knows_word(&candidate)
             && self.learner.choice_weight(&key, &candidate.text) >= AUTO_WORD_THRESHOLD_SAME_BUFFER
@@ -673,6 +675,7 @@ impl Engine {
             reading: None,
             translation: None,
             aux_code: None,
+            corrected: false,
         };
         if self.knows_word(&candidate) {
             return;

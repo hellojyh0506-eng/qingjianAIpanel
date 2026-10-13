@@ -73,7 +73,11 @@ fn typo_edges_in_the_lattice_correct_legal_but_unlikely_pinyin() {
     let query = engine.query().unwrap();
     assert_eq!(query.segmentations[0].joined("'"), "jin'eng");
     assert_eq!(query.candidates.items[0].text, "技能");
-    assert!(query.candidates.items.iter().all(|c| c.text != "近藤"));
+    assert!(!query.candidates.items[0].corrected);
+    // 纠正候选最多排第 2 位，并标「纠」
+    let teng = query.candidates.items.iter().position(|c| c.text == "近藤");
+    assert_eq!(teng, Some(1));
+    assert!(query.candidates.items[1].corrected);
     // 退回原样的路径时原样的整句照出：shude 词图里 是的（shu → shi 相邻键）赢，但 树德 正好拼成 shude，
     // 于是整句退回 属的
     let dictionary = Dictionary::parse(
@@ -85,17 +89,18 @@ fn typo_edges_in_the_lattice_correct_legal_but_unlikely_pinyin() {
     let query = engine.query().unwrap();
     assert_eq!(query.candidates.items[0].text, "属的");
     assert_eq!(query.candidates.items[0].kind, CandidateKind::Sentence);
-    assert!(query.candidates.items.iter().all(|c| c.text != "是的"));
+    assert!(!query.candidates.items[0].corrected);
+    assert_eq!(query.candidates.items[1].text, "是的");
+    assert!(query.candidates.items[1].corrected);
 }
 
 /// 同一长串里多个合法音节各自敲错时，词图可以组合多个低成本纠错边。
 /// `laiga` 按原样是 `lai ga`，在词库的局部证据下应能恢复成 `kai fa`（开发）。
 #[test]
 fn multiple_syllable_typos_can_be_combined_in_one_long_input() {
-    let dictionary = Dictionary::parse(
-        "开发\tkai fa\t900000\n来\tlai\t2000\n开\tkai\t10000\n发\tfa\t10000\n",
-    )
-    .unwrap();
+    let dictionary =
+        Dictionary::parse("开发\tkai fa\t900000\n来\tlai\t2000\n开\tkai\t10000\n发\tfa\t10000\n")
+            .unwrap();
     let mut engine = Engine::new(dictionary);
     engine.set_input("laiga");
     let query = engine.query().unwrap();
@@ -117,18 +122,25 @@ fn bounded_two_edit_correction_recovers_long_unsegmentable_pinyin() {
         "你好吗\tni hao ma\t5000\n你好\tni hao\t9000\n你\tni\t90000\n好\thao\t80000\n吗\tma\t70000\n",
     )
     .unwrap();
-    let mut engine = Engine::new(dictionary)
-        .with_learner(Box::new(CountingLearner(HashMap::new())));
+    let mut engine =
+        Engine::new(dictionary).with_learner(Box::new(CountingLearner(HashMap::new())));
     engine.set_input("nihoomma");
     let query = engine.query().unwrap();
 
     assert_eq!(
-        query.correction.as_ref().map(|correction| correction.corrected.as_str()),
+        query
+            .correction
+            .as_ref()
+            .map(|correction| correction.corrected.as_str()),
         Some("nihaoma")
     );
     assert_eq!(query.candidates.items[0].text, "你好吗");
     assert_eq!(
-        query.marked_segments().iter().map(|segment| (segment.text.clone(), segment.kind)).collect::<Vec<_>>(),
+        query
+            .marked_segments()
+            .iter()
+            .map(|segment| (segment.text.clone(), segment.kind))
+            .collect::<Vec<_>>(),
         [
             ("ni'h".to_owned(), MarkedKind::Typed),
             ("o".to_owned(), MarkedKind::Corrected),
@@ -147,6 +159,37 @@ fn bounded_two_edit_correction_recovers_long_unsegmentable_pinyin() {
 
     // 用户准确输入的合法长拼音不能被多编辑兜底误纠。
     engine.set_input("nihaoma");
+    assert!(engine.query().unwrap().correction.is_none());
+}
+
+/// 一长串里好几处漏字母（切不动）时，分段修复逐处补上，整句转换挑出通顺的那条；上屏吃掉整串原始键，每处错都记进个人敲错表。
+#[test]
+fn segment_repair_fixes_several_missing_letters_in_one_long_input() {
+    let dictionary = Dictionary::parse(
+        "今天\tjin tian\t90000\n我们\two men\t90000\n去\tqu\t80000\n去吃饭\tqu chi fan\t90000\n吃饭\tchi fan\t70000\n\
+         吃\tchi\t60000\n饭\tfan\t50000\n",
+    )
+    .unwrap();
+    let mut engine =
+        Engine::new(dictionary).with_learner(Box::new(CountingLearner(HashMap::new())));
+    engine.set_input("jintinwomenqchifn");
+    let query = engine.query().unwrap();
+
+    let correction = query
+        .correction
+        .as_ref()
+        .expect("three missing letters repaired");
+    assert_eq!(correction.corrected, "jintianwomenquchifan");
+    assert_eq!(correction.edit.components().len(), 3);
+    assert_eq!(query.candidates.items[0].text, "今天我们去吃饭");
+
+    let first = query.candidates.items[0].clone();
+    assert_eq!(engine.commit(&first), "今天我们去吃饭");
+    assert!(engine.composition().is_empty());
+    assert_eq!(engine.learner().typo_count("tin", "tian"), 1);
+
+    // 敲对的长拼音不碰
+    engine.set_input("jintianwomenquchifan");
     assert!(engine.query().unwrap().correction.is_none());
 }
 
@@ -395,4 +438,222 @@ fn fuzzy_rules_add_homophones_behind_exact_hits() {
     let all = texts_of(&engine);
     assert_eq!(all[0], "开发");
     assert_eq!(all.iter().filter(|t| *t == "开发").count(), 1);
+}
+
+/// 用来试各类敲错的小词库。
+fn typo_dictionary() -> Dictionary {
+    Dictionary::parse(
+        "你好吗\tni hao ma\t5000\n你好\tni hao\t9000\n你\tni\t90000\n好\thao\t80000\n吗\tma\t70000\n\
+         今天\tjin tian\t90000\n明天\tming tian\t80000\n天气\ttian qi\t60000\n我们\two men\t90000\n\
+         吃饭\tchi fan\t70000\n吃\tchi\t60000\n饭\tfan\t50000\n中文\tzhong wen\t80000\n\
+         输入法\tshu ru fa\t70000\n输入\tshu ru\t80000\n开发\tkai fa\t70000\n开\tkai\t70000\n发\tfa\t60000\n\
+         今\tjin\t50000\n天\ttian\t50000\n我\two\t90000\n们\tmen\t60000\n中\tzhong\t50000\n文\twen\t50000\n\
+         学校\txue xiao\t80000\n学习\txue xi\t80000\n中国\tzhong guo\t90000\n人民\tren min\t80000\n\
+         工作\tgong zuo\t80000\n",
+    )
+    .unwrap()
+}
+
+/// 每一类敲错各给几条典型例子：本地都能纠回来，纠正出来的整串候选排第一并标「纠」。
+#[test]
+fn typical_typos_of_each_kind_are_corrected_and_marked() {
+    let cases: &[(&str, &str, &str, &str)] = &[
+        ("换错相邻键", "nihooma", "nihaoma", "你好吗"),
+        ("换错相邻键", "wpmen", "women", "我们"),
+        ("换错相邻键", "jintiqn", "jintian", "今天"),
+        ("多敲", "wommen", "women", "我们"),
+        ("多敲", "zhonggwen", "zhongwen", "中文"),
+        ("多敲", "rennmin", "renmin", "人民"),
+        ("漏敲", "zhonwen", "zhongwen", "中文"),
+        ("漏敲", "gonzuo", "gongzuo", "工作"),
+        ("漏敲", "chifn", "chifan", "吃饭"),
+        ("颠倒", "mingtain", "mingtian", "明天"),
+        ("颠倒", "zhognwen", "zhongwen", "中文"),
+        ("颠倒", "xuexaio", "xuexiao", "学校"),
+        ("多处", "zhonwenshuruaf", "zhongwenshurufa", "中文输入法"),
+        ("多处", "xuexioagonzuo", "xuexiaogongzuo", "学校工作"),
+        (
+            "多处",
+            "jintinwomenchifn",
+            "jintianwomenchifan",
+            "今天我们吃饭",
+        ),
+    ];
+    let mut engine = Engine::new(typo_dictionary());
+    for (kind, typed, corrected, text) in cases {
+        engine.set_input(typed);
+        let query = engine.query().unwrap();
+        let correction = query
+            .correction
+            .as_ref()
+            .unwrap_or_else(|| panic!("{kind} {typed} 没有纠正"));
+        assert_eq!(correction.corrected, *corrected, "{kind} {typed}");
+        let first = &query.candidates.items[0];
+        assert_eq!(first.text, *text, "{kind} {typed}");
+        assert!(first.corrected, "{kind} {typed} 首选没标「纠」");
+    }
+}
+
+/// 敲对的拼音不纠、不标「纠」：误纠是比漏纠更伤人的错。
+#[test]
+fn correct_input_is_never_corrected_or_marked() {
+    let mut engine = Engine::new(typo_dictionary());
+    for typed in [
+        "nihao",
+        "nihaoma",
+        "jintian",
+        "mingtian",
+        "xuexiao",
+        "zhongwen",
+        "zhongwenshurufa",
+        "womenchifan",
+        "gongzuo",
+        "kaifa",
+        "renmin",
+        "jintianwomenchif",
+    ] {
+        engine.set_input(typed);
+        let query = engine.query().unwrap();
+        assert!(query.correction.is_none(), "{typed} 被纠了");
+        assert!(
+            query.candidates.items.iter().all(|c| !c.corrected),
+            "{typed} 有候选标了「纠」"
+        );
+    }
+}
+
+/// 整串替换的纠正里，只盖住前半截的词（`你好` 对 `nihooma`）不标「纠」：标记只给真正覆盖整串的那条。
+#[test]
+fn only_candidates_covering_the_whole_corrected_string_are_marked() {
+    let mut engine = Engine::new(typo_dictionary());
+    engine.set_input("nihooma");
+    let query = engine.query().unwrap();
+    let marked: Vec<&str> = query
+        .candidates
+        .items
+        .iter()
+        .filter(|c| c.corrected)
+        .map(|c| c.text.as_str())
+        .collect();
+    assert_eq!(marked, ["你好吗"]);
+    assert!(
+        query
+            .candidates
+            .items
+            .iter()
+            .any(|c| c.text == "你好" && !c.corrected)
+    );
+}
+
+/// 原串没有覆盖整串的精确候选：纠正候选放第 1 位；原串合法且有精确候选：纠正候选最多第 2 位。
+/// 个人敲错表里同一对 (敲的, 要的) 接受过两次以上算高把握，放回第 1 位。
+#[test]
+fn correction_slot_follows_how_plausible_the_original_is() {
+    // 没有 meiganxi 的原样候选：没关系 靠敲错边读出，放第 1 位
+    let dictionary = Dictionary::parse(
+        "没关系\tmei guan xi\t800000\n关系\tguan xi\t500000\n没\tmei\t900000\n干\tgan\t200000\n\
+         洗\txi\t100000\n美感\tmei gan\t300000\n",
+    )
+    .unwrap();
+    let mut engine = Engine::new(dictionary);
+    engine.set_input("meiganxi");
+    let query = engine.query().unwrap();
+    assert_eq!(query.candidates.items[0].text, "没关系");
+    assert!(query.candidates.items[0].corrected);
+
+    // jineng 原样有 技能：近藤 最多第 2 位
+    let dictionary = Dictionary::parse(
+        "技能\tji neng\t300000\n近藤\tjin teng\t900000\n近\tjin\t500000\n机\tji\t400000\n能\tneng\t600000\n",
+    )
+    .unwrap();
+    let mut engine =
+        Engine::new(dictionary).with_learner(Box::new(CountingLearner(HashMap::new())));
+    engine.set_input("jineng");
+    let query = engine.query().unwrap();
+    assert_eq!(query.candidates.items[0].text, "技能");
+    assert_eq!(query.candidates.items[1].text, "近藤");
+    assert!(query.candidates.items[1].corrected);
+
+    // 同一对敲错被接受两次：高把握，纠正放第 1 位，原样退到第 2
+    engine.learner_mut().record_typo("eng", "teng");
+    engine.set_input("jineng");
+    assert_eq!(engine.query().unwrap().candidates.items[0].text, "技能");
+    engine.learner_mut().record_typo("eng", "teng");
+    engine.set_input("jineng");
+    let query = engine.query().unwrap();
+    assert_eq!(query.candidates.items[0].text, "近藤");
+    assert!(query.candidates.items[0].corrected);
+    assert_eq!(query.candidates.items[1].text, "技能");
+}
+
+/// 学习闭环：纠正放第 1 位却被选回原串，连续两次后不再自动放第 1 位；选了纠正候选则清零；回车原样上屏过的串不再纠。
+#[test]
+fn rejecting_the_correction_twice_demotes_it_and_enter_stops_it() {
+    let dictionary = Dictionary::parse(
+        "技能\tji neng\t300000\n近藤\tjin teng\t900000\n近\tjin\t500000\n机\tji\t400000\n能\tneng\t600000\n",
+    )
+    .unwrap();
+    let mut engine =
+        Engine::new(dictionary).with_learner(Box::new(CountingLearner(HashMap::new())));
+    engine.learner_mut().record_typo("eng", "teng");
+    engine.learner_mut().record_typo("eng", "teng");
+    let pick = |engine: &mut Engine, text: &str| {
+        engine.set_input("jineng");
+        let item = engine
+            .query()
+            .unwrap()
+            .candidates
+            .items
+            .into_iter()
+            .find(|c| c.text == text)
+            .unwrap();
+        engine.commit(&item);
+    };
+    engine.set_input("jineng");
+    assert_eq!(engine.query().unwrap().candidates.items[0].text, "近藤");
+    // 第一次选回原串：还放第 1 位
+    pick(&mut engine, "技能");
+    assert_eq!(engine.learner().rejected_correction_count("jineng"), 1);
+    engine.set_input("jineng");
+    assert_eq!(engine.query().unwrap().candidates.items[0].text, "近藤");
+    // 选纠正候选：清零
+    pick(&mut engine, "近藤");
+    assert_eq!(engine.learner().rejected_correction_count("jineng"), 0);
+    // 连续两次选回原串：不再放第 1 位
+    pick(&mut engine, "技能");
+    pick(&mut engine, "技能");
+    assert_eq!(engine.learner().rejected_correction_count("jineng"), 2);
+    engine.set_input("jineng");
+    let query = engine.query().unwrap();
+    assert_eq!(query.candidates.items[0].text, "技能");
+    assert_eq!(query.candidates.items[1].text, "近藤");
+    // 只上屏前半截不算表态
+    engine.set_input("jineng");
+    let ji = engine
+        .query()
+        .unwrap()
+        .candidates
+        .items
+        .into_iter()
+        .find(|c| c.text == "机")
+        .unwrap();
+    engine.commit(&ji);
+    assert_eq!(engine.learner().rejected_correction_count("jineng"), 2);
+    engine.clear();
+
+    // 摆出了纠正候选而用户回车要原样：以后这个串不再猜（词图里也不再加敲错边）
+    let dictionary = Dictionary::parse(
+        "没关系\tmei guan xi\t800000\n关系\tguan xi\t500000\n没\tmei\t900000\n干\tgan\t200000\n\
+         洗\txi\t100000\n美感\tmei gan\t300000\n",
+    )
+    .unwrap();
+    let mut engine =
+        Engine::new(dictionary).with_learner(Box::new(CountingLearner(HashMap::new())));
+    engine.set_input("meiganxi");
+    assert!(engine.query().unwrap().candidates.items[0].corrected);
+    assert_eq!(engine.take_raw(), "meiganxi");
+    engine.set_input("meiganxi");
+    let query = engine.query().unwrap();
+    assert!(query.candidates.items.iter().all(|c| !c.corrected));
+    assert_ne!(query.candidates.items[0].text, "没关系");
 }

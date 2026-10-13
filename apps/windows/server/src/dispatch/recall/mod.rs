@@ -228,6 +228,7 @@ impl Router {
                     reading: None,
                     translation: None,
                     aux_code: None,
+                    corrected: false,
                 }],
             },
             highlight: 0,

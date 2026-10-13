@@ -16,6 +16,13 @@ use super::theme::{Theme, rgb};
 /// 云端候选词前的小云朵（macOS 用 SF Symbol `cloud`）。
 const CLOUD_GLYPH: &str = "☁";
 
+/// 纠正出来的候选词后面的小胶囊里的字。
+const CORRECTED_LABEL: &str = "纠";
+
+/// 「纠」胶囊的底色（`#FEF3C7`）与字色（`#B45309`）。
+const CORRECTED_BACKGROUND: COLORREF = rgb(0xFE, 0xF3, 0xC7);
+const CORRECTED_FOREGROUND: COLORREF = rgb(0xB4, 0x53, 0x09);
+
 /// 竖排的列宽与统一行高。
 struct Columns {
     index_width: i32,
@@ -72,7 +79,7 @@ fn horizontal_size(hdc: HDC, data: &RenderData) -> (i32, i32) {
             + index_gap
             + cloud_prefix_width(hdc, theme, row)
             + text.cx
-            + code_width(hdc, theme, row);
+            + suffix_width(hdc, theme, row);
         row_height = row_height.max(text.cy + theme.row_padding * 2);
     }
     width += theme.column_gap * (data.rows.len().saturating_sub(1)) as i32 + highlight_inset * 2;
@@ -305,7 +312,7 @@ fn draw_horizontal(hdc: HDC, data: &RenderData, y: i32, width: i32) {
             + index_gap
             + cloud_prefix_width(hdc, theme, row)
             + text_size.cx
-            + code_width(hdc, theme, row);
+            + suffix_width(hdc, theme, row);
         if i == data.highlight {
             let rect = RECT {
                 left: x - highlight_inset,
@@ -403,7 +410,7 @@ fn columns(hdc: HDC, theme: &Theme, rows: &[Row]) -> Columns {
         columns.index_width = columns.index_width.max(index.cx);
         columns.text_width = columns
             .text_width
-            .max(text.cx + cloud_prefix_width(hdc, theme, row) + code_width(hdc, theme, row));
+            .max(text.cx + cloud_prefix_width(hdc, theme, row) + suffix_width(hdc, theme, row));
         columns.annotation_width = columns.annotation_width.max(annotation);
         columns.row_height = columns.row_height.max(text.cy + theme.row_padding * 2);
     }
@@ -435,7 +442,68 @@ fn code_width(hdc: HDC, theme: &Theme, row: &Row) -> i32 {
         .map_or(0, |code| measure(hdc, theme.annotation_font, code).cx)
 }
 
-/// 画候选词本体，云端词前带小云朵、后面紧跟辅码。返回占用宽度。
+/// 「纠」胶囊的尺寸：字左右各留半个列间距，上下各留 1 点（按 96 DPI 的 8 点列间距换算），与词之间隔半个列间距。
+struct CorrectedBadge {
+    gap: i32,
+    padding_x: i32,
+    padding_y: i32,
+    label_width: i32,
+    label_height: i32,
+}
+
+impl CorrectedBadge {
+    fn measure(hdc: HDC, theme: &Theme) -> Self {
+        let label = measure(hdc, theme.annotation_font, CORRECTED_LABEL);
+        Self {
+            gap: theme.column_gap / 2,
+            padding_x: theme.column_gap / 2,
+            padding_y: (theme.column_gap / 8).max(1),
+            label_width: label.cx,
+            label_height: label.cy,
+        }
+    }
+
+    /// 含前面的间隔。
+    fn width(&self) -> i32 {
+        self.gap + self.padding_x * 2 + self.label_width
+    }
+}
+
+fn corrected_width(hdc: HDC, theme: &Theme, row: &Row) -> i32 {
+    if row.corrected {
+        CorrectedBadge::measure(hdc, theme).width()
+    } else {
+        0
+    }
+}
+
+/// 候选词后面跟的东西（辅码与「纠」胶囊）的总宽度。
+fn suffix_width(hdc: HDC, theme: &Theme, row: &Row) -> i32 {
+    code_width(hdc, theme, row) + corrected_width(hdc, theme, row)
+}
+
+/// 在 `x` 处画「纠」胶囊，字与注释字号同高、与辅码同一条基线；返回占用宽度。
+fn draw_corrected(hdc: HDC, theme: &Theme, x: i32, text_top: i32) -> i32 {
+    let badge = CorrectedBadge::measure(hdc, theme);
+    let rect = RECT {
+        left: x + badge.gap,
+        top: text_top - badge.padding_y,
+        right: x + badge.width(),
+        bottom: text_top + badge.label_height + badge.padding_y,
+    };
+    fill_round_rect(hdc, rect, CORRECTED_BACKGROUND, theme.column_gap / 2);
+    draw_text(
+        hdc,
+        theme.annotation_font,
+        CORRECTED_FOREGROUND,
+        rect.left + badge.padding_x,
+        text_top,
+        CORRECTED_LABEL,
+    );
+    badge.width()
+}
+
+/// 画候选词本体，云端词前带小云朵、后面紧跟辅码与「纠」胶囊。返回占用宽度。
 fn draw_word(hdc: HDC, theme: &Theme, row: &Row, x: i32, baseline: i32, small_offset: i32) -> i32 {
     let prefix = cloud_prefix_width(hdc, theme, row);
     let color = if row.cloud {
@@ -462,6 +530,9 @@ fn draw_word(hdc: HDC, theme: &Theme, row: &Row, x: i32, baseline: i32, small_of
             baseline + small_offset,
             code,
         );
+    }
+    if row.corrected {
+        width += draw_corrected(hdc, theme, x + width, baseline + small_offset);
     }
     width
 }
@@ -731,6 +802,7 @@ mod tests {
                     reading: None,
                     translation: None,
                     aux_code: None,
+                    corrected: false,
                 }],
             },
             learning_mode: mode,

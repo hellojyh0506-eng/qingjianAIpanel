@@ -55,6 +55,67 @@ pub fn render(model: &str, rounds: usize, outcomes: &[Outcome]) -> String {
     out
 }
 
+/// 本地模式下一条样本的结果。
+pub struct LocalRow {
+    pub category: String,
+
+    /// 期望答案在本地候选里的位置（0 起）；不在为 `None`。
+    pub rank: Option<usize>,
+
+    /// 敲键到出候选的耗时。
+    pub elapsed: Duration,
+
+    /// 首选候选带「纠」标记（本地把它当成纠正放在了第 1 位）。
+    pub marked_first: bool,
+
+    /// 首选与期望的字符相似度（0~1）。
+    pub similarity: f64,
+}
+
+/// 本地模式的报告：每个类别一行（条数、Top1、Top3、首选字符相似度、查询耗时 P50 / P95），后面附没排第 1 的样本。
+pub fn render_local(rows: &[LocalRow], missed: &[String]) -> String {
+    let mut by_category: BTreeMap<&str, Vec<&LocalRow>> = BTreeMap::new();
+    for row in rows {
+        by_category.entry(&row.category).or_default().push(row);
+    }
+    let mut out = String::from(
+        "| 类别 | 条数 | 本地 Top1 | 本地 Top3 | 首选字符相似度 | 首选标「纠」 | 查询 P50 | 查询 P95 |\n|---|---|---|---|---|---|---|---|\n",
+    );
+    for (category, group) in &by_category {
+        let top = |n: usize| {
+            group
+                .iter()
+                .filter(|row| row.rank.is_some_and(|r| r < n))
+                .count()
+        };
+        let mut times: Vec<Duration> = group.iter().map(|row| row.elapsed).collect();
+        times.sort();
+        let similarity = group.iter().map(|row| row.similarity).sum::<f64>() / group.len() as f64;
+        let _ = writeln!(
+            out,
+            "| {category} | {} | {} | {} | {:.1}% | {} | {} | {} |",
+            group.len(),
+            percent(top(1), group.len()),
+            percent(top(3), group.len()),
+            similarity * 100.0,
+            percent(
+                group.iter().filter(|row| row.marked_first).count(),
+                group.len()
+            ),
+            millis(percentile(&times, 50)),
+            millis(percentile(&times, 95)),
+        );
+    }
+    if !missed.is_empty() {
+        out.push_str("\n没排第 1 的样本：\n");
+        for line in missed {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 fn hits(rows: &[&Outcome], rank: impl Fn(&Outcome) -> Option<usize>, top: usize) -> usize {
     rows.iter()
         .filter(|row| rank(row).is_some_and(|value| value < top))

@@ -43,5 +43,6 @@ pub(crate) fn from_candidate(position: usize, candidate: &Candidate, show_code: 
         code,
         annotation,
         cloud: candidate.kind == CandidateKind::Cloud,
+        corrected: candidate.corrected,
     }
 }

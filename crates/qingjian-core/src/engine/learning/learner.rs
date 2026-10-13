@@ -30,6 +30,17 @@ pub trait Learner: Send {
         0
     }
 
+    /// 输入串 `input` 下本地把纠正后的候选摆在了前面，用户却选了别的（原样的那条）：记一次拒绝纠正。
+    fn record_rejected_correction(&mut self, _input: &str) {}
+
+    /// `input` 连续被拒绝纠正几次（见 [`Self::record_rejected_correction`]）；接受过一次纠正就清零。
+    fn rejected_correction_count(&self, _input: &str) -> u32 {
+        0
+    }
+
+    /// 用户接受了 `input` 的纠正：连续拒绝的次数清零。
+    fn clear_rejected_correction(&mut self, _input: &str) {}
+
     /// 撤销一次 [`Self::record`]：用户上屏后马上整个删掉重选了别的词，刚才那次不算数。
     fn unrecord(&mut self, _text: &str) {}
 

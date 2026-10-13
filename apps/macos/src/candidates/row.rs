@@ -28,6 +28,9 @@ pub struct Row {
 
     /// 来自云联想：词前画一个小云朵，与本地候选区分。
     pub cloud: bool,
+
+    /// 这条是按纠正后的拼音转出来的：位图渲染在词后面画「纠」标记。
+    pub corrected: bool,
 }
 
 impl Row {
@@ -68,6 +71,7 @@ impl Row {
             },
             annotation,
             cloud: false,
+            corrected: candidate.corrected,
         }
     }
 }

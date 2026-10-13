@@ -8,6 +8,7 @@ fn candidate(text: &str) -> Candidate {
         reading: None,
         translation: None,
         aux_code: None,
+        corrected: false,
     }
 }
 
@@ -67,6 +68,32 @@ fn choices_are_keyed_by_input_and_round_trip() {
 }
 
 #[test]
+fn rejected_corrections_count_persist_and_clear() {
+    let dir = std::env::temp_dir().join("qingjian-rejected-correction-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("user.tsv");
+    let _ = std::fs::remove_file(dir.join(USER_CHOICES_FILE));
+    let mut learner = FrequencyLearner::from_path(&path).unwrap();
+    learner.record_rejected_correction("jineng");
+    learner.record_rejected_correction("jineng");
+    learner.record_rejected_correction("meiganxi");
+    assert_eq!(learner.rejected_correction_count("jineng"), 2);
+    // 拒绝记录与「回车原样」「输入串下的选择」各记各的
+    assert_eq!(learner.raw_count("jineng"), 0);
+    assert_eq!(learner.choice_weight("jineng", "技能"), 0);
+    learner.flush();
+
+    let mut reloaded = FrequencyLearner::from_path(&path).unwrap();
+    assert_eq!(reloaded.rejected_correction_count("jineng"), 2);
+    reloaded.clear_rejected_correction("jineng");
+    assert_eq!(reloaded.rejected_correction_count("jineng"), 0);
+    assert_eq!(reloaded.rejected_correction_count("meiganxi"), 1);
+    // 清一个没记过的串不出事
+    reloaded.clear_rejected_correction("nihao");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn unrecord_reverses_each_kind_of_record() {
     let mut learner = FrequencyLearner::default();
     let candidate = Candidate {
@@ -76,6 +103,7 @@ fn unrecord_reverses_each_kind_of_record() {
         reading: None,
         translation: None,
         aux_code: None,
+        corrected: false,
     };
     learner.record(&candidate);
     learner.record_choice("kaifa", "开放");

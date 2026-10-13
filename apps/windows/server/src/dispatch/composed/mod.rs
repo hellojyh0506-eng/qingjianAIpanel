@@ -1090,6 +1090,7 @@ mod intent_trigger_tests {
             reading: None,
             translation: None,
             aux_code: None,
+            corrected: false,
         });
         assert!(!should_request_intent(Some(&query), "kaifazhe"));
         query.tail = "h".into();

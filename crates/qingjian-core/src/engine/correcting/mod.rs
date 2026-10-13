@@ -2,6 +2,10 @@
 
 use super::*;
 
+mod placement;
+
+pub(super) use placement::Slot;
+
 impl Engine {
     /// 这段作用域生效的拼写纠正（带缓存）：拼音不像话、用户没对它回车原样上屏过、
     /// 且一处编辑后能凑出至少一个两音节词时，取整句转换得分最高的那个纠正。
@@ -120,7 +124,18 @@ impl Engine {
         for candidate in candidates {
             consider(candidate, &mut best);
         }
-        // 只有原串无法形成完整整句、单编辑也没有可用结果时，才尝试有界两处纠错。
+        // 单编辑救不回来（多处敲错的长串）：按音节分段修复，每处错各改一下，再由整句转换挑最通顺的
+        if best.is_none() {
+            for candidate in correction::segment_repair::repair_candidates(
+                scope,
+                &self.typo_costs,
+                &|syllable| self.syllable_rarity(syllable),
+            )
+            {
+                consider(candidate, &mut best);
+            }
+        }
+        // 分段修复也没有结果、原串又无法形成完整整句时，才退回有界两处纠错。
         if best.is_none() && raw_score.is_none() {
             for candidate in correction::two_edit_candidates(scope) {
                 consider(candidate, &mut best);
@@ -139,5 +154,30 @@ impl Engine {
         }
         tracing::debug!(original = %found.original, corrected = %found.corrected, score, raw = raw_score, "拼写纠正");
         Some(found)
+    }
+
+    /// 音节的冷僻度罚分：主词库里它最常见的单字词频越低罚得越多，常用音节为 0。结果按音节缓存。
+    pub(super) fn syllable_rarity(&self, syllable: &str) -> f64 {
+        /// 一个音节最多罚多少：和一次敲错的代价（约 5）比要小得多，只用来在同代价的路径里排个先后。
+        const MAX_PENALTY: f64 = 2.5;
+        /// 每差一个 e 的幂次罚多少。
+        const WEIGHT: f64 = 0.3;
+        /// 常用单字的频率对数（约 e^14），达到它就不罚。
+        const COMMON_LOG_FREQUENCY: f64 = 14.0;
+        if let Some(cached) = self.syllable_rarity_cache.borrow().get(syllable) {
+            return *cached;
+        }
+        let pattern = qingjian_dictionary::SyllablePattern {
+            text: qingjian_dictionary::canonical_syllable(syllable),
+            complete: true,
+        };
+        let hits = self.dictionary.lookup_exact_alt(&[vec![pattern]]);
+        let best = hits.iter().map(|hit| hit.frequency).max().unwrap_or(0);
+        let rarity = ((COMMON_LOG_FREQUENCY - f64::from(best).ln_1p()) * WEIGHT)
+            .clamp(0.0, MAX_PENALTY);
+        self.syllable_rarity_cache
+            .borrow_mut()
+            .insert(syllable.to_owned(), rarity);
+        rarity
     }
 }

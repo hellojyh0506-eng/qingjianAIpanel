@@ -1,5 +1,6 @@
 //! 候选生成：按模式分派查询，整句转换与词级查找，位置展开。
 
+use super::correcting::Slot;
 use super::*;
 
 mod code;
@@ -12,6 +13,25 @@ pub use result::Query;
 pub(super) use result::join_marked;
 pub(super) use result::join_marked_typed;
 pub(super) use snapshot::QuerySnapshot;
+
+/// 整段拼音转出来的整句候选：普通的一条，加按放置规则定位置的纠正候选（可能没有）。
+#[derive(Debug, Default)]
+pub(super) struct Sentences {
+    plain: Option<Candidate>,
+    corrected: Option<(Candidate, Slot)>,
+}
+
+/// 整句转换的结果作为候选算哪一种：路径上不止一个词是整句；整段读成一个词只在靠敲错 / 模糊音读出来、
+/// 且每个音节都读到了时才出（词级查询按原样查不到它）；只读了一部分的不出。
+fn sentence_kind(conversion: &sentence::Conversion, best: &Segmentation) -> Option<CandidateKind> {
+    if conversion.word_count() >= 2 {
+        Some(CandidateKind::Sentence)
+    } else if conversion.altered() && conversion.syllables.len() == best.syllables.len() {
+        Some(CandidateKind::Chinese)
+    } else {
+        None
+    }
+}
 
 impl Engine {
     /// 解析当前缓冲区并生成排好序的候选。**不带译文**，译文由 [`Self::annotate`] 补。
@@ -54,6 +74,13 @@ impl Engine {
             scope: self.composition.scope().to_owned(),
             pinyin,
             corrected: query.correction.is_some(),
+            offered: query
+                .candidates
+                .items
+                .iter()
+                .take(2)
+                .find(|c| c.corrected && query.correction.is_none())
+                .map(|c| c.text.clone()),
             candidates: query
                 .candidates
                 .items
@@ -280,6 +307,8 @@ impl Engine {
               + self.learner.correction_adjustment(before_text, hit.text);
             (choice, log_prob)
         });
+        // 整串替换的纠正生效时词图里不再另加敲错边；用户对这个串回车原样上屏过，也不再猜
+        let typos = correction.is_none() && self.learner.raw_count(scope) == 0;
         // 辅码态：词库候选按码段**反向**过滤（逐个问「有没有以码段开头的码」），无码词直接隐藏；
         // 命中的按「完全匹配码 > 码长降序 > 原词频序」重排（stable sort 保住 rank 排好的原序）。
         // 码段为空（刚敲下触发键）时不过滤，候选与纯拼音态一模一样。
@@ -322,8 +351,8 @@ impl Engine {
                 self.insert_sentence(
                     &mut items,
                     &segmentations,
-                    correction.is_none(),
-                    english_tail.as_ref().filter(|_| correction.is_none()),
+                    typos,
+                    english_tail.as_ref().filter(|_| typos),
                     head_wins,
                 );
                 self.insert_english(&mut items, unlikely);
@@ -332,8 +361,8 @@ impl Engine {
                 self.insert_sentence(
                     &mut items,
                     &segmentations,
-                    correction.is_none(),
-                    english_tail.as_ref().filter(|_| correction.is_none()),
+                    typos,
+                    english_tail.as_ref().filter(|_| typos),
                     head_wins,
                 );
             }
@@ -342,6 +371,13 @@ impl Engine {
             self.insert_emoji(&mut items);
         }
         let rank = start.elapsed();
+        // 整串替换的纠正：覆盖整个纠正后拼音的候选（整句、整段读成的词）标「纠」，只盖住前半截的词不标
+        if let Some(c) = &correction {
+            for item in &mut items {
+                item.corrected = matches!(item.kind, CandidateKind::Chinese | CandidateKind::Sentence)
+                    && item.syllables.concat() == c.corrected;
+            }
+        }
 
         // 按头段算时英文尾段不参与拼音候选，显示上跟在切分后面：`wo'xiang'xue'hao'rust`
         let tail = english_tail
@@ -385,6 +421,7 @@ impl Engine {
                 reading: None,
                 translation: None,
                 aux_code: None,
+                corrected: false,
             });
         }
         Query {
@@ -416,6 +453,7 @@ impl Engine {
             reading: None,
             translation: None,
             aux_code: None,
+            corrected: false,
         }];
         Query {
             segmentations: Vec::new(),
@@ -454,6 +492,7 @@ impl Engine {
             reading: None,
             translation: None,
             aux_code: None,
+            corrected: false,
         })
         .collect();
         self.insert_emoji(&mut items);
@@ -493,6 +532,7 @@ impl Engine {
                         reading: None,
                         translation: None,
                         aux_code: None,
+                        corrected: false,
                     }],
                 },
                 scope.to_owned(),
@@ -523,10 +563,6 @@ impl Engine {
     }
 
     /// 整句候选。没有英文尾段时是整段拼音的转换（[`Self::plain_sentence`]），排在开头的英文候选之后。
-    /// 有英文尾段且英文读法胜出（`head_wins`）时，头段的转换加上那个词排第一（`woxiangxuehaorust` → 我想学好rust），
-    /// 整段也能读成拼音的再把拼音读法的整句放在第二；英文读法输了就不出（`diaoyong` 不出 掉Yong），
-    /// 免得把真正要的候选往后挤。
-    /// `typos` 为假时词图里不加敲错边（整段一处编辑的纠错已经生效，不在纠正后的拼音上再猜第二处）。
     pub(super) fn insert_sentence(
         &self,
         items: &mut Vec<Candidate>,
@@ -547,74 +583,143 @@ impl Engine {
                 }
                 if tail.competes
                     && let Some(full) = first_segmentation(keys)
-                    && let Some(plain) = self.plain_sentence(items, &full, typos)
                 {
+                    let sentences = self.plain_sentence(items, &full, typos);
                     let position = items.len().min(1);
-                    items.insert(position, plain);
+                    Self::place_sentences(items, sentences, position);
                 }
             }
             _ => {
-                if let Some(plain) = self.plain_sentence(items, best, typos) {
-                    let position = leading_english(items);
-                    items.insert(position, plain);
-                }
+                let sentences = self.plain_sentence(items, best, typos);
+                Self::place_sentences(items, sentences, leading_english(items));
             }
+        }
+    }
+
+    /// 把整句候选放进列表：普通整句放在 `base`；纠正出来的整句按放置规则放第 1 位（`base`）或第 2 位（紧跟其后）。
+    fn place_sentences(items: &mut Vec<Candidate>, sentences: Sentences, base: usize) {
+        if let Some(plain) = sentences.plain {
+            items.insert(base.min(items.len()), plain);
+        }
+        if let Some((corrected, slot)) = sentences.corrected {
+            let position = match slot {
+                Slot::First => base,
+                Slot::Second => base + 1,
+            };
+            items.insert(position.min(items.len()), corrected);
         }
     }
 
     /// 整段拼音的整句候选：最优切分至少两个音节、且最优路径不止一个词时才有（空格上屏的就是它）。
     /// 整段本身就是词库里的词时不重复；有音节没转成字的不算句子。
     /// 词级候选里已有同文本同读音的候选时不出（那条留在词级排序给它的位置），同文本不同读音的从 `items` 里去掉。
+    ///
+    /// 路径靠敲错变体读出来的是纠正候选（`corrected`），位置由 [`Engine::correction_slot`] 定：
+    /// 词级候选里有音节正好拼成整段输入的词（原串本身合法）时，普通整句仍按原样读，纠正候选另外给、最多第 2 位。
     pub(super) fn plain_sentence(
         &self,
         items: &mut Vec<Candidate>,
         best: &Segmentation,
         typos: bool,
-    ) -> Option<Candidate> {
+    ) -> Sentences {
+        let mut sentences = Sentences::default();
         if best.syllables.len() < 2 {
-            return None;
+            return sentences;
         }
-        let mut conversion = self.convert_sentence(&best.patterns(), typos)?;
+        let Some(mut conversion) = self.convert_sentence(&best.patterns(), typos) else {
+            return sentences;
+        };
         // 不按原样读的路径（敲错边 / 模糊音）不许压过「敲的拼音本身就是一个词」：`jineng` 按 `jin eng` 切时
-        // 词图里没有 技能，敲错边读出 近藤；`ceshi` 读出 的是。词级候选里有音节正好拼成整段输入的词时退回原样的路径
-        if conversion.altered() {
+        // 词图里没有 技能，敲错边读出 近藤；`ceshi` 读出 的是。词级候选里有音节正好拼成整段输入的词时退回原样的路径，
+        // 读出来的纠正候选另外给，最多排第 2
+        let original_has_exact = conversion.altered() && {
             let letters = best.joined("");
-            let spelled_exactly = items
+            items
                 .iter()
-                .any(|c| c.kind == CandidateKind::Chinese && c.syllables.concat() == letters);
-            if spelled_exactly {
-                conversion = self.convert_sentence(&best.patterns(), false)?;
-            }
+                .any(|c| c.kind == CandidateKind::Chinese && c.syllables.concat() == letters)
+        };
+        if original_has_exact {
+            sentences.corrected = self.corrected_candidate(items, best, &conversion, true);
+            let Some(plain) = self.convert_sentence(&best.patterns(), false) else {
+                return sentences;
+            };
+            conversion = plain;
         }
         if conversion.has_placeholder() {
-            return None;
+            return sentences;
         }
         // 整段本来就是一个词时不出整句；但路径靠敲错变体把整段读成的一个词（`meiganxi` → 没关系）是噪声信道的判断，
-        // 词级查询按原样查不到它，作为普通词候选插到最前。只读了一部分（末尾没打完的音节没算进去）的不插
-        let kind = if conversion.word_count() >= 2 {
-            CandidateKind::Sentence
-        } else if conversion.altered() && conversion.syllables.len() == best.syllables.len() {
-            CandidateKind::Chinese
-        } else {
-            return None;
+        // 词级查询按原样查不到它，作为普通词候选插到最前
+        let Some(kind) = sentence_kind(&conversion, best) else {
+            return sentences;
         };
         // 词级候选里已经有同样的文本：读音也相同就是同一个候选，不重复插、词留在词级排序给它的位置
         //（先是 / 有的 这种整句恰好拼成一个词的，词级排序更可信）；读音不同的是按别的读音对上的词
         //（云端学来的错读音用户词 `我的 wo di` 靠敲错变体对上 `wode`），那条不是这个候选，去掉它，整句以正确读音顶上
         if let Some(index) = items.iter().position(|c| c.text == conversion.text) {
             if items[index].syllables == conversion.syllables {
-                return None;
+                return sentences;
             }
             items.remove(index);
         }
-        Some(Candidate {
+        if conversion.altered() {
+            sentences.corrected = self.corrected_candidate(items, best, &conversion, false);
+            return sentences;
+        }
+        sentences.plain = Some(Candidate {
             text: conversion.text,
             kind,
             syllables: conversion.syllables,
             reading: None,
             translation: None,
             aux_code: None,
-        })
+            corrected: false,
+        });
+        sentences
+    }
+
+    /// 把不按原样读的整句转换成候选并定位置。读法里有敲错变体的标「纠」；差别全是模糊音的是普通候选（放最前，不标）。
+    /// `original_has_exact` 为真时原串已有覆盖整串的精确候选：只给标「纠」的，同文本的不重复给，位置最多第 2。
+    fn corrected_candidate(
+        &self,
+        items: &[Candidate],
+        best: &Segmentation,
+        conversion: &sentence::Conversion,
+        original_has_exact: bool,
+    ) -> Option<(Candidate, Slot)> {
+        if conversion.has_placeholder() {
+            return None;
+        }
+        let kind = sentence_kind(conversion, best)?;
+        let pairs: Vec<(String, String)> = best
+            .syllables
+            .iter()
+            .zip(&conversion.syllables)
+            .filter(|(typed, intended)| {
+                typed.text != **intended && correction::typo::is_variant(&typed.text, intended)
+            })
+            .map(|(typed, intended)| (typed.text.clone(), intended.clone()))
+            .collect();
+        if original_has_exact && (pairs.is_empty() || items.iter().any(|c| c.text == conversion.text)) {
+            return None;
+        }
+        let slot = if pairs.is_empty() {
+            Slot::First
+        } else {
+            self.correction_slot(self.composition.scope(), original_has_exact, &pairs)
+        };
+        Some((
+            Candidate {
+                text: conversion.text.clone(),
+                kind,
+                syllables: conversion.syllables.clone(),
+                reading: None,
+                translation: None,
+                aux_code: None,
+                corrected: !pairs.is_empty(),
+            },
+            slot,
+        ))
     }
 
     /// 跑一次整句转换：主词库 + 用户词（含模糊音与敲错写法，命中的按代价扣分），静态语言模型与个人 n-gram 插值，用户选择次数加分。
@@ -757,6 +862,7 @@ fn chinese_candidate(item: &Scored<'_>, aux_code: Option<&str>) -> Candidate {
         reading: None,
         translation: None,
         aux_code: aux_code.map(str::to_owned),
+        corrected: false,
     }
 }
 

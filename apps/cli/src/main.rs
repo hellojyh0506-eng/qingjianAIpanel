@@ -71,6 +71,11 @@ fn run() -> Result<(), CliError> {
         print!("{report}");
         return Ok(());
     }
+    if let Some(samples) = &args.local_bench {
+        let report = ai_bench::run_local(&mut engine, samples, args.bench_limit, args.misses)?;
+        print!("{report}");
+        return Ok(());
+    }
     if let Some(samples) = &args.ai_bench {
         let config_path = args
             .config

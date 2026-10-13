@@ -41,6 +41,9 @@ const MAX_CHOICE_ENTRIES: usize = 50_000;
 /// 「回车原样上屏过」在选择表里的记法：词那一列写这个标记（尖括号不可能是候选词）。
 const RAW_MARK: &str = "<raw>";
 
+/// 「拒绝纠正」在选择表里的记法：同 [`RAW_MARK`]，不用新的存盘格式；旧版本读到当成一个永远对不上的词。
+const REJECTED_MARK: &str = "<rejected>";
+
 /// 内存中的用户词频表。
 #[derive(Debug, Default)]
 pub struct FrequencyLearner {

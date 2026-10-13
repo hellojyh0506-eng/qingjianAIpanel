@@ -23,6 +23,7 @@ impl CloudWord {
             reading: self.reading,
             translation: None,
             aux_code: None,
+            corrected: false,
         }
     }
 }

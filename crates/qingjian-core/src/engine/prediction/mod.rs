@@ -32,6 +32,8 @@ pub use surrounding_text::SurroundingText;
 
 use super::*;
 
+/// `fast_local_intent_candidate` 接受的最短拼音字母数。
+const MIN_FAST_LOCAL_LETTERS: usize = 4;
 /// 记住最近多少个请求的种类；够覆盖三条通道各自的在飞请求。
 const REQUEST_KIND_HISTORY: usize = 32;
 
@@ -222,7 +224,7 @@ impl Engine {
         }
         let original = self.composition.scope();
         if original.bytes().any(|byte| !byte.is_ascii_lowercase())
-            || !(7..=64).contains(&original.len())
+            || !(MIN_FAST_LOCAL_LETTERS..=64).contains(&original.len())
             || !correction::eligible(original)
         {
             return None;
@@ -240,7 +242,7 @@ impl Engine {
                 }
                 let reading = candidate.syllables.concat();
                 if reading == original
-                    || !(7..=64).contains(&reading.len())
+                    || !(MIN_FAST_LOCAL_LETTERS..=64).contains(&reading.len())
                     || !within_edit_distance(original.as_bytes(), reading.as_bytes(), 1)
                 {
                     return None;

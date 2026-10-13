@@ -92,6 +92,7 @@ pub fn candidates(input: &str, expression: char, now: &Zoned) -> Vec<Candidate> 
             reading: None,
             translation: None,
             aux_code: None,
+            corrected: false,
         })
         .collect()
 }

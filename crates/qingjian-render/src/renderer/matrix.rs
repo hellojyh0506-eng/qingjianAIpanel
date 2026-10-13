@@ -195,7 +195,8 @@ impl Renderer {
             .enumerate()
             .map(|(i, row)| {
                 let column = i % columns;
-                let cloud = if row.cloud { m.cloud_width() } else { 0.0 };
+                let cloud =
+                    if row.cloud { m.cloud_width() } else { 0.0 } + self.corrected_width(row, m);
                 let limit = fixed
                     .as_ref()
                     .map_or(em * MAX_CELL_EMS, |widths| widths[column]);

@@ -88,6 +88,7 @@ fn intent_suggestion_uses_only_typed_letters_and_prefix_context() {
         reading: None,
         translation: None,
         aux_code: None,
+        corrected: false,
     }];
     assert_eq!(
         engine.request_intent_suggestion(Some(surrounding), &hints),
@@ -131,11 +132,47 @@ fn intent_candidate_must_be_a_current_local_candidate_with_the_matching_reading(
         "simple trailing-key typo should have an immediate local suggestion"
     );
     assert_eq!(
-        engine.resolve_intent_candidate("kaifazhe", &developer).as_deref(),
+        engine
+            .resolve_intent_candidate("kaifazhe", &developer)
+            .as_deref(),
         Some(developer.as_str())
     );
-    assert!(engine.resolve_intent_candidate("kaifazhe", "not a local candidate").is_none());
-    assert!(engine.resolve_intent_candidate("woxiangchi", &developer).is_none());
+    assert!(
+        engine
+            .resolve_intent_candidate("kaifazhe", "not a local candidate")
+            .is_none()
+    );
+    assert!(
+        engine
+            .resolve_intent_candidate("woxiangchi", &developer)
+            .is_none()
+    );
+}
+
+#[test]
+fn fast_local_intent_candidate_also_covers_short_inputs_with_one_edit() {
+    let mut engine = engine();
+    engine.set_input("kaifa");
+    let local = engine.query().unwrap().candidates.items.clone();
+    let word: String = [0x5f00, 0x53d1]
+        .into_iter()
+        .map(|code| char::from_u32(code).unwrap())
+        .collect();
+
+    // 5 位、4 位的短串，差一个编辑就够
+    for typed in ["kaifs", "kaif", "kaifaa"] {
+        engine.set_input(typed);
+        assert_eq!(
+            engine.fast_local_intent_candidate(&local).as_deref(),
+            Some(word.as_str()),
+            "{typed}"
+        );
+    }
+    // 差两个编辑、或短于 4 位，都不给
+    engine.set_input("kaxs");
+    assert!(engine.fast_local_intent_candidate(&local).is_none());
+    engine.set_input("kai");
+    assert!(engine.fast_local_intent_candidate(&local).is_none());
 }
 
 #[test]
@@ -175,7 +212,10 @@ fn prediction_request_trims_context_and_only_fires_while_composing() {
     engine.punctuate('.');
     engine.set_input("kaifa");
     let latest = engine.query().unwrap();
-    assert_eq!(engine.request_prediction(None, &latest.candidates.items), Some(3));
+    assert_eq!(
+        engine.request_prediction(None, &latest.candidates.items),
+        Some(3)
+    );
     let request = submitted.borrow()[1].clone();
     assert!(request.before.is_empty());
     assert_eq!(request.kind, PredictionKind::Compose);
@@ -197,12 +237,18 @@ fn abbreviated_input_never_requests_continuation_or_fabricated_words() {
     engine.set_input("zhsh");
     let query = engine.query().unwrap();
     assert_eq!(engine.request_rerank(None, &query.candidates.items), None);
-    assert!(submitted.borrow().is_empty(), "没有足够的本地候选时不要让模型生造词");
+    assert!(
+        submitted.borrow().is_empty(),
+        "没有足够的本地候选时不要让模型生造词"
+    );
 
     // 短简拼 kf 在测试词库里有「开饭 / 咖啡」等多个真实候选，可验证重排请求。
     engine.set_input("kf");
     let query = engine.query().unwrap();
-    assert_eq!(engine.request_rerank(None, &query.candidates.items), Some(2));
+    assert_eq!(
+        engine.request_rerank(None, &query.candidates.items),
+        Some(2)
+    );
     let request = submitted.borrow()[0].clone();
     assert_eq!(request.kind, PredictionKind::Rerank);
     assert_eq!(request.max_items, 0);
@@ -332,6 +378,7 @@ fn cloud_words_tolerate_typos_but_not_unrelated_words() {
         reading: None,
         translation: None,
         aux_code: None,
+        corrected: false,
     };
     assert_eq!(engine.commit(&word), "这个东西吗");
     assert!(engine.composition().is_empty());
@@ -472,6 +519,7 @@ fn committing_a_cloud_word_learns_it_and_it_ranks_first_next_time() {
         reading: None,
         translation: None,
         aux_code: None,
+        corrected: false,
     };
     assert_eq!(engine.commit(&word), "账套");
     assert!(engine.composition().is_empty());
@@ -522,6 +570,7 @@ fn traditional_mode_preserves_original_text_across_queries() {
         reading: None,
         translation: None,
         aux_code: None,
+        corrected: false,
     };
     assert_eq!(engine.commit(&word), "凱發");
     // 检查词库里学到的是简体「凯发」
@@ -539,6 +588,7 @@ fn cloud_words_are_learned_with_the_typed_reading_when_it_fits() {
         reading: None,
         translation: None,
         aux_code: None,
+        corrected: false,
     };
     let has = |engine: &Engine, text: &str| texts_of(engine).iter().any(|t| t == text);
     // 模型把 先 的读音给成了 xia：敲的 kaixian 切得开、每个音节都是那个字的读音，按敲的学

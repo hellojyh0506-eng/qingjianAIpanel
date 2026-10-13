@@ -228,6 +228,9 @@ pub struct Engine {
     /// 上一次算过的拼写纠正：(作用域, 结果)。query 算一次，commit / take_raw 复用，别再跑一遍变体枚举。
     correction_cache: std::cell::RefCell<Option<(String, Option<Correction>)>>,
 
+    /// 音节 → 冷僻度罚分（分段修复用，按主词库算一次）。
+    syllable_rarity_cache: std::cell::RefCell<HashMap<String, f64>>,
+
     /// 整句转换的格子候选缓存：跨按键复用，学习数据一变就清（见 [`Self::forget_span_cache`]）。
     span_cache: std::cell::RefCell<sentence::SpanCache>,
 
@@ -415,6 +418,7 @@ impl Engine {
             typo_costs: TypoCosts::DEFAULT,
             neural_context: RESCORE_CONTEXT_CHARS,
             correction_cache: std::cell::RefCell::new(None),
+            syllable_rarity_cache: std::cell::RefCell::new(HashMap::new()),
             span_cache: std::cell::RefCell::new(sentence::SpanCache::default()),
             recent_commits: Vec::new(),
             logger: input_log::MutedLogger::new(Box::new(NoInputLogger)),

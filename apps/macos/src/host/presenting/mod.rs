@@ -109,6 +109,7 @@ impl Host {
                         text: String::new(),
                         annotation: Vec::new(),
                         cloud: false,
+                        corrected: false,
                     };
                 };
                 let mut row = Row::from_candidate(offset, candidate);
