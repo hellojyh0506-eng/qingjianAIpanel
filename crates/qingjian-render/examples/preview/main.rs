@@ -1,6 +1,9 @@
 //! 离线预览：`cargo run --release -p qingjian-render --example preview -- --out target/render-preview`
 //! 把样例帧按浅 / 深色、竖 / 横排画成 PNG，与各平台原生候选窗截图并排比；`--measure` 只量几段文字的宽度与原生对数；
 //! 末尾列出验收行每个字形落到了哪家字体。不是日常工具，改渲染器时拿来核对。
+//! `--panel kit` 输出面板渲染基础的样式表（token 色板、图标、头像、标签栏、卡片、错误条），不画候选窗。
+
+mod panel_kit;
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -30,6 +33,10 @@ struct Args {
     #[arg(long)]
     no_shadow: bool,
 
+    /// 输出面板预览而不是候选窗：现有 `kit`（样式表）；学习助手与 AI 问答的整页预览随 P8 / P9 的布局补。
+    #[arg(long)]
+    panel: Option<String>,
+
     /// 只量几段文字的宽度（点），不出图；与 AppKit 的 NSAttributedString.size() 对数。
     #[arg(long)]
     measure: bool,
@@ -44,6 +51,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     let args = Args::parse();
     std::fs::create_dir_all(&args.out)?;
+
+    if let Some(name) = args.panel.as_deref() {
+        return panel_kit::run(name, &args.out, args.scale, &args.locale);
+    }
 
     let started = Instant::now();
     let library = FontLibrary::system(&args.locale)?;
