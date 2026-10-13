@@ -301,6 +301,28 @@ fn caret_follows_text_composition_and_newlines() {
 }
 
 #[test]
+fn caret_is_drawn_only_when_asked() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut view = view();
+    view.input = "hello".into();
+    view.cursor = 5;
+    let off = render(&mut renderer, &mut view, None).unwrap();
+    view.show_caret = true;
+    let on = render(&mut renderer, &mut view, None).unwrap();
+    assert_eq!(off.caret, on.caret);
+    let pixel = |frame: &ChatFrame| {
+        let (x, y, h) = frame.caret;
+        let scale = 2.0;
+        let px = ((x + 0.75) * scale) as u32;
+        let py = ((y + h / 2.0) * scale) as u32;
+        frame.frame.pixmap.pixel(px, py)
+    };
+    assert_ne!(pixel(&off), pixel(&on));
+}
+
+#[test]
 fn input_grows_with_lines_and_stops_at_four() {
     let Some(mut renderer) = renderer() else {
         return;

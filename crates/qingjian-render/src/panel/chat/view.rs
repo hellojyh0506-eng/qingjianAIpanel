@@ -58,6 +58,9 @@ pub struct ChatView {
 
     /// 转圈图标的角度（度），由窗口的定时器推进。
     pub spin: f32,
+
+    /// 是否画输入光标：分层窗口里系统光标不显示，由窗口按闪烁节奏切换。
+    pub show_caret: bool,
 }
 
 impl Default for ChatView {
@@ -82,6 +85,7 @@ impl Default for ChatView {
             maximized: false,
             notice: None,
             spin: 0.0,
+            show_caret: false,
         }
     }
 }

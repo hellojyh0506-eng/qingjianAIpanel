@@ -32,4 +32,5 @@ pub use phase::Phase;
 pub use render::render;
 pub use role::Role;
 pub use session_item::SessionItem;
+pub use style::SIDEBAR_WIDTH;
 pub use view::ChatView;

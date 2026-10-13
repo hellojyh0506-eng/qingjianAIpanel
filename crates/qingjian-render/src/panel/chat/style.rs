@@ -4,7 +4,7 @@ use crate::color::Color;
 use crate::panel::{PanelText, tokens};
 
 /// 左侧栏宽度。
-pub(super) const SIDEBAR_WIDTH: f32 = 168.0;
+pub const SIDEBAR_WIDTH: f32 = 168.0;
 
 /// 侧栏标题行、主区顶栏的高度。
 pub(super) const HEADER_HEIGHT: f32 = 32.0;

@@ -22,6 +22,9 @@ const SEND_GAP: f32 = 5.0;
 const TEXT_PAD: f32 = 14.0;
 const TOGGLE: f32 = 26.0;
 
+/// 自绘光标的宽度（点）。
+const CARET_WIDTH: f32 = 1.5;
+
 /// 输入框上下内边距：单行时刚好凑出最小高度。
 const PAD_Y: f32 = (INPUT_MIN_HEIGHT - INPUT_LINE_HEIGHT) / 2.0;
 
@@ -108,6 +111,11 @@ pub(super) fn draw(s: &mut Surface<'_>, view: &ChatView, composer: &Composer) ->
             let x = text_x + s.measure(prefix, &INPUT_TEXT);
             caret = (x, y + 1.0, INPUT_LINE_HEIGHT - 2.0);
         }
+    }
+
+    if view.show_caret {
+        let (x, y, height) = caret;
+        s.fill(Area::new(x, y, CARET_WIDTH, height), 0.75, tokens::TEXT);
     }
 
     let toggle_y = input.bottom() - (INPUT_MIN_HEIGHT - TOGGLE) / 2.0 - TOGGLE;
