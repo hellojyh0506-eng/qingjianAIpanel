@@ -1,4 +1,4 @@
-//! 一段文字怎么画：字号、行高（像素）、颜色、删除线。
+//! 一段文字怎么画：字号、行高（像素）、颜色、字重、删除线、下划线。
 
 use crate::color::Color;
 use crate::theme::FontSpec;
@@ -15,6 +15,9 @@ pub(crate) struct TextStyle {
     pub line_height: f32,
 
     pub color: Color,
+
+    /// 默认字重加粗。
+    pub bold: bool,
 
     /// 画删除线（纠错改掉的拼音）。
     pub strike: bool,
@@ -34,6 +37,7 @@ impl TextStyle {
             points,
             line_height: font.line_height,
             color,
+            bold: false,
             strike: false,
             underline: false,
             gamma,

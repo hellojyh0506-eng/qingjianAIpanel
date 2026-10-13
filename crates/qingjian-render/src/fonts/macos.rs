@@ -34,6 +34,11 @@ pub(super) fn emoji_fonts() -> Vec<PathBuf> {
     ))]
 }
 
+/// 加粗字重的字体文件。SF 与 PingFang 是可变字体 / 多字重集合，常规文件里已含粗体面，这里只补 Helvetica 的粗体兜底。
+pub(super) fn bold_fonts(_locale: &str) -> Vec<PathBuf> {
+    vec![PathBuf::from(format!("{SYSTEM_FONTS}/HelveticaNeue.ttc"))]
+}
+
 /// PingFang.ttc 在系统资产目录里，目录名带哈希，要扫一层找出来；找不到退回 FontServices 里的 UI 版。
 fn pingfang_paths() -> Vec<PathBuf> {
     let mut found = Vec::new();

@@ -21,6 +21,11 @@ impl Color {
         Self { r, g, b, a: 255 }
     }
 
+    /// 不透明的 `0xRRGGBB`，设计 token 直接按十六进制色值写。
+    pub const fn hex(rgb: u32) -> Self {
+        Self::rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
+    }
+
     /// 纯黑 / 纯白带不透明度，系统语义色（label / secondaryLabel…）都是这个形态。
     pub const fn gray(level: u8, alpha: u8) -> Self {
         Self {
@@ -37,6 +42,15 @@ impl Color {
 
     pub(crate) fn to_cosmic(self) -> cosmic_text::Color {
         cosmic_text::Color::rgba(self.r, self.g, self.b, self.a)
+    }
+
+    pub(crate) fn from_cosmic(color: cosmic_text::Color) -> Self {
+        Self {
+            r: color.r(),
+            g: color.g(),
+            b: color.b(),
+            a: color.a(),
+        }
     }
 
     /// 乘上一层覆盖率（字形遮罩的像素值）后的预乘颜色。

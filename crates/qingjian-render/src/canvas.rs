@@ -1,7 +1,8 @@
 //! 位图画布：tiny-skia `Pixmap` 之上的几个填充原语，加字形位图的逐像素 source-over 混合。坐标一律是像素、左上角原点。
 
 use tiny_skia::{
-    BlendMode, FillRule, Paint, Path, PathBuilder, Pixmap, PremultipliedColorU8, Rect, Transform,
+    BlendMode, FillRule, FilterQuality, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap,
+    PixmapPaint, PremultipliedColorU8, Rect, Stroke, Transform,
 };
 
 use crate::color::{Color, mul_u8, premultiply};
@@ -69,6 +70,73 @@ impl Canvas {
             Transform::identity(),
             None,
         );
+    }
+
+    /// 描边路径：圆头圆角，`width` 是路径坐标系里的线宽（经 `transform` 缩放后才是像素）。
+    pub(crate) fn stroke_path(
+        &mut self,
+        path: &Path,
+        width: f32,
+        color: Color,
+        transform: Transform,
+    ) {
+        let stroke = Stroke {
+            width,
+            line_cap: LineCap::Round,
+            line_join: LineJoin::Round,
+            ..Stroke::default()
+        };
+        self.pixmap.stroke_path(
+            path,
+            &paint(color, BlendMode::SourceOver),
+            &stroke,
+            transform,
+            None,
+        );
+    }
+
+    /// 圆角矩形描边，线宽向矩形内侧长（外轮廓与同参数的 `fill_round_rect` 重合）。
+    pub(crate) fn stroke_round_rect(
+        &mut self,
+        rect: Rect,
+        radius: f32,
+        line_width: f32,
+        color: Color,
+    ) {
+        let half = line_width / 2.0;
+        if let Some(path) = round_rect(
+            rect.x() + half,
+            rect.y() + half,
+            rect.width() - line_width,
+            rect.height() - line_width,
+            (radius - half).max(0.0),
+        ) {
+            self.stroke_path(&path, line_width, color, Transform::identity());
+        }
+    }
+
+    /// 把位图缩放到 `width × height` 贴到 `(x, y)`，双三次插值；用于头像这种按 DPI 选图后的微调缩放。
+    pub(crate) fn draw_pixmap_scaled(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        source: &Pixmap,
+    ) {
+        if source.width() == 0 || source.height() == 0 || width <= 0.0 || height <= 0.0 {
+            return;
+        }
+        let transform = Transform::from_translate(x, y).pre_scale(
+            width / source.width() as f32,
+            height / source.height() as f32,
+        );
+        let paint = PixmapPaint {
+            quality: FilterQuality::Bicubic,
+            ..PixmapPaint::default()
+        };
+        self.pixmap
+            .draw_pixmap(0, 0, source.as_ref(), &paint, transform, None);
     }
 
     /// 把另一张位图整张叠上来（左上角对齐到 `(x, y)`）。

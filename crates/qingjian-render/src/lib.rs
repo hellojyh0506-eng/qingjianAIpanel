@@ -4,6 +4,8 @@
 //! 字体不扫系统目录，按平台清单只加载界面字体、中文、日文、emoji 几个文件（[`FontLibrary`]）。
 //! 所有尺寸以「点」为单位写在 [`Theme`] 里，[`Renderer`] 按缩放倍数换成像素；输出是预乘 alpha 的 RGBA 位图。
 //!
+//! `panel` 是学习助手与 AI 问答面板共用的绘制基础（画布、Lucide 图标、头像、点击表、设计 token），用法见其模块文档。
+//!
 //! 设计与验收见 `docs/design/rendering.md`。
 
 mod canvas;
@@ -14,6 +16,7 @@ mod fonts;
 mod frame;
 mod gear;
 mod layout;
+mod panel;
 mod renderer;
 mod shadow;
 mod text;
@@ -32,8 +35,12 @@ pub use frame::{
     RecallAttempt, Register, Row, Sophistication, Tone,
 };
 pub use layout::Layout;
+pub use panel::{
+    Area, Avatar, ColorPair, HitMap, Icon, PanelFrame, PanelRenderer, PanelSurface, PanelText, tokens,
+};
 pub use renderer::{Rendered, RenderedStatus, Renderer, StatusCell};
 pub use shadow::Shadow;
+pub use text::{RichSpan, TextSize};
 pub use theme::{FontSpec, Palette, Theme};
 
 /// 让 `tiny_skia::Pixmap` 的使用方不用再单独依赖 tiny-skia。

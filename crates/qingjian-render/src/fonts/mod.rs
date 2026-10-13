@@ -86,6 +86,7 @@ impl FontLibrary {
         db.set_sans_serif_family(ui_family.clone());
         for path in platform::script_fonts(locale)
             .into_iter()
+            .chain(platform::bold_fonts(locale))
             .chain(platform::emoji_fonts())
         {
             if !load(&mut db, &path) {
