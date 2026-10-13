@@ -177,6 +177,11 @@ core / learning / render / predict / platform / cli 测试全过，Windows serve
 **验收**：`--ai-bench` 本地 + AI Top-1 ≥ 80%、Top-3 ≥ 90%；clean 误纠 ≤ 1%；context Top-1 ≥ 85%；P50 ≤ 700 ms。
 **提交**：`feat(predict): 合并重排与意图纠错为上下文感知的 Resolve 请求`
 
+状态：已完成代码与测试，**验收未全部达标**（2026-10-13，Linux 沙箱）。`PredictionKind::Resolve` + `request_resolve` / `query_reading` / 校验 / 放置 / `apply_resolved`（core）、`resolve/` 解析与提示词（predict，防抖 120 ms，缓存 key 只含 kind / letters / before / after）、Windows Server recompose 改发 Resolve、`--ai-bench` 改测 Resolve；core 369 / predict 52 + 3 / cli 等测试全过，Windows server / tsf / settings 交叉 `cargo check --tests` 通过。本地 `--local-bench` 回归：clean Top1 97.0%、标「纠」0.3%，与 P3 一致。
+**与计划的偏离**：① 选中候选带读音时以候选自己的读音为准、不用模型回的拼音（小模型常把拼音抄错，实测后改的）；② 无上下文、无纠正候选且首选读音恰好等于键入串时视为「本地把握大」不发请求；<4 字母的短串只有带上下文才发；③ `after` 暂时恒为空（P5 才读光标后文）；④ 选了 AI 纠正候选上屏时整段 scope 一起吃掉，不学习敲错对；⑤ 疑似敲错时被动翻译延后到 Resolve 回来再发，避免拿错串翻译。
+**验收数字**（沙箱真实接口，每类 10 条、1 轮，详见 `docs/notes/ai-latency-baseline.md`）：clean 误纠 0 / 10（满足 ≤ 1%）；typo +AI Top1 90%（持平本地）；context Top1 30% → 60%（**未达 85%**）；multi Top1 10%，无有效建议 44–56%（**未达标**，8B / 14B 回的拼音自己就错）；本地 + AI 总体 Top1 ≥ 80% / Top3 ≥ 90% 也未达到。P50 在沙箱约 1.0–1.6 s，但沙箱到接口单次往返就 0.5 s，**「≤ 700 ms」无法在此验证**。校验与放置是可靠的（误纠 0%），缺的是模型质量，**模型选型交给 P6**（要试更强的打字模型）。
+**未验证**：Windows 新增 / 改写的测试只编译、没运行；「纠」标记在 Windows 真机上没看过；Mac 壳没动；真实用户网络下的延迟；`after` 为空时上下文只有光标前文。
+
 ---
 
 ## P5　读取光标后文（约 0.5–1 天，要换 TSF DLL）
