@@ -104,6 +104,7 @@ TSV 解析、查询与生成工具把 `lue` / `nue` 统一成 `lve` / `nve`。
 - 关思考与模型分档（P1）：`thinking.rs` 的 `ThinkingSwitch` 按接口地址决定关思考的写法，智谱发 `thinking: {type: disabled}`，SiliconFlow / 阿里百炼（DashScope）发 `enable_thinking: false`，其余接口只按 `reasoning_effort` 配置走。
   打字类请求（Translate / Compose / Intent / Rerank / Question）在有专用开关的接口上无视配置强制关思考，只有 DeepLearn / Compare 允许思考；流式客户端 `StreamChatClient` 默认也关，`with_thinking(true)` 才放开。
   温度：Intent / Rerank 0.0，Translate / Compose / Question 0.3，DeepLearn / Compare 0.5，流式 0.7。`PredictConfig` 的 `typing_model`（打字链路）与 `panel_model`（学习助手、AI 问答、DeepLearn / Compare）留空都回落到 `model`，用 `typing_model()` / `panel_model()` 取值。
+- 学习助手流式协议（`companion/`，P8）：模型按行输出 JSON，每行一个 `Block`（`header / meaning / tone / usage / example / detail`，`alt`，`scene / question / turn / point`），`BlockParser` 边收边切、容忍代码围栏与半行、校验（句长 ≤ 15 词、高亮短语必须出现在句中、每类限数，超限与不合格的丢弃并计数），`Tab`（语感解析 / 更自然地说 / 真实对话）决定提示词与 `max_tokens`，`Scene` 六个对话场景（雅思是「题目 + 3 句高分回答」）。`consume` 把 `StreamEvent` 流消费成区块（空流算失败），`BlockCache` 是按「中文 | 英文 | 标签 | 场景」存的 200 条 LRU 磁盘缓存（只缓存完整合格的结果），`cloze` 把例句里要学的短语换成 `____`。网络请求不在这里：调用方用 `messages` + `Tab::max_tokens` 交给 `StreamChatClient`（`with_temperature(TEMPERATURE)` = 0.5，面板模型关思考）。
   连接预热：Worker 启动时、以及空闲超过 45 秒后收到第一个请求时，在后台发一个 `max_tokens = 1` 的请求让握手先完成（`ChatClient::warm_up_task`），连接池空闲超时 300 秒。
 - `CloudGlossFiller`：释义兜底（Core `GlossFiller` trait，与 Predictor 分开的线程与通道，攒 1.5 秒 / 8 个词发一次，问过不再问）：
   随包释义表没有的词库词 / 云端词上屏后入队，结果壳每秒 `Engine::poll_glosses` 经 `Translator::learn` 写进 `qingjian-translate::PersonalGlossary`
@@ -176,6 +177,8 @@ Engine 侧在 `engine/rescoring/`：接了打分器就取 Viterbi 前 `RESCORE_P
 `panel/icon/svg_path.rs` 解析（M L H V C S Q T A Z，圆弧转三次贝塞尔）后统一描边（≥16 pt 为 1.75 pt，更小按比例减细、不低于 1.25）。头像 PNG 用 `include_bytes!` 内嵌，
 `Pixmap::decode_png`（tiny-skia 自带，底层就是工作区的 `png`）解码，按目标像素边长选 @1x/@2x/@3x/512 原图，不再做圆形裁切。设计 token 在 `panel/tokens.rs`，与计划 P7 的表一一对应（有单测）。
 `cargo run --release -p qingjian-render --example preview -- --panel kit` 出样式表，`tools/ui-diff/diff.py` 把预览图与 `docs/design/reference/` 的参考图并排 / 叠加。
+
+学习助手面板整页（`panel/companion/`，P8）：`CompanionView`（标签、三个标签各自的内容与 `TabStatus`、场景、滚动、置顶 / 收起 / 已收藏 / 提示）→ `companion::render(renderer, &view, 阴影)` 得 `CompanionFrame { frame, max_scroll, scroll, height }`，点击表值是 `CompanionHit`。窗口 420 × 560 点，标题栏 / 英雄区 / 标签栏 / 底部三按钮固定，只有中间内容区滚动（`PanelSurface::set_clip` 矩形裁剪，点击表也按裁剪过滤）；每个标签一个文件（`tab_nuance / tab_alternatives / tab_dialogue`），加载 / 流式 / 失败 / 空状态在 `states.rs` 与 `status.rs`。预览：`--panel companion-tab0|tab1|tab2|loading|streaming|error|empty|details|menu|minimized|scrolled|notice`。
 
 ## crates/qingjian-update
 
@@ -282,6 +285,8 @@ DLL 不读文件、不查 mtime。`SessionOpened` 只回过协议版本对得上
 `rerank_surrounding()` 现在返回真实 `after`，Resolve 请求带上它；本地整句模型的前文（`set_rescoring_context`）仍只用前文。Surrounding 迟于首键到达时，Server 用新前后文重发 Resolve（以前重发的是旧 Rerank）。
 **没有升 `PROTOCOL_VERSION`（仍是 7）**：新字段是可选的，旧 DLL 不带它按空处理，旧 Server 忽略它；升版本会让 `SessionOpened` 把还没换 DLL 的进程挡在外面，也让「换回旧 DLL 回滚」变成断连。
 兼容用例在 `crates/qingjian-platform/tests/protocol_compat.rs`。部署与回滚见 `docs/notes/tsf-surrounding-after.md`。
+
+学习助手面板（English Assistant，P8）：窗口在 `ui/companion/`——`mod.rs` 是无激活置顶分层窗口（`QingjianCompanionWindow`）与重绘 / 定位 / 转圈与提示定时器，`model.rs` 是纯数据的视图状态转换（区块到达、选标签、选场景、失败重试，有单测），`wndproc.rs` 查 `HitMap` 分派点击（拖动走 `HTCAPTION`、滚轮 36 pt 一格），`placement.rs` 是落点，`tts.rs` 用 SAPI 只选 en-US 语音（没装给提示、不回退英音），`clipboard.rs` 复制。画面全部交给 `qingjian_render::companion`，窗口字体固定用系统字体，暂不跟随 `[general] font`。业务在 `dispatch/companion/`：`CompanionSession` 按需发请求——打开只生成语感解析，出表头后预取「更自然地说」，解析完空闲 2 秒再预取默认场景的对话，场景与标签各自请求、各自缓存，重试绕过缓存；代次 `companion_generation` 对不上的旧流自己停；收藏走 `save_expression`（例句存进备注，FSRS 建卡），练一句把语感解析例句里的高亮短语挖空交给 Drill 窗（`DrillSessionData::cloze_sentence`），没有例句退回整句翻译练习。磁盘缓存 `companion-cache.json` 在用户目录。`UiCommand::Companion*` 与 `CandidateSink::{show_companion, companion_block, finish_companion, fail_companion, companion_notice}` 取代了旧的 Markdown 文本块通道，`DeepLearn` 预测结果不再回填面板。
 
 ## assets
 

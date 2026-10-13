@@ -337,6 +337,11 @@ Tab2（每个场景一次请求）:
 - **发音默认美音（en-US）**：SAPI 只选 en-US 语音，不做英音开关；没装美音语音时给提示，不静默回退英音。
 - **其余按“适合学习、别太繁杂”处理**：语感解析只保留 1 条例句、搭配细节默认折叠；等级胶囊旁的「口语可用 / 写作可用 / 雅思加分」与「中式表达提醒」、紧凑模式视布局余量轻量实现，做不下就在状态行写明省略，不额外加设置项。
 
+状态：代码与单测已完成，**Windows 真机与真实接口都没验证过**（2026-10-13，Linux 沙箱，无 Windows、无 API 密钥）。
+- 完成：① `qingjian-predict::companion`：JSONL 区块协议、解析与校验、提示词、`BlockCache`、`consume`、`cloze`，30 个单测；② `qingjian-render::companion` 整页渲染（标题栏 / 英雄区 / 三标签 / 滚动内容区 / 底部三按钮 / 加载·流式·失败·空状态 / 场景菜单 / 收起 / 提示条），`--panel companion-*` 十二种预览，对着 strict_1/2/3 把布局调到基本重合，render 45 个测试全过；③ Windows：`ui/companion/` 窗口重写（点击表分派、滚轮、拖动并记住位置、置顶、收起、转圈与提示定时器）、SAPI 美音朗读、复制；`dispatch/companion/` 按需流式生成（打开只请求语感解析，出表头预取「更自然地说」，解析完空闲 2 秒预取对话，场景各自请求与缓存，重试绕过缓存，代次对不上的旧流自己停）、收藏进间隔复习（例句存备注）、挖空练习（Drill 窗新增补空样式）；旧 `ui/companion.rs` 与 `dispatch/mod.rs` 里三路 Markdown 请求、`DeepLearn` 回填已删。`cargo check --tests --examples` 的 Windows 目标通过，`model.rs` 的 6 个单测在临时脚手架里跑过（Server crate 自己的测试要在 Windows 上 `cargo test -p qingjian-windows-server` 才会跑）。
+- **与计划的偏离**：① strict_2 / strict_3 参考图里没有底部三按钮（应是截图裁切），保留固定底栏；② logo 用蓝绿圆 + Sparkles 图标代替，头像与图标没有逐像素对齐；③ 面板字体固定用系统字体，暂不跟随 `[general] font`；④ 右键头部菜单（spec_9）没做——头部已有置顶 / 收起 / 关闭三个按钮，弹原生菜单要抢宿主焦点，风险大于收益；⑤ 键盘操作没做（无激活窗口收不到按键）；⑥ 等级旁的「口语可用 / 写作可用 / 雅思加分」标记、「中式表达提醒」、紧凑模式没做（8.7 说好做不下就写明）；⑦ `SwitchAssistantTab` 动作删掉，换成 `CompanionSelectTab / SelectScene / Retry / Save / Practice`；⑧ 本阶段动了 `Cargo.toml`：server 的 `windows` 加 `Win32_Media / _Audio / _Speech`、`Win32_System_Com`，`tokio` 加 `time`。
+- **未验证**：Windows 真机的显示（分层窗口贴图、DPI 缩放、粗体回退字体）、点击命中、拖动后位置记忆、滚轮、无激活不抢焦点、SAPI 是否装有美音（没装只提示「未安装美式英语语音」）、真实接口的首块延迟与 JSONL 合格率（`Qwen/Qwen3-14B` 实际吐的格式可能要调提示词）、磁盘缓存落盘与命中、收藏后复习卡的显示、挖空练习的整条链路（Drill 窗的补空版式只看过代码）、`ai_assistant_empirical` 等需要真窗口的集成测试在 Windows 上是否仍通过。
+
 ---
 
 ## P9　AI 深度问答面板（约 2–3 天）
