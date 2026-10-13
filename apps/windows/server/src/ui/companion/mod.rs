@@ -3,9 +3,7 @@
 //!
 //! 视图状态在 [`model`]（纯数据），消息过程在 [`wndproc`]，落点在 [`placement`]，英文朗读在 [`tts`]。
 
-mod clipboard;
 mod model;
-mod placement;
 mod tts;
 mod wndproc;
 
@@ -27,6 +25,7 @@ use windows::core::{PCWSTR, Result, w};
 use self::tts::Speaker;
 use super::layered;
 use super::monitor;
+use super::placement;
 use super::window_class::WindowClass;
 use crate::dispatch::CandidateAction;
 

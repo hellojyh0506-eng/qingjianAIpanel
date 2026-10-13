@@ -192,6 +192,9 @@ fn main() {
     let model_path = dispatch::find_model(user_dir().as_deref(), &root);
     router.configure_local_model(model_path.clone(), &config.model);
     router.configure_code_table(dispatch::find_code_table(user_dir().as_deref(), &root));
+    if let Some(dir) = user_dir() {
+        router.enable_ai_history(&dir);
+    }
     if let Some(path) = config_path() {
         let user = user_dir();
         router.watch_config(

@@ -11,9 +11,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use super::tts::{SpeakError, Speaker};
 use super::{
-    CompanionWindow, SPIN_STEP, TIMER_NOTICE, TIMER_SPIN, WHEEL_STEP, clipboard, model, window_of,
+    CompanionWindow, SPIN_STEP, TIMER_NOTICE, TIMER_SPIN, WHEEL_STEP, model, window_of,
 };
 use crate::dispatch::CandidateAction;
+use crate::ui::clipboard;
 
 pub(super) unsafe extern "system" fn wndproc(
     hwnd: HWND,

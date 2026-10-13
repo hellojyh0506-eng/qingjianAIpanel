@@ -1,4 +1,4 @@
-//! 学习助手面板的落点：优先停在组句矩形右侧，放不下换下方、上方、左侧，都不行贴工作区右下角；用户拖过就听用户的。
+//! 面板窗口的落点（学习助手与 AI 问答共用）：优先停在组句矩形右侧，放不下换下方、上方、左侧，都不行贴工作区右下角；用户拖过就听用户的。
 
 use windows::Win32::Foundation::{POINT, RECT};
 
@@ -12,7 +12,7 @@ const CORNER_RIGHT: i32 = 20;
 const CORNER_BOTTOM: i32 = 60;
 
 /// 把内容左上角 `pos` 夹进它所在显示器的工作区；`margin` 是阴影留白（物理像素）。
-pub(super) fn clamp_to_work_area(pos: (i32, i32), content: (i32, i32), margin: i32) -> (i32, i32) {
+pub(crate) fn clamp_to_work_area(pos: (i32, i32), content: (i32, i32), margin: i32) -> (i32, i32) {
     let work = monitor::work_area_near(POINT { x: pos.0, y: pos.1 });
     let x = pos.0.clamp(
         work.left + margin,
@@ -26,7 +26,7 @@ pub(super) fn clamp_to_work_area(pos: (i32, i32), content: (i32, i32), margin: i
 }
 
 /// 没有用户位置时，靠近 `anchor`（组句矩形）摆。
-pub(super) fn near_anchor(anchor: RECT, content: (i32, i32), margin: i32) -> (i32, i32) {
+pub(crate) fn near_anchor(anchor: RECT, content: (i32, i32), margin: i32) -> (i32, i32) {
     let work = monitor::work_area_near(POINT {
         x: anchor.left,
         y: anchor.top,

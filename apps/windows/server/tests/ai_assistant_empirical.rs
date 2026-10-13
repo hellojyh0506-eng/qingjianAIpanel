@@ -170,11 +170,11 @@ fn test_ai_assistant_window_buttons_state_logic() {
     .expect("create AiAssistantWindow");
 
     // 1. 测试置顶图钉切换
-    assert!(win.data.borrow().is_pinned, "初始状态默认置顶");
+    assert!(win.is_pinned(), "初始状态默认置顶");
     win.toggle_pin();
-    assert!(!win.data.borrow().is_pinned, "点击图钉后取消置顶状态");
+    assert!(!win.is_pinned(), "点击图钉后取消置顶状态");
     win.toggle_pin();
-    assert!(win.data.borrow().is_pinned, "再次点击图钉后恢复置顶状态");
+    assert!(win.is_pinned(), "再次点击图钉后恢复置顶状态");
 
     // 2. 测试最大化与还原切换
     win.toggle_maximize();
@@ -203,31 +203,31 @@ fn test_ai_assistant_clear_input_and_mode_switch() {
     let win = qingjian_windows_server::ui::ai_assistant::AiAssistantWindow::new(Box::new(|_| {}))
         .expect("create AiAssistantWindow");
 
-    // 1. 测试输入文本清空 (对应 [+] 按钮功能)
-    win.data.borrow_mut().input_text = "这是一段未发送的草稿测试".to_string();
-    assert_eq!(win.data.borrow().input_text, "这是一段未发送的草稿测试");
-    win.data.borrow_mut().input_text.clear();
-    assert!(win.data.borrow().input_text.is_empty(), "[+] 按钮点击后输入文本必须被清除");
+    // 1. 测试输入文本清空
+    win.set_input_text("这是一段未发送的草稿测试");
+    assert_eq!(win.input_text(), "这是一段未发送的草稿测试");
+    win.set_input_text("");
+    assert!(win.input_text().is_empty(), "清空后输入文本必须为空");
 
-    // 2. 测试模式切换 (Fast <-> Deep)
-    assert_eq!(win.data.borrow().chat_mode, qingjian_windows_server::ui::ai_assistant::ChatMode::Fast);
-    win.data.borrow_mut().chat_mode = qingjian_windows_server::ui::ai_assistant::ChatMode::Deep;
-    assert_eq!(win.data.borrow().chat_mode, qingjian_windows_server::ui::ai_assistant::ChatMode::Deep);
-    win.data.borrow_mut().chat_mode = qingjian_windows_server::ui::ai_assistant::ChatMode::Fast;
-    assert_eq!(win.data.borrow().chat_mode, qingjian_windows_server::ui::ai_assistant::ChatMode::Fast);
+    // 2. 测试深度思考开关
+    assert!(!win.deep(), "深度思考默认关闭");
+    win.toggle_deep();
+    assert!(win.deep());
+    win.toggle_deep();
+    assert!(!win.deep());
 
     // 3. 测试联网搜索开关
-    assert!(!win.data.borrow().web_search_enabled);
-    win.data.borrow_mut().web_search_enabled = true;
-    assert!(win.data.borrow().web_search_enabled);
-    win.data.borrow_mut().web_search_enabled = false;
-    assert!(!win.data.borrow().web_search_enabled);
+    assert!(!win.web());
+    win.toggle_web();
+    assert!(win.web());
+    win.toggle_web();
+    assert!(!win.web());
 
     // 4. 测试新对话重置功能
-    win.data.borrow_mut().input_text = "待清空草稿".to_string();
+    win.set_input_text("待清空草稿");
     win.new_session();
-    assert!(win.data.borrow().input_text.is_empty(), "新会话必须清空输入文本");
-    assert!(win.data.borrow().messages.is_empty(), "新会话必须清空所有消息记录");
+    assert!(win.input_text().is_empty(), "新会话必须清空输入文本");
+    assert_eq!(win.message_count(), 0, "新会话必须清空所有消息记录");
 }
 
 #[test]
@@ -276,11 +276,11 @@ fn test_ai_assistant_and_companion_pinned_by_default() {
     // 验证 AI Assistant 默认开启置顶，且支持动态图钉切换
     let ai_win = qingjian_windows_server::ui::ai_assistant::AiAssistantWindow::new(Box::new(|_| {}))
         .expect("create AiAssistantWindow");
-    assert!(ai_win.data.borrow().is_pinned, "AI 对话面板必须默认高亮置顶 (is_pinned = true)");
-    ai_win.data.borrow_mut().is_pinned = false;
-    assert!(!ai_win.data.borrow().is_pinned, "AI 对话面板支持取消置顶");
-    ai_win.data.borrow_mut().is_pinned = true;
-    assert!(ai_win.data.borrow().is_pinned, "AI 对话面板支持再次置顶");
+    assert!(ai_win.is_pinned(), "AI 对话面板必须默认高亮置顶 (is_pinned = true)");
+    ai_win.toggle_pin();
+    assert!(!ai_win.is_pinned(), "AI 对话面板支持取消置顶");
+    ai_win.toggle_pin();
+    assert!(ai_win.is_pinned(), "AI 对话面板支持再次置顶");
 
     // 验证 English Assistant 伴侣窗默认开启置顶，且支持动态图钉切换
     let comp_win = qingjian_windows_server::ui::companion::CompanionWindow::new(Box::new(|_| {}))
@@ -299,7 +299,7 @@ fn test_ai_assistant_boost_command() {
     // 验证发送 /boost 指令能正确分发并加入消息历史
     router.handle_candidate_action(CandidateAction::AiChatSend {
         prompt: "/boost".to_string(),
-        fast_mode: true,
+        deep: false,
         web_search: false,
         session_id: "test-boost-session".to_string(),
     });

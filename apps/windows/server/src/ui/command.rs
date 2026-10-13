@@ -1,10 +1,11 @@
 //! 交给 UI 线程执行的命令。
 
+use qingjian_learning::chat_history::SessionSummary;
 use qingjian_platform::protocol::{Frame, ScreenRect};
 use qingjian_predict::companion::Block;
 
 use super::drill::DrillResultData;
-use crate::dispatch::{RenderSettings, StatusView};
+use crate::dispatch::{AiPanelState, RenderSettings, StatusView};
 
 /// 交给 UI 线程执行的命令。`Frame` 较大，装箱免得枚举过胖。
 pub(super) enum UiCommand {
@@ -50,8 +51,17 @@ pub(super) enum UiCommand {
     /// 收起 Drill 窗口。
     DrillHide,
 
-    /// 显示 / 聚焦 AI Assistant 独立对话窗口 (anchor, initial_prompt)
-    AiAssistantShow(Box<(Option<windows::Win32::Foundation::RECT>, Option<String>)>),
+    /// 显示 / 聚焦 AI 问答窗口：组句矩形 + 整面状态（侧栏、当前会话）。
+    AiAssistantShow(Box<(Option<windows::Win32::Foundation::RECT>, AiPanelState)>),
+
+    /// 整面状态更新（新对话 / 切换 / 清空会话之后）。
+    AiAssistantSession(Box<AiPanelState>),
+
+    /// 只刷新侧栏会话列表。
+    AiAssistantSessions(Vec<SessionSummary>),
+
+    /// 思考过程增量到达
+    AiAssistantReasoning(String),
 
     /// 收起 AI Assistant 对话窗口
     AiAssistantHide,

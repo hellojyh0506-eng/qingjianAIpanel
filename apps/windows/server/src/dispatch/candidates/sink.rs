@@ -65,9 +65,28 @@ pub trait CandidateSink: Send {
     /// 收起 Drill 窗口
     fn hide_drill(&self) {}
 
-    /// 打开 / 聚焦 AI Assistant 独立对话窗口
-    fn show_ai_assistant(&self, anchor: Option<windows::Win32::Foundation::RECT>, initial_prompt: Option<String>) {
-        let _ = (anchor, initial_prompt);
+    /// 打开 / 聚焦 AI Assistant 独立对话窗口，并下发整面状态（会话列表、当前会话）
+    fn show_ai_assistant(
+        &self,
+        anchor: Option<windows::Win32::Foundation::RECT>,
+        state: crate::dispatch::AiPanelState,
+    ) {
+        let _ = (anchor, state);
+    }
+
+    /// 换了会话（新建 / 切换 / 清空）：用新的整面状态重建窗口内容，不动窗口位置
+    fn send_ai_session(&self, state: crate::dispatch::AiPanelState) {
+        let _ = state;
+    }
+
+    /// 只刷新侧栏会话列表（消息数变了）
+    fn send_ai_sessions(&self, sessions: Vec<qingjian_learning::chat_history::SessionSummary>) {
+        let _ = sessions;
+    }
+
+    /// 发送思考过程增量到 AI Assistant 窗口
+    fn send_ai_reasoning(&self, chunk: String) {
+        let _ = chunk;
     }
 
     /// 收起 AI Assistant 对话窗口

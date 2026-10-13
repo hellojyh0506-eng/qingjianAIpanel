@@ -5,14 +5,15 @@
 //! 线程句柄是 [`UiHandle`]，命令在 [`command`]，候选窗口在 [`candidates`]，状态条在 [`status`]，分层窗口合成在 [`layered`]。
 
 mod candidates;
+mod clipboard;
 mod command;
 pub mod companion;
 pub mod drill;
 pub mod ai_assistant;
-pub mod markdown;
 mod layered;
 mod monitor;
 mod painter;
+mod placement;
 mod status;
 mod window_class;
 
@@ -33,6 +34,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{Error, Result};
 
+use qingjian_learning::chat_history::SessionSummary;
 use qingjian_platform::protocol::{Frame, ScreenRect};
 use qingjian_predict::companion::Block;
 
@@ -41,7 +43,8 @@ use self::command::UiCommand;
 use self::painter::{Painter, SharedPainter};
 use self::status::StatusBar;
 use crate::dispatch::{
-    CandidateAction, CandidateSink, RenderSettings, StatusEvent, StatusSink, StatusView,
+    AiPanelState, CandidateAction, CandidateSink, RenderSettings, StatusEvent, StatusSink,
+    StatusView,
 };
 
 /// 状态条上的操作（点格子 / 拖动结束）回给 Router 的回调，UI 线程上调。
@@ -139,8 +142,24 @@ impl CandidateSink for UiHandle {
         self.post(UiCommand::DrillHide);
     }
 
-    fn show_ai_assistant(&self, anchor: Option<windows::Win32::Foundation::RECT>, initial_prompt: Option<String>) {
-        self.post(UiCommand::AiAssistantShow(Box::new((anchor, initial_prompt))));
+    fn show_ai_assistant(
+        &self,
+        anchor: Option<windows::Win32::Foundation::RECT>,
+        state: AiPanelState,
+    ) {
+        self.post(UiCommand::AiAssistantShow(Box::new((anchor, state))));
+    }
+
+    fn send_ai_session(&self, state: AiPanelState) {
+        self.post(UiCommand::AiAssistantSession(Box::new(state)));
+    }
+
+    fn send_ai_sessions(&self, sessions: Vec<SessionSummary>) {
+        self.post(UiCommand::AiAssistantSessions(sessions));
+    }
+
+    fn send_ai_reasoning(&self, chunk: String) {
+        self.post(UiCommand::AiAssistantReasoning(chunk));
     }
 
     fn hide_ai_assistant(&self) {
@@ -383,10 +402,31 @@ fn apply(
             }
         }
         UiCommand::AiAssistantShow(payload) => {
-            let (anchor, initial_prompt) = *payload;
+            let (anchor, state) = *payload;
             if let Some(ai) = ai_assistant {
                 let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    ai.show_or_focus(anchor, initial_prompt);
+                    ai.show_or_focus(anchor, state);
+                }));
+            }
+        }
+        UiCommand::AiAssistantSession(state) => {
+            if let Some(ai) = ai_assistant {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    ai.load_state(*state);
+                }));
+            }
+        }
+        UiCommand::AiAssistantSessions(sessions) => {
+            if let Some(ai) = ai_assistant {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    ai.set_sessions(sessions);
+                }));
+            }
+        }
+        UiCommand::AiAssistantReasoning(chunk) => {
+            if let Some(ai) = ai_assistant {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    ai.append_reasoning(&chunk);
                 }));
             }
         }

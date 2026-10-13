@@ -89,6 +89,7 @@ TSV 解析、查询与生成工具把 `lue` / `nue` 统一成 `lve` / `nve`。
   Engine `annotate` 据此填 `Sense::fresh`，看到轮次不到 `FRESH_UNTIL` = 3 的译词壳里画橙色；「看到」按上屏那一刻屏幕上那一页算，壳每次画完 `Engine::note_displayed` 告知当前页）。
 - 各表落盘走 Core `storage::write_atomic`（临时文件 + fsync + 改名），加载按行容错（坏行警告跳过，真读不了壳退回内存学习），
   壳激活期间每 60 秒 `Engine::flush_learning`；IMK 回调边界 `imk::catch_panic` 拦 panic、缓冲区字母原样上屏（见 architecture.md「崩溃不丢」）。
+- AI 问答会话历史（`chat_history/`，P9）：`ChatHistory` 在用户目录 `ai-chat/` 里一个会话一个 JSON（`ChatSession { id, topic, updated_at, messages }`，消息 `ChatRecord { role, text, reasoning }`），写盘先写临时文件再改名；`recent()` 取最近 `SIDEBAR_LIMIT` = 20 个给侧栏（`SessionSummary { id, title, message_count, updated_at }`，`date_label()` 出 `MM/DD`），超过 `KEEP_LIMIT` = 60 个的旧会话顺手删掉，空会话不落盘。标题 = 主题；没有主题取首个问题前 `TITLE_CHARS` = 12 个字；都没有叫「新对话」。联网来源不存盘，只在当次显示。
 
 ## crates/qingjian-predict
 
@@ -111,6 +112,7 @@ TSV 解析、查询与生成工具把 `lue` / `nue` 统一成 `lve` / `nve`。
   （`user-glossary-<语言>.tsv`，`LayeredTranslator` 个人表优先）；随云联想开关一起开。
 - 问字键（缺省 `u`）开头是问字模式（`PredictionKind::Question`，答案带读音、不校验拼音），`?` 开头要 `ModeKeys::question_mark` 开着才算（配置 `[shortcut] question_mark`，缺省关，壳用 `Engine::takes_question_mark` 决定空缓冲区的 `?` 是入口还是标点）；`PredictionKind::Translate` 是壳里快捷键触发的「翻译选中文字」
   （双向：汉字为主译成学习语言，外文译回中文，`prediction::translation_target`），译文走结果的 `sentence`。
+- 流式思考过程（P9）：`StreamEvent::Reasoning(String)` 只在 `StreamChatClient::with_thinking(true)` 时才转发 `reasoning_content`，默认仍丢弃，所以学习助手面板与打字链路行为不变；AI 问答面板的「深度」开关打开时才用它，思考内容折叠显示。
 
 ## crates/qingjian-format
 
@@ -179,6 +181,8 @@ Engine 侧在 `engine/rescoring/`：接了打分器就取 Viterbi 前 `RESCORE_P
 `cargo run --release -p qingjian-render --example preview -- --panel kit` 出样式表，`tools/ui-diff/diff.py` 把预览图与 `docs/design/reference/` 的参考图并排 / 叠加。
 
 学习助手面板整页（`panel/companion/`，P8）：`CompanionView`（标签、三个标签各自的内容与 `TabStatus`、场景、滚动、置顶 / 收起 / 已收藏 / 提示）→ `companion::render(renderer, &view, 阴影)` 得 `CompanionFrame { frame, max_scroll, scroll, height }`，点击表值是 `CompanionHit`。窗口 420 × 560 点，标题栏 / 英雄区 / 标签栏 / 底部三按钮固定，只有中间内容区滚动（`PanelSurface::set_clip` 矩形裁剪，点击表也按裁剪过滤）；每个标签一个文件（`tab_nuance / tab_alternatives / tab_dialogue`），加载 / 流式 / 失败 / 空状态在 `states.rs` 与 `status.rs`。预览：`--panel companion-tab0|tab1|tab2|loading|streaming|error|empty|details|menu|minimized|scrolled|notice`。
+
+AI 问答面板整页（`panel/chat/`，P9）：`ChatView`（侧栏会话、主题、消息、建议问题、输入与光标、组字、`Phase::{Idle, Waiting, Streaming}`、联网 / 深度开关、滚动与贴底、置顶 / 最大化、提示、`show_caret`）→ `chat::render(renderer, &mut view, 阴影)` 得 `ChatFrame { frame, max_scroll, scroll, sidebar_max_scroll, caret, input }`，点击表值是 `ChatHit`。左侧栏 `SIDEBAR_WIDTH` = 168 点，右侧顶栏 / 消息区（可滚、裁剪）/ 输入区；每条 `ChatMessage` 缓存解析好的 Markdown 块与按宽度的排版，流式追加只重新解析本条（`markdown/` 解析标题、列表、引用、代码块、行内粗体 / 斜体 / 代码 / 链接，`bubble/` 排版气泡、思考折叠条与来源行）。输入框自动换行、最多 4 行，光标位置由 `ChatFrame.caret` 给出；分层窗口里系统光标不显示，所以窗口层按闪烁节奏切 `show_caret` 让渲染层自己画 1.5 点竖线。预览：`--panel ai-chat|ai-chat-strict|ai-chat-conversation|reasoning|streaming|waiting|error|input|composition|maximized|free`（`ai-chat-strict` 是 708 × 269 的严格图同尺寸对照）。
 
 ## crates/qingjian-update
 
@@ -287,6 +291,8 @@ DLL 不读文件、不查 mtime。`SessionOpened` 只回过协议版本对得上
 兼容用例在 `crates/qingjian-platform/tests/protocol_compat.rs`。部署与回滚见 `docs/notes/tsf-surrounding-after.md`。
 
 学习助手面板（English Assistant，P8）：窗口在 `ui/companion/`——`mod.rs` 是无激活置顶分层窗口（`QingjianCompanionWindow`）与重绘 / 定位 / 转圈与提示定时器，`model.rs` 是纯数据的视图状态转换（区块到达、选标签、选场景、失败重试，有单测），`wndproc.rs` 查 `HitMap` 分派点击（拖动走 `HTCAPTION`、滚轮 36 pt 一格），`placement.rs` 是落点，`tts.rs` 用 SAPI 只选 en-US 语音（没装给提示、不回退英音），`clipboard.rs` 复制。画面全部交给 `qingjian_render::companion`，窗口字体固定用系统字体，暂不跟随 `[general] font`。业务在 `dispatch/companion/`：`CompanionSession` 按需发请求——打开只生成语感解析，出表头后预取「更自然地说」，解析完空闲 2 秒再预取默认场景的对话，场景与标签各自请求、各自缓存，重试绕过缓存；代次 `companion_generation` 对不上的旧流自己停；收藏走 `save_expression`（例句存进备注，FSRS 建卡），练一句把语感解析例句里的高亮短语挖空交给 Drill 窗（`DrillSessionData::cloze_sentence`），没有例句退回整句翻译练习。磁盘缓存 `companion-cache.json` 在用户目录。`UiCommand::Companion*` 与 `CandidateSink::{show_companion, companion_block, finish_companion, fail_companion, companion_notice}` 取代了旧的 Markdown 文本块通道，`DeepLearn` 预测结果不再回填面板。
+
+AI 问答面板（P9）：窗口在 `ui/ai_assistant/`——`mod.rs` 是可激活的置顶分层窗口（`QingjianAiAssistantWindow`，`WS_EX_APPWINDOW`，要收键盘），`model.rs` 是纯函数的视图状态变换（装入会话、侧栏行与 id、建议问题、流式追加、出错、清空，有单测；换会话 / 停止之后迟到的块一律丢弃），`input.rs` 是输入框编辑（按字符边界，有单测），`paint.rs` 算尺寸落点并贴图（最大化铺满工作区且不画阴影；流式重绘 ≥ 33 ms 一帧，被挡下的最后一块由补画定时器画出；等待回答时 80 ms 转圈；有焦点时 530 ms 闪光标），`actions.rs` 分派点击，`wndproc.rs` 处理鼠标 / 滚轮（侧栏与消息区分开滚，往上滚取消贴底）/ 键盘（Enter 发送、Shift+Enter 换行、Esc 关闭、Ctrl+V 粘贴、方向键 / Home / End / Delete）/ 焦点 / 拖动，`ime.rs` 把输入法的组字窗和候选窗锚到输入光标（组字文字由系统组字窗显示，没有内嵌绘制）。业务在 `dispatch/ai_chat/`——`AiStore` 持有当前会话并写盘（旧会话的迟到消息写回磁盘上的旧会话），`Turn` 把一轮问答的 Delta / Reasoning / 来源 / 结束 / 出错转发给窗口并把回答记进会话，`send.rs` 发请求（`with_thinking(deep)`，联网先检索再拼上下文），`boost.rs` 是 `/boost` 指令；`Router::enable_ai_history(&user_dir)` 在 `main.rs` 里打开落盘，测试不调就只在内存里。`CandidateSink` 新增 `send_ai_session / send_ai_sessions / send_ai_reasoning`，`show_ai_assistant` 带整面状态 `AiPanelState`；`AiChatSend.fast_mode` 改名 `deep`，新增 `AiChatSwitch / AiChatClear`；旧 `ui/ai_assistant.rs`（GDI）与 `ui/markdown.rs` 已删，`clipboard.rs` / `placement.rs` 从 `companion/` 上移成 UI 共用。
 
 ## assets
 

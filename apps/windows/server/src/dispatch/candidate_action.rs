@@ -81,7 +81,9 @@ pub enum CandidateAction {
     /// 发起 AI 流式对话问答
     AiChatSend {
         prompt: String,
-        fast_mode: bool,
+
+        /// 深度开关：打开才允许模型思考。
+        deep: bool,
         web_search: bool,
         session_id: String,
     },
@@ -93,4 +95,10 @@ pub enum CandidateAction {
 
     /// 开始全新对话会话
     AiChatNewSession,
+
+    /// 切到侧栏里的另一个会话
+    AiChatSwitch { session_id: String },
+
+    /// 清空当前会话
+    AiChatClear,
 }

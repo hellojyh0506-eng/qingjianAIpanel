@@ -3,6 +3,7 @@
 //! 候选窗口输出在 [`candidates`]，状态条在 [`status`]，翻译选中文字在 [`translate`]，配置热加载在 [`reload`]，
 //! 本地整句模型在 [`rescore`]，形码码表在 [`code`]。
 
+mod ai_chat;
 mod candidate_action;
 mod candidates;
 mod code;
@@ -24,13 +25,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use qingjian_predict::{ChatMessage, StreamChatClient, StreamEvent, execute_web_search};
+use qingjian_predict::ChatMessage;
 use qingjian_core::{Engine, SurroundingText};
 use qingjian_platform::LocalModelConfig;
 use qingjian_platform::protocol::{
     ClientMessage, Frame, IndicatorState, InputSettings, ScreenRect, ServerMessage, SessionId,
 };
 
+pub use self::ai_chat::AiPanelState;
 pub use self::candidate_action::CandidateAction;
 pub use self::candidates::{CandidateSink, NoopSink, RenderSettings};
 pub use self::code::find_code_table;
@@ -189,6 +191,9 @@ pub struct Router {
 
     /// AI Assistant 流式中止信号
     pub(crate) ai_stop_signal: Arc<AtomicBool>,
+
+    /// AI Assistant 的会话仓库（当前会话 + 磁盘历史）
+    pub(crate) ai_store: Arc<ai_chat::AiStore>,
 }
 
 impl Router {
@@ -251,6 +256,7 @@ impl Router {
             ),
             ai_messages: Arc::new(Mutex::new(Vec::new())),
             ai_stop_signal: Arc::new(AtomicBool::new(false)),
+            ai_store: Arc::new(ai_chat::AiStore::new(None)),
         }
     }
 
@@ -261,33 +267,6 @@ impl Router {
         } else {
             self.open_ai_assistant();
         }
-    }
-
-    /// 打开 / 聚焦独立 AI Assistant 对话窗口
-    pub(crate) fn open_ai_assistant(&mut self) {
-        self.ai_assistant_open = true;
-        self.notice = Some("💬 已开启 AI 对话助手 (Ctrl+Alt+D)".to_string());
-        let anchor = self.effective_display_rect().map(|r| windows::Win32::Foundation::RECT {
-            left: r.left,
-            top: r.top,
-            right: r.right,
-            bottom: r.bottom,
-        });
-        let initial_prompt = self
-            .passive_learning_card
-            .as_ref()
-            .map(|c| c.target_text.clone())
-            .or_else(|| self.passive_translation_target.clone())
-            .or_else(|| self.layout_candidate(self.highlight).map(|c| c.text));
-        self.candidates.show_ai_assistant(anchor, initial_prompt);
-    }
-
-    /// 关闭独立 AI Assistant 对话窗口
-    pub(crate) fn close_ai_assistant(&mut self) {
-        self.ai_assistant_open = false;
-        self.ai_stop_signal.store(true, Ordering::Relaxed);
-        self.candidates.hide_ai_assistant();
-        self.notice = Some("已关闭 AI 对话助手".to_string());
     }
 
     pub fn is_ai_assistant_open(&self) -> bool {
@@ -719,199 +698,16 @@ impl Router {
             CandidateAction::CloseAiAssistant => {
                 self.close_ai_assistant();
             }
-            CandidateAction::AiChatNewSession => {
-                self.ai_stop_signal.store(true, Ordering::Relaxed);
-                self.ai_stop_signal = Arc::new(AtomicBool::new(false));
-                if let Ok(mut msgs) = self.ai_messages.lock() {
-                    msgs.clear();
-                }
-            }
-            CandidateAction::AiChatStop { session_id: _ } => {
-                self.ai_stop_signal.store(true, Ordering::Relaxed);
-            }
-            CandidateAction::AiChatSend { prompt, fast_mode: _, web_search, session_id: _ } => {
-                self.ai_stop_signal.store(true, Ordering::Relaxed);
-                let stop_signal = Arc::new(AtomicBool::new(false));
-                self.ai_stop_signal = stop_signal.clone();
-
-                if let Ok(mut msgs) = self.ai_messages.lock() {
-                    msgs.push(ChatMessage {
-                        role: "user".to_string(),
-                        content: prompt.clone(),
-                    });
-                }
-
-                // AI 对话独立面板接入高性价比付费模型（默认配置中的 SiliconFlow Qwen3 14B，专享推理集群）
-                let base_url = if let Ok(custom_url) = std::env::var("QINGJIAN_AI_BASE_URL") {
-                    custom_url
-                } else if !self.config.predict.base_url.is_empty() {
-                    self.config.predict.base_url.clone()
-                } else {
-                    "https://api.siliconflow.cn/v1".to_string()
-                };
-
-                let model = if let Ok(m) = std::env::var("QINGJIAN_AI_MODEL") {
-                    m
-                } else {
-                    match self.config.predict.panel_model() {
-                        "" => "Qwen/Qwen3-14B".to_string(),
-                        panel => panel.to_string(),
-                    }
-                };
-
-                let api_key = if let Ok(k) = std::env::var("QINGJIAN_AI_API_KEY") {
-                    k
-                } else if let Some(k) = &self.config.predict.api_key {
-                    k.clone()
-                } else {
-                    std::env::var("QINGJIAN_API_KEY")
-                        .or_else(|_| std::env::var("SILICONFLOW_API_KEY"))
-                        .unwrap_or_default()
-                };
-
-                // 优先拦截 /boost 诊断指令，执行全链路状态自检与性能加速报告
-                if prompt.trim().starts_with("/boost") {
-                    let sink = self.candidates.clone_sink();
-                    let history_arc = self.ai_messages.clone();
-                    let client = StreamChatClient::new(base_url.clone(), api_key.clone(), model.clone());
-                    let stop_sig = stop_signal.clone();
-
-                    self.ai_runtime.spawn(async move {
-                        let probe_res = client.probe().await;
-                        let (status_str, latency_ms) = match &probe_res {
-                            Ok((status, lat)) => (format!("HTTP {status} 正常"), *lat),
-                            Err(e) => (format!("连接异常: {e}"), 0),
-                        };
-                        let t_now = std::time::Instant::now();
-                        let report = format!(
-                            "🚀 **【Qingjian Boost 智能加速与增强系统就绪】**\n\n\
-                            **1. 翻译稳定性增强 (Translation Boost):**\n\
-                            - 阶段化超时防抖：实时翻译 0ms 防抖，最长 8000ms 宽容容灾，1500ms 智能离线释义预热。\n\
-                            - 接口自适应容错：多字段解析 (`sentence`, `translation`, `translated_text`, `target_text`)。\n\
-                            - 智能降级兜底：云端异常或超时自动回退至本地 40 万离线词典，永不白屏丢词。\n\n\
-                            **2. 云联想与智能纠错增强 (Cloud Association & Typo Correction):**\n\
-                            - 智能音节恢复：音节切分失配自动使用自然音节切分器补正。\n\
-                            - 拼音去调容错：全量支持带调声调无损归一化（如 hénán → henan）。\n\
-                            - 长句口语保护：放宽口语与复合长句长度限制（最高 4096 字符）。\n\n\
-                            **3. 窗口层级与焦点守护 (Z-Order & Topmost Guards):**\n\
-                            - 置顶图钉联动：English Assistant 与 AI 助手默认高亮置顶，宿主应用（Chrome/Word）失焦永不沉底。\n\
-                            - 鼠标激活保障：`WM_MOUSEACTIVATE` 自动提升激活，点击即置顶前台。\n\n\
-                            **4. 服务连通性探测 (Live Diagnostics):**\n\
-                            - 网关端点: `{}`\n\
-                            - 推理模型: `{}`\n\
-                            - 探测状态: `{}`\n\
-                            - 握手延迟: `{} ms`\n\
-                            - 运行状态: `已全面生效 (ALL SYSTEMS OPERATIONAL)`",
-                            base_url, model, status_str, latency_ms
-                        );
-
-                        let chars: Vec<char> = report.chars().collect();
-                        for chunk in chars.chunks(16) {
-                            if stop_sig.load(Ordering::Relaxed) {
-                                break;
-                            }
-                            let s: String = chunk.iter().collect();
-                            sink.send_ai_chunk(s);
-                            tokio::time::sleep(Duration::from_millis(15)).await;
-                        }
-                        sink.send_ai_finish(latency_ms, t_now.elapsed().as_millis());
-
-                        if let Ok(mut hist) = history_arc.lock() {
-                            hist.push(ChatMessage {
-                                role: "assistant".to_string(),
-                                content: report,
-                            });
-                        }
-                    });
-                    return;
-                }
-
-                let max_tokens = 2048;
-                let system_prompt = "你是青简输入法内置的 AI 智能助手。请自然、准确、清晰地回答用户的问题。根据问题类型灵活作答：日常闲聊或普通问答直接简洁回应；技术或专业问题直击本质；涉及语言学习时提供地道自然的解答。善用 Markdown 格式组织内容，不讲无用套话，不做无谓的长篇大论，绝不擅自强加中英互译。";
-
-                let mut messages = Vec::new();
-                messages.push(ChatMessage {
-                    role: "system".to_string(),
-                    content: system_prompt.to_string(),
-                });
-
-                if let Ok(msgs) = self.ai_messages.lock() {
-                    let start = msgs.len().saturating_sub(10);
-                    for m in &msgs[start..] {
-                        messages.push(m.clone());
-                    }
-                }
-
-                let sink = self.candidates.clone_sink();
-                let client = StreamChatClient::new(base_url, api_key, model);
-                let history_arc = self.ai_messages.clone();
-
-                self.ai_runtime.spawn(async move {
-                    if web_search {
-                        match execute_web_search(&prompt, 3).await {
-                            Ok(sources) => {
-                                if !sources.is_empty() {
-                                    sink.send_ai_web_sources(sources.clone());
-                                    let mut web_context = String::from("\n\n[联网检索实时结果]:\n");
-                                    for (i, s) in sources.iter().enumerate() {
-                                        web_context.push_str(&format!("{}. 标题: {}\nURL: {}\n摘要: {}\n\n", i + 1, s.title, s.url, s.description));
-                                    }
-                                    if let Some(last) = messages.last_mut() {
-                                        last.content.push_str(&web_context);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, "联网搜索不可用，继续纯模型生成");
-                            }
-                        }
-                    }
-
-                    if stop_signal.load(Ordering::Relaxed) {
-                        return;
-                    }
-
-                    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<StreamEvent>(64);
-                    let chat_stop = stop_signal.clone();
-
-                    tokio::spawn(async move {
-                        client.stream_chat(messages, max_tokens, event_tx, chat_stop).await;
-                    });
-
-                    let mut full_response = String::new();
-
-                    while let Some(event) = event_rx.recv().await {
-                        if stop_signal.load(Ordering::Relaxed) {
-                            break;
-                        }
-                        match event {
-                            StreamEvent::Delta(chunk) => {
-                                full_response.push_str(&chunk);
-                                sink.send_ai_chunk(chunk);
-                            }
-                            StreamEvent::WebSources(sources) => {
-                                sink.send_ai_web_sources(sources);
-                            }
-                            StreamEvent::Done { ttft_ms, total_ms } => {
-                                sink.send_ai_finish(ttft_ms, total_ms);
-                                if !full_response.is_empty() {
-                                    if let Ok(mut hist) = history_arc.lock() {
-                                        hist.push(ChatMessage {
-                                            role: "assistant".to_string(),
-                                            content: full_response.clone(),
-                                        });
-                                    }
-                                }
-                                break;
-                            }
-                            StreamEvent::Error(err) => {
-                                sink.send_ai_error(err);
-                                break;
-                            }
-                        }
-                    }
-                });
-            }
+            CandidateAction::AiChatNewSession => self.ai_chat_new(),
+            CandidateAction::AiChatSwitch { session_id } => self.ai_chat_switch(&session_id),
+            CandidateAction::AiChatClear => self.ai_chat_clear(),
+            CandidateAction::AiChatStop { session_id: _ } => self.ai_chat_stop(),
+            CandidateAction::AiChatSend {
+                prompt,
+                deep,
+                web_search,
+                session_id: _,
+            } => self.ai_chat_send(prompt, deep, web_search),
         }
         let shown = self.self_drawn_frame();
         self.reconcile_candidates(&shown);

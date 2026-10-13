@@ -137,6 +137,21 @@ impl CompanionSession {
         })
     }
 
+    /// 「更自然地说」里的第一个替换表达，AI 问答的建议问题用；还没生成出来就是 `None`。
+    pub(crate) fn alternative(&self) -> Option<String> {
+        let inner = self.lock();
+        let blocks = inner
+            .done
+            .iter()
+            .chain(inner.streaming.iter())
+            .filter(|((tab, _), _)| *tab == 1)
+            .flat_map(|(_, blocks)| blocks.iter());
+        blocks.into_iter().find_map(|block| match block {
+            Block::Alt { expr, .. } if !expr.trim().is_empty() => Some(expr.trim().to_owned()),
+            _ => None,
+        })
+    }
+
     /// 打开面板时的入口：先生成语感解析，其余按需。
     pub(super) fn start(self: &Arc<Self>) {
         self.request(0, 0, Origin::User);
