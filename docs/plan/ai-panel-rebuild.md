@@ -1,26 +1,34 @@
-# 青简 AI 联想 / 智能纠错 / 学习助手面板 / AI 问答面板：重构执行计划
+# 青简：智能拼音识别（AI 纠错）/ 学习助手面板 / AI 问答面板 —— 重构执行计划 v2
 
-分支：`owner/v0.1.4-english-learning`（基线 commit `d8ebcb0`）
-参考图：`docs/design/reference/`（strict_* 来自《严格参考图》，spec_* 来自《界面规范总览》）
-执行者：Sonnet。每个 Phase 一个独立提交，测试不过不进下一步。
+分支：`owner/v0.1.4-english-learning`（基线 `88921ba`）
+参考图：`docs/design/reference/`（strict_* = 《严格参考图》，spec_* = 《界面规范总览》）
+头像：`assets/ui/avatars/`（已生成，可直接用）
+执行者：Sonnet。按本文件逐个 Phase 执行，每个 Phase 一个提交，测试不过不进下一步。
+
+## 已锁定的产品决定（2026-10-13 用户确认）
+
+1. **不做整句补全、不做续写。**「AI 联想」的含义改为：用户在电脑上连续敲一长串拼音（可能有错拼、字母颠倒、漏字母、多字母、音节边界错），系统能**结合光标前后文**识别出用户真正想打的字，并推荐出来。
+2. **把握大时直接放到第 1 位，并在候选上标「纠」**；原来的第 1 位降到第 2 位，按 2 即可选回。
+3. **模型分两档**：打字用更快的小模型（`typing_model`，先测速再定，候选见 P6）；学习助手和 AI 问答面板用 `panel_model` = `Qwen/Qwen3-14B`，**关掉思考**。
+4. 界面冲突时以《严格参考图》为准；规范总览只补充严格图里没有的状态和颜色规范。
+5. 对话头像使用已生成的 `assets/ui/avatars/` 素材。
 
 ---
 
-## 0. 结论：为什么「慢」和「不智能」（含代码证据）
-
-### 0.1 AI 联想 / 纠错
+## 0. 现状诊断（为什么慢、为什么不智能）
 
 | # | 根因 | 证据 | 影响 |
 |---|---|---|---|
-| R1 | **Qwen3 思考模式没关**。SiliconFlow 上的 Qwen3-14B 默认 `enable_thinking=true`，代码只给智谱发关思考参数 | `crates/qingjian-predict/src/chat_client.rs:328` `ThinkingSwitch::for_url` 只认 `bigmodel.cn / z.ai`；`stream_client.rs:33` 请求体根本没有思考开关字段 | 每次请求先「想」再答：延迟翻倍。Intent 的 `max_tokens=96` 被思考吃光，所以返回**空建议**（plan 文档里 `kaifazhes` 烟测就是这样） |
-| R2 | **一条通道串行**。Engine 只有一个 `prediction_sequence` 和 `last_prediction_kind`，Worker 只有一个循环，新请求打断旧请求 | `engine/prediction/mod.rs:601`；`worker.rs` 单 loop；`dispatch/composed/mod.rs:131-153` 先 Rerank，回来后才 Translate，然后才 Intent | 实测 2164 + 676 + 1118 ms ≈ 4 s 才出纠错建议 |
-| R3 | **Rerank 输出太大、太脆**。要求模型逐字回显全部 27 个候选的完整排列，最多 512 token；漏一个、错一个字就整份丢弃 | `prompt.rs:173` `RERANK_SYSTEM_PROMPT`；`prompt.rs:763` 校验 | 单次约 2.1 s，且失败率高 → 用户感觉 AI 没起作用 |
-| R4 | **Intent 只能从「错拼串」的前 9 个本地候选里挑**。如果正确词不在这 9 个里，AI 修不了 | `engine/prediction/mod.rs:81-166`、`resolve_intent_candidate`（:254） | 真正的错拼大多救不回来 |
-| R5 | 触发面窄：只认 7–64 位、且整串没有精确读音匹配；3–6 位短错拼完全没有 AI 兜底 | 同上 | 「不智能」 |
-| R6 | **AI 联想没有可见输出**。默认打字路径只做 Rerank（只改顺序），云端词和整句补全都关了 | `engine/prediction/mod.rs:372` | 用户看不到任何「AI 联想」 |
-| R7 | 冷连接：空闲 90 s 后连接池释放，下一次要重新 TLS 握手；温度 0.3（应为 0） | `chat_client.rs` `http_client()`、`TEMPERATURE` | 每次停顿后的首个请求多 200–400 ms |
+| R1 | Qwen3 思考模式没关。SiliconFlow 上 Qwen3-14B 默认 `enable_thinking=true`，代码只给智谱发关思考参数 | `crates/qingjian-predict/src/chat_client.rs:328` `ThinkingSwitch::for_url` 只认 `bigmodel.cn / z.ai`；`stream_client.rs:33` 请求体没有思考开关 | 每次请求先思考再回答，延迟翻倍；Intent `max_tokens=96` 被思考吃光 → 空建议 |
+| R2 | 一条通道串行：Engine 只有一个 `prediction_sequence` 和 `last_prediction_kind`，Worker 单循环、新请求打断旧请求 | `engine/prediction/mod.rs:601`；`worker.rs`；`dispatch/composed/mod.rs:131-153` | Rerank 2.1 s → Translate 0.7 s → Intent 1.1 s，约 4 s 才出纠错 |
+| R3 | Rerank 要模型逐字回显 27 个候选的完整排列，最多 512 token，漏一个整份作废 | `prompt.rs:173`、`prompt.rs:763` | 慢、脆 |
+| R4 | Intent 只能从「错拼串自己的」前 9 个本地候选里挑；正确词不在里面就救不回来 | `engine/prediction/mod.rs:81-166`、`:254` | 真正的错拼大多救不回 |
+| R5 | 本地纠错覆盖不全：整串 1 处编辑（4–64 位）、音节级敲错边（**只对已经切得出的完整音节**）、两处编辑（只在 7–24 位且整句不可用时）。长串里多处把切分打断的错误没有覆盖；快速提示只认 ≥7 位 | `correction/mod.rs:29-38`、`correction/typo/mod.rs`、`engine/correcting.rs:43,125`、`engine/prediction/mod.rs:214` | 「一长串拼音里错好几处」识别不出来 |
+| R6 | Windows 只送光标**前** 64 字，光标后文写死为空 | `dispatch/mod.rs:297-305`；TSF `com/edit/surrounding.rs:50` 只有 `text_before_caret` | 无法「根据前后文」判断 |
+| R7 | 纠正结果没有可见标记，用户分不清哪个是纠正过的 | `Candidate` 没有纠正标记字段（`candidate/mod.rs:30-48`） | 体验上「不智能」 |
+| R8 | 冷连接、温度 0.3 | `chat_client.rs` `http_client()`、`TEMPERATURE` | 停顿后首个请求多 200–400 ms |
 
-### 0.2 学习助手面板（companion）与 AI 问答面板（ai_assistant）
+面板问题：
 
 | # | 问题 | 证据 |
 |---|---|---|
@@ -38,120 +46,164 @@
 
 | 指标 | 现在 | 目标 |
 |---|---|---|
-| 本地候选出现 | ≤ 2 ms | 不变（任何改动不得变慢） |
-| 本地纠错提示出现 | 仅 ≥7 位 | 3 位以上，≤ 5 ms |
-| AI 纠错建议出现（停顿后） | ≈ 4 s，常为空 | P50 ≤ 700 ms，P95 ≤ 1500 ms，空回复率 < 5% |
-| AI 重排成功应用率 | 未统计，估计低 | ≥ 90%（解析通过率） |
-| 误纠率（正确拼音被改） | 未统计 | ≤ 1%（200 条正确样本） |
-| 纠错召回（50 条真实错拼） | 未统计 | ≥ 70% Top-1，≥ 85% Top-3 |
-| 学习助手首屏内容 | 首字等待长 | TTFT ≤ 800 ms，首个卡片 ≤ 1.2 s；再次打开同一表达 ≤ 50 ms（缓存） |
-| 面板外观 | 不一致 | 与参考图逐区块对齐：布局 ±2 px、颜色用下方 token、所有图标为矢量 |
+| 本地候选出现 | ≤ 2 ms | 不变（任何改动不得变慢，P95 ≤ 3 ms） |
+| 本地纠错候选出现 | 仅部分场景 | 4 位以上全覆盖，≤ 5 ms |
+| AI 智能识别结果到达（停顿后） | ≈ 4 s，常为空 | P50 ≤ 700 ms，P95 ≤ 1500 ms，空/坏回复 < 5% |
+| 错拼识别（120 条错拼样本） | 未统计 | 本地 Top-1 ≥ 55%；本地 + AI Top-1 ≥ 80%，Top-3 ≥ 90% |
+| 误纠率（300 条正确拼音被改成别的第 1 位） | 未统计 | ≤ 1% |
+| 上下文同音选词（60 条：他/她、的/地/得、在/再 等） | 未统计 | Top-1 ≥ 85% |
+| 学习助手 | 首字等待长 | TTFT ≤ 800 ms，首卡片 ≤ 1.2 s；再次打开 ≤ 50 ms |
+| 面板外观 | 不一致 | 与参考图逐区块对齐：布局 ±2 px、颜色 token、所有图标矢量 |
 
 ---
 
-## 2. 执行顺序总览
+## 2. 执行顺序
 
 ```
-P0 基线度量 ─► P1 立即提速 ─► P2 多通道并行 ─► P3 重排瘦身 ─► P4 纠错 v2 ─► P5 AI 联想（待用户定形态）
-                               │
-P6 面板渲染基础 ─► P7 学习助手面板 ─► P8 AI 问答面板 ─► P9 回归、文档、部署
+输入线： P1 提速+测速 ─► P2 多通道 ─► P3 本地纠错增强 ─► P4 AI 智能识别 ─► P5 光标后文(TSF) ─► P6 选定打字模型
+界面线： P7 面板渲染基础 ─► P8 学习助手面板 ─► P9 AI 问答面板
+收尾：   P10 回归、文档、部署
 ```
-P1 改动最小、收益最大，必须最先做。P6–P8（界面）与 P2–P5（输入）互不依赖，可以分两条分支并行。
+两条线互不依赖。建议先完成 P1–P4（用户最在意的打字体验），再做界面线。P5 要换 TSF DLL，单独提交、单独部署。
 
 ---
 
-## P0　基线度量（约 0.5 天）
+## P1　立即提速 + 测速工具（约 1 天）
 
-1. 在 `chat_client.rs` 和 `stream_client.rs` 已有的 tracing 里补齐字段：`kind`、`lane`、`ttft_ms`、`total_ms`、`output_tokens`（从 `usage` 读）、`parse_ok`。
-2. 新增 `apps/cli` 子命令 `--ai-bench <samples.tsv>`：对固定样本逐条调用真实接口，输出每种 kind 的 P50/P95、空回复率、解析通过率。
-3. 建立 `apps/cli/fixtures/ai_typing_samples.tsv`：
-   - 50 条错拼：`kaifazhes→开发者`、`nihoomma→你好吗`、`zhngguo→中国`、`xainzai→现在`、`gognzuo→工作`、`shuohua→说话`（正确，做误纠对照）等；
-   - 200 条正确拼音（从 `docs/plan/model-eval.md` 的冻结集里抽），用来算误纠率。
-4. 记录基线到 `docs/notes/ai-latency-baseline.md`。
+**改动**
+1. `chat_client.rs`：`ThinkingSwitch` 新增 `EnableThinkingFlag`，对 `siliconflow.cn`、`siliconflow.com`、`dashscope.aliyuncs.com` 发 `"enable_thinking": false` 并移除 `reasoning_effort`。
+2. 打字类请求（Translate、P4 的 Resolve、现有 Rerank / Intent）**强制关思考**，不受配置影响；只有 DeepLearn / Compare / AI 聊天「深度」模式允许思考。
+3. `stream_client.rs`：请求体加 `#[serde(skip_serializing_if = "Option::is_none")] enable_thinking: Option<bool>`，同样按 host 填 `Some(false)`。
+4. 温度：打字类 `0.0`；Translate `0.3`；面板 `0.5–0.7`。
+5. 连接预热：Server 启动时、以及组句开始且距上次请求 > 45 s 时，后台发 `max_tokens=1` 的请求；`pool_idle_timeout` 改 300 s。
+6. 配置拆模型：`PredictConfig` 新增 `typing_model: String`、`panel_model: String`（空 = 回落到 `model`）。打字通道用 `typing_model`，学习助手 / AI 问答用 `panel_model`；`dispatch/mod.rs:415-425` 与 `:882-896` 两处硬编码改为读 `panel_model`。同步 `crates/qingjian-platform/src/config/mod.rs` 的配置模板和测试。
+7. 测速工具：`apps/cli` 新增 `--ai-bench <samples.tsv> --models a,b,c --rounds 3`，对每个模型逐条请求真实接口，输出：P50/P95 总耗时、TTFT、空/坏回复率、Top-1 / Top-3、误纠率。结果写 Markdown 表到 stdout。API 密钥只从环境变量 / 配置读，不打印。
+8. 样本集 `apps/cli/fixtures/typing_samples.tsv`（列：`letters  before  after  expected  category`），至少：
+   - 120 条错拼（category = `typo`）：相邻键（`nihap→你好`）、字母颠倒（`nihoa→你好`、`zhnog→中`、`xainzai→现在`、`gognzuo→工作`）、漏字母（`zhngguo→中国`、`kaifzhe→开发者`）、多字母（`kaifazhes→开发者`、`nihaoo→你好`）、音节边界错、一串里多处错（`wojintainquchifna→我今天去吃饭`、`nihoommazuijinmang→你好吗最近忙`）；
+   - 300 条正确拼音（category = `clean`），从 `docs/plan/model-eval.md` 的冻结集抽，用于误纠率；
+   - 60 条上下文同音（category = `context`）：`before="今天她吃饭但是" letters="ta" expected="她"`、`before="跑" letters="dekuai" expected="得快"`、`before="我明天" letters="zailai" expected="再来"` 等。
+9. 结果记录 `docs/notes/ai-latency-baseline.md`。
 
-验收：能一条命令复现基线数字；不记录用户真实输入。
-
----
-
-## P1　立即提速：关掉思考 + 小参数（约 0.5 天，最先做）
-
-改动：
-1. `chat_client.rs`：`ThinkingSwitch` 新增 `EnableThinkingFlag`，对 `siliconflow.cn`、`siliconflow.com`、`dashscope.aliyuncs.com` 发 `"enable_thinking": false`（并移除 `reasoning_effort`）。
-2. **打字类请求（Rerank / Intent / Translate / 以后的 Complete）一律强制关思考**，不受配置 `reasoning_effort` 影响；只有 DeepLearn / Compare / AI 聊天的「深度」模式才允许思考。
-3. `stream_client.rs`：`ChatCompletionStreamRequest` 加 `#[serde(skip_serializing_if = "Option::is_none")] enable_thinking: Option<bool>`，按同一套 host 规则填 `Some(false)`。
-4. 温度：Rerank / Intent `0.0`，Translate `0.3`，面板 `0.5–0.7`。
-5. 连接预热：Server 启动时、以及组句开始且距上次请求 > 45 s 时，后台发一个 `max_tokens=1` 的请求保温；`pool_idle_timeout` 提到 300 s。
-6. 单测：三种 host 的请求体快照（含/不含 `enable_thinking`）。
-
-验收：`--ai-bench` 上 Intent 空回复率 < 5%，Intent P50 较基线下降 ≥ 40%。
+**测试**：三种 host 的请求体快照（有/无 `enable_thinking`）；`typing_model` / `panel_model` 回落逻辑。
+**验收**：`--ai-bench` 跑通；Intent 空回复率 < 5%；P50 较改前下降 ≥ 40%。
+**提交**：`perf(predict): 关闭 Qwen3 思考并拆分打字与面板模型`、`test(cli): 新增 ai-bench 测速与样本集`
 
 ---
 
 ## P2　多通道并行（约 1–1.5 天）
 
-1. 新增 `qingjian_core::PredictionLane { Typing, Learning, Deep }`，`PredictionKind::lane()` 映射：
-   - Typing：Rerank、Intent、Complete（P5 新增）
-   - Learning：Translate
-   - Deep：DeepLearn、Compare、Question
-2. Engine：`prediction_sequence: [u64; 3]`、`last_kind: [PredictionKind; 3]`，`poll_prediction` 按通道判断过期；Prediction 结构带 `lane`。
-3. Worker：每个通道一个 tokio task（同一 runtime），各自的防抖与「最新优先」；全局并发上限 2（`Semaphore`），429 指数退避。
-4. Server `dispatch/composed/mod.rs`：Rerank（或 Intent）与 Translate **同时发出**，删掉「Rerank 回来再发 Translate」的串行链；`poll_prediction` 按 lane 分派。
-5. 测试：「Translate 不会让 Rerank 过期」「同一通道新请求让旧请求过期」「Deep 通道不被打字打断」。
+1. `qingjian_core::PredictionLane { Typing, Learning, Deep }`；`PredictionKind::lane()`：Typing = Rerank / Intent / Resolve；Learning = Translate；Deep = DeepLearn / Compare / Question。
+2. Engine：`prediction_sequence: [u64; 3]`、`last_kind: [PredictionKind; 3]`；`poll_prediction` 按通道判断过期；`Prediction` 带 `lane`。
+3. Worker：每通道一个 tokio task（同一 runtime），各自防抖、各自「最新优先」；全局并发上限 2（`tokio::sync::Semaphore`）；429 指数退避。
+4. Server `dispatch/composed/mod.rs`：Typing 请求与 Translate **同时发出**，删掉「Rerank 回来再发 Translate」的串行链；按 lane 分派结果。
+5. 测试：「Translate 不让 Typing 过期」「同通道新请求让旧请求过期」「Deep 不被打字打断」。
 
-验收：截图场景（长拼音 + 学习模式）纠错建议到达时间 ≈ 单次 Intent 耗时，不再是三次之和。
+**验收**：长拼音 + 学习模式场景，识别结果到达 ≈ 单次请求耗时。
+**提交**：`refactor(predict): 云端请求按打字/学习/深度三通道并行`
 
 ---
 
-## P3　重排瘦身 Rerank v2（约 0.5 天）
+## P3　本地纠错增强（约 2 天，纯本地、即时）
 
-1. 请求：候选编号 `1..N`（N ≤ 18，即前两页），附读音；Prompt 只要求返回**最多 3 个最该排前面的编号**：`{"pick":[4,1]}`。
-2. Core 新增 `CandidateLayout::promote_indices(&[usize])`：被选中的按顺序提前，其余保持原序。输出约 10 token，不再整份回显。
-3. 只在「确实有歧义」时请求：本地首选与次选分差小于阈值、或有光标前文、或 ≥ 2 音节；单字和高置信精确匹配不请求（省请求、省限流）。
-4. 缓存 key 加入光标前文的哈希。
-5. 保留现有规则：用户已翻页 / 移动高亮时不应用。
+目标：网络断开时也尽量识别出来；AI 只做补强。
 
-验收：Rerank 解析通过率 ≥ 90%，P50 ≤ 600 ms；冻结回放 Top-1 不下降。
+1. **分段修复（多处错误的长串）**：在 `crates/qingjian-core/src/correction/` 新增 `segment_repair.rs`。从左到右做最长切分；遇到切不动或残缺的位置，在该位置附近 ≤ 6 个字母的窗口里尝试 1 处编辑（换字母、相邻键、多一个、少一个、相邻颠倒），能接上合法音节就继续往右切。束搜索宽度 8，总编辑数上限 `ceil(len / 6)`，每处编辑按 `TypoCosts` 计代价。输出若干「完整切分 + 代价」交给现有的整句转换打分。适用 4–64 位，替代现在两处编辑「仅 7–24 位且整句不可用」的限制（旧 `two_edit_candidates` 保留做兜底）。
+2. **颠倒专项**：音节内两个字母颠倒（`hoa→hao`、`zhnog→zhong`、`xian→xain` 反向）代价调低到与相邻键同级；同一音节内允许 1 次颠倒 + 1 次别的编辑。
+3. **快速提示放宽**：`fast_local_intent_candidate` 从 ≥7 位放宽到 ≥4 位；4–6 位只允许 1 处编辑。
+4. **「纠」标记**：`Candidate` 新增 `#[serde(default)] pub corrected: bool`（协议是 JSON，旧 DLL 兼容）。纠正产生的候选置 `true`。两套候选窗都要画：`crates/qingjian-render/src/renderer/item.rs`（qingjian 渲染器）和 `apps/windows/server/src/ui/candidates/row.rs` / `view.rs`（GDI），在候选文字后画一个小胶囊「纠」（底 `#FEF3C7`、字 `#B45309`、字号 = 候选注释字号、圆角 4）。
+5. **第 1 位放置规则（本地）**，新增 `engine/correcting/placement.rs`，一处集中判断：
+   - 原串「不像话」（`correction::unlikely_pinyin` 为真，或没有覆盖整串的精确候选）且纠正候选覆盖整串 → 纠正候选放第 1 位，标「纠」。
+   - 原串本身合法且有覆盖整串的精确候选 → 纠正候选**最多放第 2 位**（防误纠），也标「纠」。
+   - 个人敲错表里同一 (敲的, 要的) 已被接受 ≥ 2 次 → 视为高把握，放第 1 位。
+   - 用户按回车原样上屏过的串 → 以后不再纠（沿用 Learner 的「不纠」记录）。
+6. **学习闭环**：用户选中带「纠」的候选 → 写入个人敲错表（`FrequencyLearner` 已有）；选回原第 1 位 → 记一次「拒绝纠正」，同一串连续拒绝 2 次后该串不再自动放第 1 位。
+7. 测试：`engine/tests/correction.rs` 加样本集里的典型例子（每类至少 3 条）；误纠回归用 300 条 clean 样本跑 `--replay`。
 
----
-
-## P4　智能纠错 v2（约 1.5–2 天）
-
-本地（即时）：
-1. `fast_local_intent_candidate` 的触发从 ≥7 位放宽到 ≥3 位，配合 `correction/costs.rs` 的键盘邻键代价；短串只允许 1 处编辑。
-2. 纠错候选在候选窗里带一个小「纠」角标；拼音行用已有的错误标记高亮被改的字母。
-3. 用户采用纠错后写入个人敲错表（`qingjian-learning` 的 `FrequencyLearner` 已有），下次同样的错拼由本地直接解决。
-
-AI（停顿后）：
-4. Intent v2 回复：`{"corrected_pinyin":"kaifazhe","pick":2}`（`pick` 可选）。
-5. Core 校验编辑距离 + 完整合法切分后，**用纠正后的拼音重新做一次本地查询**（新增 `Engine::query_reading(&str) -> Vec<Candidate>`），在新结果前 9 个里：模型给的 `pick` 读音完全一致就用它，否则用新查询的首选。解决 R4：正确词不在错拼串候选里也能救回来。
-6. 触发放宽到 ≥5 位：本地纠错无结果，或整串无法切分。英文、双拼、注音、形码、私密输入仍然排除。
-7. 展示（待用户决定，见文末决策 2）：默认方案 = 本地与 AI 一致或 AI 结果通过校验时，把纠正结果放到第 1 位并带「纠」角标（空格即上屏）；同时保留拼音行右侧提示和 Tab 采用。
-
-验收：50 条错拼 Top-1 ≥ 70%；200 条正确拼音误纠 ≤ 1%；`nihoomma`、`kaifazhes` 端到端用例通过。
+**验收**：本地 Top-1 ≥ 55%（120 条错拼）；clean 误纠 ≤ 1%；本地候选 P95 ≤ 3 ms（`qingjian-cli` 逐键计时）。
+**提交**：`feat(correction): 长串多处错拼的分段修复与「纠」标记`
 
 ---
 
-## P5　AI 联想（约 1 天，形态待用户决定）
+## P4　AI 智能识别 Resolve（约 2 天）
 
-推荐方案 A：
-1. 新增 `PredictionKind::Complete`（与旧 Compose 分开）：≥ 2 音节且停顿 300 ms 后请求，返回 1 条续写，≤ 8 个汉字，必须以当前首选开头。
-2. 显示为拼音行右侧的灰色续写提示，Tab 采用；本地校验：不得含拼音字母、标点不超过 1 个、不与首选完全相同。
-3. 本地候选明显不足时（首页没有覆盖整串的候选），云端词补进第 8、9 格，带云朵标记（沿用 `slots` 配置）。
-4. 所有 Complete 走 Typing 通道，和 Rerank / Intent 共享「最新优先」。
+把 Rerank 和 Intent 合并成**一个请求**：同时做「错拼纠正」和「按上下文选字」。
 
-备选 B：保持「只重排、不续写」现状（当前 plan 文档的原则）。
-备选 C：上屏后联想（候选窗显示 3 个下文词，本地 bigram 先出、AI 再细化）。
+**请求**（新增 `PredictionKind::Resolve`，Typing 通道，防抖 120 ms）
+```json
+{"letters":"wojintainquchifna","segmentation":"wo'jin'tain'qu'chi'fna",
+ "before":"…光标前 ≤64 字…","after":"…光标后 ≤32 字…",
+ "candidates":[{"i":1,"text":"我今天去吃饭","reading":"wo'jin'tian'qu'chi'fan","corrected":true},
+               {"i":2,"text":"…","reading":"…"}]}
+```
+- `candidates` = 当前布局前 12 个本地候选（含 P3 产生的纠正候选），带读音。
+- system prompt 放在 `crates/qingjian-predict/src/resolve/prompt.rs`，内容要点：只理解「当前这一串」想打什么，绝不续写；可以修正拼音（错键、颠倒、漏、多、边界）；结合前后文选同音字；必须严格输出 JSON；给 4 条少样本（错拼、颠倒、上下文同音、无需修改）。
+
+**回复**（≤ 30 token）
+```json
+{"pinyin":"wojintianquchifan","pick":1}
+```
+- `pinyin`：用户本意的完整拼音（无需纠正就原样返回）；`pick`：选中的候选编号，没有合适的给 `0`。
+
+**Core 校验**（`engine/prediction/resolve.rs`）
+1. `pinyin == letters` → 只是选字：`pick` 必须在列表里，否则丢弃。
+2. `pinyin != letters` → 编辑距离上限按长度（<10：2；10–15：3；16–39：4；≥40：5），且必须完整合法切分；然后**用纠正后的拼音重新查一次本地**（新增 `Engine::query_reading(&str) -> Vec<Candidate>`）。`pick` 指向的文字若出现在新结果前 9 个且读音完全一致 → 用它；否则用新结果第 1 个。这一步解决 R4。
+3. 过期（序号不对、用户已翻页或移动高亮、组句已变）→ 丢弃。
+
+**放置**（复用 P3 的 `placement.rs`）
+- AI 结果与当前第 1 位不同，且通过校验 → 放第 1 位，标「纠」，原第 1 位降到第 2 位。
+- 原串合法、AI 只是按上下文换了同音词 → 同样放第 1 位并标「纠」，但要求 `before` 或 `after` 非空（没有上下文时不改第 1 位，只在前 3 位内调整）。
+- AI 与本地纠正结果一致 → 保持第 1 位，「纠」标记不变。
+
+**触发**
+- ≥ 4 个字母，或 ≥ 2 个音节；英文、双拼、注音、形码、问字、表达、私密输入一律不发。
+- 跳过：单字且无上下文；本地首选与次选分差很大、没有纠正候选、也没有上下文。
+- 缓存 key = (letters, before 的哈希, after 的哈希)。
+
+**兼容**
+- Windows 默认打字路径改用 Resolve；旧 `request_rerank` / `request_intent_suggestion` 保留（macOS 还在用，Mac 上验证前不动 macOS 壳）。
+- 拼音行右侧提示 + Tab 采用的旧行为保留：当 AI 结果没能放第 1 位（把握不够）时仍用提示位。
+
+**测试**：解析器（合法 / 多字段 / 编号越界 / 读音不一致 / 编辑距离超限）；`query_reading`；放置规则；Server 端到端：`kaifazhes`、`nihoomma`、`wojintainquchifna`、上下文同音各一条（Mock 回复）。
+**验收**：`--ai-bench` 本地 + AI Top-1 ≥ 80%、Top-3 ≥ 90%；clean 误纠 ≤ 1%；context Top-1 ≥ 85%；P50 ≤ 700 ms。
+**提交**：`feat(predict): 合并重排与意图纠错为上下文感知的 Resolve 请求`
 
 ---
 
-## P6　面板渲染基础（约 2 天）
+## P5　读取光标后文（约 0.5–1 天，要换 TSF DLL）
+
+1. `apps/windows/tsf/src/com/edit/surrounding.rs`：新增 `text_after_caret`：克隆插入点 range，`ShiftEnd(ec, +32)` 后 `GetText`；读不到返回 `None`。私密输入框不读（沿用现有判断）。
+2. 协议 `ClientMessage::Surrounding` 加 `#[serde(default)] after: String`（JSON，旧 DLL / 旧 Server 互通）；`PROTOCOL_VERSION` 只有在本版本周期还没升过时才 +1（看 `git log -p crates/qingjian-platform/src/protocol/mod.rs`）。Linux 插件写死了版本号，升了要一起改。
+3. Server：`surrounding_before` 改为 `surrounding: Option<SurroundingText>`；`rerank_surrounding()` 返回真实 `after`；进入私密 / 组句结束时清空（沿用现有逻辑）。
+4. 测试：`apps/windows/tsf/tests/` 里补 `after` 读取用例；`apps/windows/server/tests/pipe.rs` 补协议兼容用例（旧消息无 `after` 字段也能解析）。
+5. 部署：单独构建、单独替换 DLL，保留旧 DLL 回滚；部署说明写进 `docs/notes/`。
+
+**验收**：在记事本里光标放在一句话中间敲拼音，日志显示 `after` 非空（只记长度，不记内容）。
+**提交**：`feat(tsf): 组句时读取光标后文供智能识别使用`
+
+---
+
+## P6　选定打字模型（约 0.5 天）
+
+用 P1 的 `--ai-bench` + P4 的 Resolve 提示词实测，候选（均为 SiliconFlow 当前在售型号，关思考或本身无思考）：
+- `Qwen/Qwen3-8B`（`enable_thinking=false`）
+- `Qwen/Qwen2.5-7B-Instruct`
+- `Qwen/Qwen3-30B-A3B-Instruct-2507`（MoE，激活约 3.3B，无思考版）
+- `Qwen/Qwen3-14B`（`enable_thinking=false`，作对照）
+
+**选择规则**：Resolve 解析通过率 ≥ 95%，且错拼 Top-1 不低于最好成绩 5 个百分点以内的模型中，选 **P95 最低**的。每个模型跑 3 轮，取中位数。结果写 `docs/notes/ai-model-bench.md`，把胜出者写进配置模板的 `typing_model` 默认值。`panel_model` 保持 `Qwen/Qwen3-14B`。
+
+**提交**：`chore(predict): 按实测结果设定默认打字模型`
+
+---
+
+## P7　面板渲染基础（约 2 天）
 
 两个面板都改用仓库已有的 `qingjian-render`（tiny-skia + cosmic-text，候选窗在 `renderer = "qingjian"` 时已经在用），贴图走 `apps/windows/server/src/ui/layered::present`。不再用 GDI 画面板。
 
 新增 `crates/qingjian-render/src/panel/`：
 - `canvas.rs`：圆角矩形、描边、阴影、胶囊、分割线、可换行文本（返回高度）、文本测宽。
 - `icons.rs`：Lucide 图标（ISC 许可，可商用）的 SVG path 字符串 + 一个小型 path 解析器 → `tiny_skia::Path`，统一 1.75 px 描边。需要的图标：`pin, minus, x, volume-2, copy, star, mic, message-square, sparkles, file-text, scan-text, smile, target, lightbulb, chevron-down, chevron-right, plus, settings, paperclip, image, send, refresh-cw, circle-alert, loader-circle, circle-check, ellipsis, book-plus, message-circle`。
-- `avatar.rs`：内嵌 PNG（工作区已有 `png = 0.18.1`）解码成 Pixmap，圆形裁切。需要 2 个卡通头像素材（A 男生、B 女生，96×96 @2x），放 `assets/ui/avatars/`，附 README 写来源与许可。
+- `avatar.rs`：内嵌 PNG（工作区已有 `png = 0.18.1`）解码成 Pixmap，圆形裁切。头像素材**已提供**：`assets/ui/avatars/avatar_a_boy{,@2x,@3x}.png`、`avatar_b_girl{,@2x,@3x}.png`（40/80/120 px，圆形透明 PNG，见该目录 README），按 DPI 选图，不要再做圆形裁切。
 - `hitmap.rs`：**绘制时同步登记点击区域** `Vec<(Rect, Hit)>`，窗口过程只查表，彻底消除 U3。
 - `tokens.rs`：设计 token（见下表）。
 
@@ -183,15 +235,15 @@ AI（停顿后）：
 
 ---
 
-## P7　学习助手面板重构（约 3 天）
+## P8　学习助手面板重构（约 3 天）
 
-### 7.1 冲突规则
+### 8.1 冲突规则
 严格参考图优先；规范总览只补充严格图里没有的状态（加载、流式步骤、空状态、头部菜单）和 token。具体取舍：
 - 底部按钮：**收藏 / 练一句 / 问 AI（蓝色主按钮）**（严格图）。复制放在每个例句卡片的复制图标上。
 - 标签带图标（严格图）；第 2 个区块标题用「语气」（严格图）。
 - 场景胶囊包含「更多场景 ▾」（严格图）。
 
-### 7.2 布局（420 px 宽，自严格图量取，±2 px 内微调）
+### 8.2 布局（420 px 宽，自严格图量取，±2 px 内微调）
 
 | 区块 | 尺寸 |
 |---|---|
@@ -208,7 +260,7 @@ Tab1：标题行「3 个更地道的替换表达」13 px 粗体 + 右侧灰字�
 
 Tab2：场景胶囊行（选中项实心 primary 白字，其余白底描边，最后是文字按钮「更多场景 ▾」）；场景卡标题「场景 1：朋友聊天（鼓励安慰）」带图标；A 左侧头像 + 浅灰蓝气泡、喇叭在右；B 右侧头像 + 浅绿气泡（目标表达加粗）、喇叭在左，气泡内小号「B」角标；底部「表达亮点」卡带灯泡图标 + 3 条要点。
 
-### 7.3 数据与生成：流式 JSONL 代替 Markdown
+### 8.3 数据与生成：流式 JSONL 代替 Markdown
 每个标签让模型逐行输出 JSON，一行一个区块，UI 每收到一行就填一个卡片（这正是规范图「流式逐步显示」的效果）：
 
 ```
@@ -228,33 +280,33 @@ Tab2（每个场景一次请求）:
 ```
 
 - 新文件 `crates/qingjian-predict/src/companion/`：`prompt.rs`（三个标签和四个场景的 system prompt，各带一条「Do your best」少样本示例）、`jsonl.rs`（按行缓冲，坏行丢弃并计数）、`validate.rs`（英文字段必须是英文；标签 ≤ 3 个、每个 ≤ 4 个汉字；等级匹配 `^(A1|A2|B1|B2|C1|C2)(-(A1|A2|B1|B2|C1|C2))?$`）。
-- 请求参数：关思考、温度 0.5、`max_tokens` Tab0 600 / Tab1 700 / Tab2 700。
+- 请求参数：模型用 `panel_model`（默认 Qwen/Qwen3-14B），关思考、温度 0.5、`max_tokens` Tab0 600 / Tab1 700 / Tab2 700。
 - 按需生成：打开时只请求 Tab0；Tab0 的 header 行到达后在后台预取 Tab1；Tab2 在第一次点击或空闲 2 s 后请求，场景胶囊各自请求、各自缓存。
 - 缓存：`(中文, 英文, tab, 场景)` → 结构化结果，LRU 200 条，存到用户目录 `companion-cache.json`；再次打开秒开。
 - 重绘节流：流式期间最多 30 fps。
 
-### 7.4 状态
+### 8.4 状态
 - 加载（spec_4 / strict_5）：转圈图标 + 「正在生成语感解析…」+ 骨架条 + 「正在分析表达的含义、语气和使用场景，预计 3-5 秒…」。
 - 流式步骤（spec_5）：已获取基础释义 / 正在分析语气和场景 / 正在生成例句 / 正在整理搭配信息，完成的打勾。
 - 错误（spec_6 / strict_5）：红色感叹图标 + 「生成失败」+ 原因 + 「重新生成」按钮（只重试当前标签）。
 - 空状态（spec_7）：文档图标 + 「点击上方选项卡查看内容」+ 说明文字。
 - 头部菜单（spec_9）：点 pin 切换置顶；右键头部弹出「置顶窗口 / 取消置顶 / 最小化 / 关闭」。
 
-### 7.5 动作
+### 8.5 动作
 - 喇叭：新增 `ui/tts.rs`，用 SAPI `ISpVoice::Speak`（`windows` crate 开 `Win32_Media_Speech` 特性），异步标志 + 独立 COM 线程，en-US 语音。
 - 复制：沿用 `copy_to_clipboard`，提示「已复制」1.5 s 后消失。
 - 收藏：沿用 `LearningVault::save_expression`。
 - 练一句：沿用 `StartDrillSession`。
 - 问 AI：打开 AI 问答面板，主题设为当前表达，并预填欢迎卡片。
 
-### 7.6 代码组织
+### 8.6 代码组织
 `ui/companion.rs` 拆成 `ui/companion/{mod.rs, model.rs, layout_header.rs, tab_nuance.rs, tab_alternatives.rs, tab_dialogue.rs, states.rs, input.rs}`，每个文件 < 500 行；`dispatch/mod.rs` 里的三路请求挪到 `dispatch/companion/mod.rs`。
 
 验收：七种状态的预览 PNG 与参考裁图并排对比通过；钉住时打字不覆盖内容（保留现有行为）；所有按钮点击命中区与绘制一致（hitmap 单测）。
 
 ---
 
-## P8　AI 深度问答面板（约 2–3 天）
+## P9　AI 深度问答面板（约 2–3 天）
 
 布局（strict_4）：默认 720 × 520，可最大化（保留现有逻辑）。
 - 左侧栏 168 px：logo +「青简 AI 聊天」+ 右侧「+」；「+ 新对话」按钮；会话列表（图标 + 标题 + 「N条消息 · MM/DD」，选中项 selected-bg）；底部「设置」。
@@ -267,7 +319,7 @@ Tab2（每个场景一次请求）:
 数据：
 - 新增 `crates/qingjian-learning/src/chat_history.rs`：每个会话一个 JSON（id、标题、主题、更新时间、消息），存用户目录 `ai-chat/`；侧栏列最近 20 个。
 - 标题 = 主题；没有主题时取首个问题前 12 个字。
-- 关思考为默认；「深度」开关打开时才允许思考，思考内容折叠显示。
+- 模型用 `panel_model`；关思考为默认；「深度」开关打开时才允许思考，思考内容折叠显示。
 - 流式重绘 ≤ 30 fps；Markdown 只重新解析最后一个气泡。
 
 代码：`ui/ai_assistant.rs` 拆成 `ui/ai_assistant/{mod.rs, sidebar.rs, topic_bar.rs, messages.rs, composer.rs, input.rs}`。
@@ -276,22 +328,35 @@ Tab2（每个场景一次请求）:
 
 ---
 
-## P9　回归、文档、部署（约 0.5 天）
+## P10　回归、文档、部署（约 0.5 天）
 
-沿用 `docs/plan/ai-current-input-optimization.md` 的 Phase 5 清单：`cargo fmt --check`、`cargo test -p qingjian-core --lib`、`-p qingjian-predict --lib`、`-p qingjian-windows-server`、`cargo check -p qingjian-windows-server`、`git diff --check`、`qingjian-cli --replay` 与 `--ai-bench`。部署前备份 `E:\Qingjian\qingjian-server.exe`，核对 SHA-256；非必要不换 TSF DLL。同步 `docs/notes/crate-notes.md` 与 `CHANGELOG.md`。
+每个 Phase 提交前都跑：
+1. `cargo fmt --all -- --check`
+2. `cargo clippy --all-targets -- -D warnings`（非 Apple 平台排除 `qingjian-macos`）
+3. `cargo test -p qingjian-core --lib`、`-p qingjian-predict --lib`、`-p qingjian-render`
+4. Windows 上：`cargo test -p qingjian-windows-server`、`cargo check -p qingjian-windows-server`
+5. `git diff --check`
+6. `qingjian-cli --replay`（冻结数据）与 `--ai-bench`（输入线 Phase）
+7. 部署前备份 `E:\Qingjian\qingjian-server.exe`，核对 Release 与线上 SHA-256；非 P5 不换 TSF DLL
+8. 同步 `docs/notes/crate-notes.md`、`CHANGELOG.md`、`docs/plan/ai-current-input-optimization.md` 的状态
 
 ---
 
-## 给 Sonnet 的执行规则
-1. 按 P0 → P1 → P2 … 顺序；每个 Phase 一个提交，提交信息用 Conventional Commits，说明用中文，不加 AI 署名。
-2. 任何改动都不能让本地候选变慢；网络失败必须静默降级。
-3. 单文件 ≤ 800 行（目标 500）；新文件要有 `//!` 头；错误用 `thiserror`；依赖用 `cargo add` 并提到 workspace。
-4. 不把用户输入、光标前文写进日志；私密输入框不发任何请求。
-5. 每个界面 Phase 都要先出预览 PNG，并和 `docs/design/reference/` 并排对比，再接到 Windows 窗口。
-6. Windows Server 只能在 Windows 机器上编译和实测；在 Linux 上只跑 core / predict / render 的测试和预览。
+## Sonnet 执行规范（必须遵守）
 
-## 待用户决定（未回复时按推荐执行）
-1. AI 联想形态：**A 整句补全 + 云端词（推荐）** / B 只重排 / C 上屏后联想。
-2. 纠错展示：**高置信时直接放第 1 位并带「纠」角标（推荐）** / 只在右侧提示，按 Tab 采用。
-3. 模型：打字通道用更快的小模型（Qwen3-8B 关思考，或 Qwen2.5-7B-Instruct），面板继续用 Qwen3-14B 关思考。**推荐：P0 实测后选 P95 最低且准确率达标的那个。**
-4. 头像素材：需要 2 张卡通头像（A 男生、B 女生）。
+**必读**：`CLAUDE.md`、`docs/contributing.md`、本文件。三者冲突时：用户在本文件里锁定的产品决定 > `docs/contributing.md` > 其它。
+
+1. **顺序**：P1 → P2 → P3 → P4 → P5 → P6，然后 P7 → P8 → P9，最后 P10。不跳步；某个 Phase 卡住超过两次尝试，停下来写清卡点，再问用户。
+2. **一个 Phase 一个提交**（P1 可拆两个）。提交信息用 Conventional Commits，类型 / 范围英文小写，说明用中文，正文写「为什么」；**不加 AI 署名**。不要 `--no-verify` 跳过钩子。
+3. **本地优先**：任何改动不得让本地候选变慢（P95 ≤ 3 ms）；网络失败、超时、坏回复一律静默降级，不弹窗。
+4. **AI 不能凭空造词**：上屏候选必须来自本地词库查询（Resolve 的纠正结果也要经 `query_reading` 落到本地候选上）。
+5. **隐私**：不把用户输入、光标前后文写进日志（只记长度和耗时）；私密输入框不发任何请求；API 密钥不打印。
+6. **代码组织**：单文件 ≤ 800 行（目标 500）；改到超长文件时顺手按职责拆目录；新文件写 `//!` 文件头；错误用 `thiserror`；依赖用 `cargo add` 并提到根 `[workspace.dependencies]`。
+7. **界面**：每个界面 Phase 先在 `examples/preview.rs` 出预览 PNG，用 `tools/ui-diff/diff.py` 和 `docs/design/reference/` 并排对比，自查通过后再接到 Windows 窗口；把对比图路径写进提交正文。
+8. **验证边界**：Windows Server 和 TSF 只能在 Windows 机器上编译和实测；在 Linux / 云端只跑 core / predict / render 测试和预览。不要声称在线效果已验证，除非真的跑了 `--ai-bench`。
+9. **每个 Phase 完成后**在本文件对应小节末尾追加一行「状态：已完成 / commit / 关键数字」，并推送到 `my-github` 远端的 `owner/v0.1.4-english-learning`。
+10. **不确定就问**：产品行为不在本文件里的，先问用户，不要自行发挥。
+
+## 给 Sonnet 的启动指令（复制即可）
+
+> 你在青简输入法仓库的 `source` 目录工作，分支 `owner/v0.1.4-english-learning`。先完整阅读 `CLAUDE.md`、`docs/contributing.md` 和 `docs/plan/ai-panel-rebuild.md`，严格遵守其中的「已锁定的产品决定」和「Sonnet 执行规范」。从 P1 开始，按顺序逐个 Phase 执行：每个 Phase 先列出要改的文件和测试，再动手；完成后跑该 Phase 的测试与验收，提交（中文 Conventional Commits，无 AI 署名），在计划文件里记录状态，推送到 `my-github`。遇到计划里没写的产品行为，停下来问我。
