@@ -5,6 +5,7 @@
 
 mod block;
 mod cache;
+mod cloze;
 mod jsonl;
 mod prompt;
 mod request;
@@ -15,6 +16,7 @@ mod validate;
 
 pub use block::{Block, Speaker};
 pub use cache::{BlockCache, CAPACITY as CACHE_CAPACITY};
+pub use cloze::{BLANK, cloze};
 pub use jsonl::{BlockParser, ParseStats};
 pub use prompt::messages;
 pub use request::CompanionRequest;
