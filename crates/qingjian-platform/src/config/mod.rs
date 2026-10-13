@@ -321,8 +321,9 @@ enabled = false
 # OpenAI 兼容接口地址与模型名（SiliconFlow + Qwen 默认值）
 base_url = "https://api.siliconflow.cn/v1"
 model = "Qwen/Qwen3-14B"
-# 打字时用的模型（重排、纠错、翻译）要快，面板（学习助手、AI 问答）用的模型要好；留空都用上面的 model
-typing_model = ""
+# 打字时用的模型（智能识别、翻译）要快，面板（学习助手、AI 问答）用的模型要好；留空都用上面的 model。
+# 默认的打字模型是实测选出来的（见 docs/notes/ai-model-bench.md）；换了上面的接口地址，要把它改成那个接口的模型名或留空
+typing_model = "Qwen/Qwen3.5-35B-A3B"
 panel_model = ""
 # 推理强度（reasoning_effort）：留空则不发
 reasoning_effort = ""
@@ -566,7 +567,7 @@ mod tests {
         assert!(config.predict.enabled);
         assert_eq!(config.predict.lookback, 10);
         assert_eq!(config.predict.model, "Qwen/Qwen3-14B");
-        assert_eq!(config.predict.typing_model(), "Qwen/Qwen3-14B");
+        assert_eq!(config.predict.typing_model(), "Qwen/Qwen3.5-35B-A3B");
         assert_eq!(config.predict.panel_model(), "Qwen/Qwen3-14B");
         assert_eq!(config.predict.reasoning_effort, "");
         assert_eq!(config.predict.api_key_env, "QINGJIAN_API_KEY");

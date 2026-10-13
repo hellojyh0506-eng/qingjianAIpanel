@@ -213,6 +213,12 @@ core / learning / render / predict / platform / cli 测试全过，Windows serve
 
 **提交**：`chore(predict): 按实测结果设定默认打字模型`
 
+状态：已完成（2026-10-13，Linux 沙箱，**测得比计划粗**）。默认打字模型定为 **`Qwen/Qwen3.5-35B-A3B`**（context Top1 30% → 90%、P95 1251 ms、价格最低），写进 `PredictConfig::default()` 与配置模板，详见 `docs/notes/ai-model-bench.md`。
+**与计划的偏离**：① 候选不是计划列的那四个：用户给了新价目表，加测了 Qwen3.5-35B-A3B / 122B / 27B、DeepSeek-V4-Flash、GLM-5.3-Flash、Step-3.5-Flash，计划里的 Qwen3-8B / 14B / 30B-A3B-Instruct-2507 / Qwen2.5-7B 也测了；② **每类只取 30 条、只跑 1 轮**（计划是 3 轮取中位数），样本小；③ 沙箱到接口往返 0.5 s，延迟只能互相比较，「P50 ≤ 700 ms」仍无法验证；④ 「解析通过率 ≥ 95%」在 multi 类没有任何模型满足（模型回的拼音自己就错），只按 context / typo 判断。
+**没解决**：multi（多处错拼）云端没有增益（23.3% → 最高 26.7%），收益靠 P3 本地分段修复；typo 上 AI 持平本地。GLM-5.3-Flash（关不掉思考，全部超时）与 Step-3.5-Flash（不支持 JSON 模式）不可用。
+**注意**：已生成 `config.toml` 的用户配置里是 `typing_model = ""`，不会自动换成新默认值，要手动改；换了 `base_url` 的用户也要自己改。
+**未验证**：用户网络下的真实延迟与 3 轮中位数。
+
 ---
 
 ## P7　面板渲染基础（约 2 天）

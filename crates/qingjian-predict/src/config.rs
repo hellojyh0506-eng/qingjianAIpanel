@@ -50,13 +50,17 @@ pub struct PredictConfig {
     pub reasoning_effort: String,
 }
 
+/// 默认打字模型：按 `docs/notes/ai-model-bench.md` 的实测选的（上下文选字最准、P95 最低、价格最低）。
+/// 只在默认的 SiliconFlow 接口上有意义；换了接口的用户要在配置里自己填。
+pub const DEFAULT_TYPING_MODEL: &str = "Qwen/Qwen3.5-35B-A3B";
+
 impl Default for PredictConfig {
     fn default() -> Self {
         Self {
             enabled: false,
             base_url: "https://api.siliconflow.cn/v1".to_owned(),
             model: "Qwen/Qwen3-14B".to_owned(),
-            typing_model: String::new(),
+            typing_model: DEFAULT_TYPING_MODEL.to_owned(),
             panel_model: String::new(),
             api_key: None,
             api_key_env: "QINGJIAN_API_KEY".to_owned(),
@@ -118,8 +122,11 @@ mod tests {
     #[test]
     fn models_fall_back_to_the_shared_model() {
         let mut config = PredictConfig::default();
-        assert_eq!(config.typing_model(), "Qwen/Qwen3-14B");
+        assert_eq!(config.typing_model(), DEFAULT_TYPING_MODEL);
         assert_eq!(config.panel_model(), "Qwen/Qwen3-14B");
+
+        config.typing_model = String::new();
+        assert_eq!(config.typing_model(), "Qwen/Qwen3-14B");
 
         config.typing_model = " Qwen/Qwen3-8B ".to_owned();
         assert_eq!(config.typing_model(), "Qwen/Qwen3-8B");
