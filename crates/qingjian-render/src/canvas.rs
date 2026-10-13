@@ -1,7 +1,7 @@
 //! 位图画布：tiny-skia `Pixmap` 之上的几个填充原语，加字形位图的逐像素 source-over 混合。坐标一律是像素、左上角原点。
 
 use tiny_skia::{
-    BlendMode, FillRule, FilterQuality, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap,
+    BlendMode, FillRule, FilterQuality, LineCap, LineJoin, Mask, Paint, Path, PathBuilder, Pixmap,
     PixmapPaint, PremultipliedColorU8, Rect, Stroke, Transform,
 };
 
@@ -11,17 +11,28 @@ use crate::error::RenderError;
 pub(crate) struct Canvas {
     /// 预乘 RGBA。
     pixmap: Pixmap,
+
+    /// 裁剪区域：之后的所有绘制只落在它里面；`None` 为不裁剪。
+    clip: Option<Clip>,
+}
+
+/// 矩形裁剪：像素级混合直接比边界，路径与位图走 tiny-skia 的遮罩。
+struct Clip {
+    mask: Mask,
+
+    /// 左、上、右、下（像素，右下不含）。
+    bounds: (i32, i32, i32, i32),
 }
 
 impl Canvas {
     pub(crate) fn new(width: u32, height: u32) -> Result<Self, RenderError> {
         Pixmap::new(width, height)
-            .map(|pixmap| Self { pixmap })
+            .map(|pixmap| Self { pixmap, clip: None })
             .ok_or(RenderError::InvalidSize { width, height })
     }
 
     pub(crate) fn from_pixmap(pixmap: Pixmap) -> Self {
-        Self { pixmap }
+        Self { pixmap, clip: None }
     }
 
     pub(crate) fn width(&self) -> u32 {
@@ -36,6 +47,28 @@ impl Canvas {
         self.pixmap
     }
 
+    /// 设置（或取消）矩形裁剪，坐标是像素；取整到像素边界。
+    pub(crate) fn set_clip(&mut self, rect: Option<(f32, f32, f32, f32)>) {
+        self.clip = rect.and_then(|(x, y, w, h)| {
+            let left = (x.floor() as i32).max(0);
+            let top = (y.floor() as i32).max(0);
+            let right = ((x + w).ceil() as i32).min(self.pixmap.width() as i32);
+            let bottom = ((y + h).ceil() as i32).min(self.pixmap.height() as i32);
+            let mut mask = Mask::new(self.pixmap.width(), self.pixmap.height())?;
+            let area = Rect::from_ltrb(left as f32, top as f32, right as f32, bottom as f32)?;
+            mask.fill_path(
+                &PathBuilder::from_rect(area),
+                FillRule::Winding,
+                false,
+                Transform::identity(),
+            );
+            Some(Clip {
+                mask,
+                bounds: (left, top, right, bottom),
+            })
+        });
+    }
+
     pub(crate) fn fill_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: Color) {
         let Some(rect) = Rect::from_xywh(x, y, width, height) else {
             return;
@@ -44,7 +77,7 @@ impl Canvas {
             rect,
             &paint(color, BlendMode::SourceOver),
             Transform::identity(),
-            None,
+            self.clip.as_ref().map(|clip| &clip.mask),
         );
     }
 
@@ -68,7 +101,7 @@ impl Canvas {
             &paint(color, blend),
             FillRule::Winding,
             Transform::identity(),
-            None,
+            self.clip.as_ref().map(|clip| &clip.mask),
         );
     }
 
@@ -91,7 +124,7 @@ impl Canvas {
             &paint(color, BlendMode::SourceOver),
             &stroke,
             transform,
-            None,
+            self.clip.as_ref().map(|clip| &clip.mask),
         );
     }
 
@@ -135,8 +168,14 @@ impl Canvas {
             quality: FilterQuality::Bicubic,
             ..PixmapPaint::default()
         };
-        self.pixmap
-            .draw_pixmap(0, 0, source.as_ref(), &paint, transform, None);
+        self.pixmap.draw_pixmap(
+            0,
+            0,
+            source.as_ref(),
+            &paint,
+            transform,
+            self.clip.as_ref().map(|clip| &clip.mask),
+        );
     }
 
     /// 把另一张位图整张叠上来（左上角对齐到 `(x, y)`）。
@@ -196,7 +235,16 @@ impl Canvas {
 
     /// source-over：`dst = src + dst × (1 − src.a)`。
     fn blend_pixel(&mut self, x: i32, y: i32, src: PremultipliedColorU8) {
-        if x < 0 || y < 0 || x >= self.pixmap.width() as i32 || y >= self.pixmap.height() as i32 {
+        let (left, top, right, bottom) = self.clip.as_ref().map_or(
+            (
+                0,
+                0,
+                self.pixmap.width() as i32,
+                self.pixmap.height() as i32,
+            ),
+            |clip| clip.bounds,
+        );
+        if x < left || y < top || x >= right || y >= bottom {
             return;
         }
         let index = y as usize * self.pixmap.width() as usize + x as usize;

@@ -26,6 +26,9 @@ pub struct PanelSurface<'a, H> {
 
     /// 阴影留的边距（点）：窗口在位图里偏移这么多。
     margin: f32,
+
+    /// 当前裁剪区域（点，窗口坐标）：滚动区里画出去的东西不能点到。
+    clip: Option<Area>,
 }
 
 /// 画完的一帧。
@@ -47,7 +50,15 @@ impl<'a, H> PanelSurface<'a, H> {
             canvas,
             hits: HitMap::new(),
             margin,
+            clip: None,
         }
+    }
+
+    /// 设置（或取消）裁剪区域：之后的绘制只落在区域内，登记的点击区也被裁到区域内（区域外的部分点不到）。
+    pub fn set_clip(&mut self, area: Option<Area>) {
+        let rect = area.map(|area| self.px(area));
+        self.canvas.set_clip(rect);
+        self.clip = area;
     }
 
     /// 填充圆角矩形，`radius` 为 0 即直角。
@@ -191,6 +202,13 @@ impl<'a, H> PanelSurface<'a, H> {
 
     /// 登记点击区域；后登记的盖在先登记的上面。
     pub fn hit(&mut self, area: Area, hit: H) {
+        let area = match self.clip {
+            Some(clip) => match area.intersect(clip) {
+                Some(area) => area,
+                None => return,
+            },
+            None => area,
+        };
         self.hits.push(area, hit);
     }
 

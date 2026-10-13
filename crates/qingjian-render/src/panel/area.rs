@@ -39,6 +39,15 @@ impl Area {
         }
     }
 
+    /// 两个区域的交集；不相交返回 `None`。
+    pub fn intersect(&self, other: Area) -> Option<Area> {
+        let left = self.x.max(other.x);
+        let top = self.y.max(other.y);
+        let right = self.right().min(other.right());
+        let bottom = self.bottom().min(other.bottom());
+        (right > left && bottom > top).then(|| Area::new(left, top, right - left, bottom - top))
+    }
+
     /// 点是否落在区域内：左、上边界算在内，右、下边界不算，相邻区域不会同时命中。
     pub fn contains(&self, x: f32, y: f32) -> bool {
         x >= self.x && x < self.right() && y >= self.y && y < self.bottom()
@@ -56,6 +65,16 @@ mod tests {
         assert!(area.contains(29.9, 19.9));
         assert!(!area.contains(30.0, 15.0));
         assert!(!area.contains(15.0, 20.0));
+    }
+
+    #[test]
+    fn intersect_clips_to_the_overlap() {
+        let a = Area::new(0.0, 0.0, 10.0, 10.0);
+        assert_eq!(
+            a.intersect(Area::new(5.0, 5.0, 10.0, 10.0)),
+            Some(Area::new(5.0, 5.0, 5.0, 5.0))
+        );
+        assert_eq!(a.intersect(Area::new(10.0, 0.0, 5.0, 5.0)), None);
     }
 
     #[test]
