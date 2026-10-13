@@ -14,6 +14,9 @@ use crate::prompt::Reply;
 /// 缓存条数。
 const CACHE_CAPACITY: usize = 64;
 
+/// 距上次网络请求超过这么久，下一个请求前先预热连接（服务端多在一分钟内回收空闲连接）。
+const WARM_UP_AFTER_IDLE: Duration = Duration::from_secs(45);
+
 /// 完整长拼音的候选重排稍作延迟，给快速打字时可能紧随其后的尾部错字留出合并窗口。
 const LONG_RERANK_DEBOUNCE: Duration = Duration::from_millis(280);
 const INTENT_DEBOUNCE: Duration = Duration::from_millis(50);
@@ -87,6 +90,9 @@ pub struct Worker {
 
     /// 结果缓存。
     cache: PredictionCache,
+
+    /// 上次碰网络（含预热）的时刻。
+    last_network: Option<Instant>,
 }
 
 /// 缓存里存的是解析后的回复。
@@ -105,6 +111,7 @@ impl Worker {
             client,
             debounce,
             cache: PredictionCache::with_capacity(CACHE_CAPACITY),
+            last_network: None,
         }
     }
 
@@ -118,11 +125,16 @@ impl Worker {
 
     async fn run_async(mut self) -> Result<(), PredictError> {
         let mut latest_request: Option<PredictionRequest> = None;
+        self.warm_up_if_idle();
         loop {
             let request = match latest_request.take() {
                 Some(req) => req,
                 None => match self.requests.recv().await {
-                    Some(req) => req,
+                    Some(req) => {
+                        // 与防抖窗口并行握手，真正发请求时连接已经热了
+                        self.warm_up_if_idle();
+                        req
+                    }
                     None => break,
                 },
             };
@@ -182,6 +194,7 @@ impl Worker {
                 }
             };
 
+            self.last_network = Some(Instant::now());
             match res {
                 Ok(reply) => {
                     tracing::info!(
@@ -208,6 +221,17 @@ impl Worker {
             }
         }
         Ok(())
+    }
+
+    /// 空闲够久（或还没连过）就在后台预热连接，不等结果。
+    fn warm_up_if_idle(&mut self) {
+        let idle = self
+            .last_network
+            .is_none_or(|last| last.elapsed() > WARM_UP_AFTER_IDLE);
+        if idle {
+            self.last_network = Some(Instant::now());
+            tokio::spawn(self.client.warm_up_task());
+        }
     }
 
     fn reply(&self, sequence: u64, reply: Cached) {

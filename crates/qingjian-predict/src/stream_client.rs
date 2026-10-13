@@ -8,6 +8,7 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Sender;
 
+use crate::thinking::ThinkingSwitch;
 use crate::web_search::SearchResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,16 +27,6 @@ pub enum StreamEvent {
     Done { ttft_ms: u128, total_ms: u128 },
     /// 错误通知
     Error(String),
-}
-
-/// 流式请求体结构
-#[derive(Serialize)]
-struct ChatCompletionStreamRequest<'a> {
-    model: &'a str,
-    messages: &'a [ChatMessage],
-    stream: bool,
-    max_tokens: u32,
-    temperature: f32,
 }
 
 #[derive(Deserialize)]
@@ -61,6 +52,9 @@ pub struct StreamChatClient {
     base_url: String,
     api_key: String,
     model: String,
+
+    /// 允许模型思考；默认关，面板要的是首字快。
+    allow_thinking: bool,
 }
 
 impl StreamChatClient {
@@ -76,7 +70,41 @@ impl StreamChatClient {
             base_url,
             api_key,
             model,
+            allow_thinking: false,
         }
+    }
+
+    /// 允许思考（「深度」模式）。只对有专用开关的接口有区别。
+    pub fn with_thinking(mut self, allow: bool) -> Self {
+        self.allow_thinking = allow;
+        self
+    }
+
+    /// 组请求体：在有专用开关的接口上关思考，其余接口不多发参数。
+    fn request_body(
+        &self,
+        messages: &[ChatMessage],
+        stream: bool,
+        max_tokens: u32,
+        temperature: f32,
+    ) -> serde_json::Value {
+        let effective_model = if self.model == "auto" {
+            "kilo-auto/free"
+        } else {
+            &self.model
+        };
+        let mut body = serde_json::json!({
+            "model": effective_model,
+            "messages": messages,
+            "stream": stream,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        });
+        let switch = ThinkingSwitch::for_url(&self.base_url);
+        if !self.allow_thinking && switch.has_dedicated_flag() {
+            switch.disable(&mut body);
+        }
+        body
     }
 
     /// 快速探测端点联通性与网络握手耗时
@@ -100,24 +128,12 @@ impl StreamChatClient {
             headers.insert("X-KILOCODE-MACHINEID", HeaderValue::from_static("DESKTOP-FOMGFJO"));
         }
 
-        let effective_model = if self.model == "auto" {
-            "kilo-auto/free"
-        } else {
-            &self.model
-        };
-
         let messages = [ChatMessage {
             role: "user".to_string(),
             content: "ping".to_string(),
         }];
 
-        let body = ChatCompletionStreamRequest {
-            model: effective_model,
-            messages: &messages,
-            stream: false,
-            max_tokens: 2,
-            temperature: 0.1,
-        };
+        let body = self.request_body(&messages, false, 2, 0.1);
 
         let req = self.http.post(&url).headers(headers).json(&body);
         let resp = match req.send().await {
@@ -159,19 +175,7 @@ impl StreamChatClient {
             headers.insert("X-KILOCODE-MACHINEID", HeaderValue::from_static("DESKTOP-FOMGFJO"));
         }
 
-        let effective_model = if self.model == "auto" {
-            "kilo-auto/free"
-        } else {
-            &self.model
-        };
-
-        let body = ChatCompletionStreamRequest {
-            model: effective_model,
-            messages: &messages,
-            stream: true,
-            max_tokens,
-            temperature: 0.7,
-        };
+        let body = self.request_body(&messages, true, max_tokens, 0.7);
 
         let req = match self.http.post(&url).headers(headers).json(&body).build() {
             Ok(r) => r,
@@ -288,5 +292,54 @@ impl StreamChatClient {
             ttft_ms: ttft_ms.unwrap_or(total_ms),
             total_ms,
         }).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn messages() -> Vec<ChatMessage> {
+        vec![ChatMessage { role: "user".to_owned(), content: "hi".to_owned() }]
+    }
+
+    fn client(base_url: &str) -> StreamChatClient {
+        StreamChatClient::new(base_url.to_owned(), "k".to_owned(), "Qwen/Qwen3-14B".to_owned())
+    }
+
+    #[test]
+    fn siliconflow_stream_requests_turn_thinking_off() {
+        let body = client("https://api.siliconflow.cn/v1").request_body(&messages(), true, 2048, 0.7);
+        assert_eq!(body["enable_thinking"], false);
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["model"], "Qwen/Qwen3-14B");
+        assert_eq!(body["max_tokens"], 2048);
+    }
+
+    #[test]
+    fn thinking_can_be_allowed_for_deep_mode() {
+        let body = client("https://api.siliconflow.cn/v1")
+            .with_thinking(true)
+            .request_body(&messages(), true, 2048, 0.7);
+        assert!(body.get("enable_thinking").is_none());
+    }
+
+    #[test]
+    fn zhipu_uses_its_own_field_and_unknown_hosts_get_nothing_extra() {
+        let body = client("https://open.bigmodel.cn/api/paas/v4").request_body(&messages(), true, 10, 0.7);
+        assert_eq!(body["thinking"]["type"], "disabled");
+        assert!(body.get("enable_thinking").is_none());
+
+        let body = client("https://api.openai.com/v1").request_body(&messages(), true, 10, 0.7);
+        assert!(body.get("enable_thinking").is_none());
+        assert!(body.get("thinking").is_none());
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn auto_model_maps_to_kilo_free() {
+        let mut c = client("https://api.kilo.ai/v1");
+        c.model = "auto".to_owned();
+        assert_eq!(c.request_body(&messages(), false, 2, 0.1)["model"], "kilo-auto/free");
     }
 }

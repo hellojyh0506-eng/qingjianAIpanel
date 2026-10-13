@@ -11,8 +11,14 @@ pub struct PredictConfig {
     /// OpenAI 兼容接口地址（不含 `/chat/completions`）。
     pub base_url: String,
 
-    /// 模型名。
+    /// 模型名；`typing_model` / `panel_model` 留空时都回落到它。
     pub model: String,
+
+    /// 打字链路（重排、纠错、翻译）用的模型，追求快；留空回落到 `model`。
+    pub typing_model: String,
+
+    /// 学习助手与 AI 问答面板用的模型，追求质量；留空回落到 `model`。
+    pub panel_model: String,
 
     /// 密钥。留空则读 `api_key_env` 指定的环境变量。
     pub api_key: Option<String>,
@@ -50,6 +56,8 @@ impl Default for PredictConfig {
             enabled: false,
             base_url: "https://api.siliconflow.cn/v1".to_owned(),
             model: "Qwen/Qwen3-14B".to_owned(),
+            typing_model: String::new(),
+            panel_model: String::new(),
             api_key: None,
             api_key_env: "QINGJIAN_API_KEY".to_owned(),
             timeout_ms: 3000,
@@ -64,6 +72,16 @@ impl Default for PredictConfig {
 }
 
 impl PredictConfig {
+    /// 打字链路实际用的模型名。
+    pub fn typing_model(&self) -> &str {
+        non_blank(&self.typing_model).unwrap_or_else(|| self.model.trim())
+    }
+
+    /// 面板（学习助手、AI 问答）实际用的模型名。
+    pub fn panel_model(&self) -> &str {
+        non_blank(&self.panel_model).unwrap_or_else(|| self.model.trim())
+    }
+
     /// 配置里的密钥优先，其次环境变量；两边都没有返回 `None`。
     pub fn resolve_api_key(&self) -> Option<String> {
         self.api_key
@@ -86,5 +104,29 @@ impl PredictConfig {
             max_items: self.slots.max(1) + 2,
             sentence: self.sentence,
         }
+    }
+}
+
+fn non_blank(value: &str) -> Option<&str> {
+    Some(value.trim()).filter(|v| !v.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn models_fall_back_to_the_shared_model() {
+        let mut config = PredictConfig::default();
+        assert_eq!(config.typing_model(), "Qwen/Qwen3-14B");
+        assert_eq!(config.panel_model(), "Qwen/Qwen3-14B");
+
+        config.typing_model = " Qwen/Qwen3-8B ".to_owned();
+        assert_eq!(config.typing_model(), "Qwen/Qwen3-8B");
+        assert_eq!(config.panel_model(), "Qwen/Qwen3-14B");
+
+        config.panel_model = "x/panel".to_owned();
+        config.model = String::new();
+        assert_eq!(config.panel_model(), "x/panel");
     }
 }

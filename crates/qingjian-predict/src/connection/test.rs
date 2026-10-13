@@ -31,7 +31,7 @@ impl ConnectionTest {
             .resolve_api_key()
             .ok_or_else(|| PredictError::MissingApiKey(config.api_key_env.clone()))?;
         let client = ChatClient::new(config, api_key);
-        let model = config.model.clone();
+        let model = config.typing_model().to_owned();
         let (sender, result) = mpsc::channel();
         std::thread::Builder::new()
             .name("qingjian-connection-test".to_owned())

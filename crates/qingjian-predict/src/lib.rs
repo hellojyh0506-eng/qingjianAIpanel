@@ -14,6 +14,7 @@ mod connection;
 mod error;
 mod gloss;
 mod prompt;
+mod thinking;
 mod worker;
 
 pub mod stream_client;

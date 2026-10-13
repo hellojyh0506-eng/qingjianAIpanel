@@ -419,10 +419,9 @@ impl Router {
                     .or_else(|_| std::env::var("SILICONFLOW_API_KEY"))
                     .unwrap_or_default()
             });
-            let model = if !self.config.predict.model.is_empty() {
-                self.config.predict.model.clone()
-            } else {
-                "Qwen/Qwen3-14B".to_string()
+            let model = match self.config.predict.panel_model() {
+                "" => "Qwen/Qwen3-14B".to_string(),
+                panel => panel.to_string(),
             };
 
             let sink = self.candidates.clone_sink();
@@ -890,10 +889,11 @@ impl Router {
 
                 let model = if let Ok(m) = std::env::var("QINGJIAN_AI_MODEL") {
                     m
-                } else if !self.config.predict.model.is_empty() {
-                    self.config.predict.model.clone()
                 } else {
-                    "Qwen/Qwen3-14B".to_string()
+                    match self.config.predict.panel_model() {
+                        "" => "Qwen/Qwen3-14B".to_string(),
+                        panel => panel.to_string(),
+                    }
                 };
 
                 let api_key = if let Ok(k) = std::env::var("QINGJIAN_AI_API_KEY") {

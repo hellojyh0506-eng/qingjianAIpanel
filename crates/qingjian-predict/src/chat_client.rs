@@ -13,6 +13,7 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use crate::config::PredictConfig;
 use crate::error::PredictError;
 use crate::prompt::{self, Reply};
+use crate::thinking::ThinkingSwitch;
 
 /// 联想与翻译回复的 token 上限：口语即时翻译 120，组句 500，问字 300，对比评测 800，深度学习 1800（留足思考空间）。
 const TRANSLATE_MAX_TOKENS: u32 = 120;
@@ -22,8 +23,11 @@ const QUESTION_MAX_TOKENS: u32 = 300;
 const COMPARE_MAX_TOKENS: u32 = 800;
 const DEEP_LEARN_MAX_TOKENS: u32 = 1800;
 
-/// 采样温度：联想要稳，不要花。
+/// 兜底采样温度（释义兜底、连通性测试）。
 const TEMPERATURE: f32 = 0.3;
+
+/// 预热请求的总时限；只为让连接握手完成，失败无所谓。
+const WARM_UP_TIMEOUT: Duration = Duration::from_millis(3000);
 
 /// OpenCode Zen / Go 自 2026-09-06 起要求每个请求带这个头，值是同一会话内稳定的 ID，
 /// 他们靠它把同一会话路由到同一上游复用 prompt 缓存，缺了直接 400。
@@ -43,8 +47,11 @@ pub struct ChatClient {
     /// API 密钥（绝不输出到日志）。
     api_key: String,
 
-    /// 模型名。
-    model: String,
+    /// 打字链路用的模型。
+    typing_model: String,
+
+    /// 学习 / 对比等面板链路用的模型。
+    panel_model: String,
 
     /// 超时。
     timeout: Duration,
@@ -62,7 +69,8 @@ impl ChatClient {
             http: http_client(&config.base_url),
             base_url: config.base_url.clone(),
             api_key,
-            model: config.model.clone(),
+            typing_model: config.typing_model().to_owned(),
+            panel_model: config.panel_model().to_owned(),
             timeout: Duration::from_millis(config.timeout_ms),
             reasoning_effort: parse_reasoning_effort(&config.reasoning_effort),
             thinking_switch: ThinkingSwitch::for_url(&config.base_url),
@@ -72,15 +80,7 @@ impl ChatClient {
     pub async fn complete(&self, request: &PredictionRequest) -> Result<Reply, PredictError> {
         let user = prompt::user_prompt(request);
         tracing::debug!(sequence = request.sequence, %user, "联想请求");
-        let max_tokens = match request.kind {
-            qingjian_core::PredictionKind::Translate => TRANSLATE_MAX_TOKENS,
-            qingjian_core::PredictionKind::Compose => COMPOSE_MAX_TOKENS,
-            qingjian_core::PredictionKind::Intent => 96,
-            qingjian_core::PredictionKind::Rerank => RERANK_MAX_TOKENS,
-            qingjian_core::PredictionKind::Question => QUESTION_MAX_TOKENS,
-            qingjian_core::PredictionKind::Compare => COMPARE_MAX_TOKENS,
-            qingjian_core::PredictionKind::DeepLearn => DEEP_LEARN_MAX_TOKENS,
-        };
+        let profile = CallProfile::of(request.kind);
         // 快速翻译采用有限总耗时；完整学习与对比请求可以使用更长预算。
         // 具体重试/读响应超时统一由 chat_with_timeout 的总 deadline 约束。
         let effective_timeout = match request.kind {
@@ -89,9 +89,15 @@ impl ChatClient {
             qingjian_core::PredictionKind::Compare => self.timeout.max(Duration::from_millis(10000)),
             _ => self.timeout,
         };
-        let content = self
-            .chat_with_timeout(prompt::system_prompt(request), &user, max_tokens, effective_timeout)
-            .await?;
+        let model = if profile.panel { &self.panel_model } else { &self.typing_model };
+        let call = Call {
+            model,
+            max_tokens: profile.max_tokens,
+            temperature: profile.temperature,
+            allow_thinking: profile.allow_thinking,
+            timeout: effective_timeout,
+        };
+        let content = self.chat_with(prompt::system_prompt(request), &user, &call).await?;
         let t_val = std::time::Instant::now();
         let reply = prompt::parse_reply(&content, request);
         let validation_ms = t_val.elapsed().as_millis();
@@ -109,7 +115,7 @@ impl ChatClient {
         self.chat_with_timeout(system, user, max_tokens, self.timeout).await
     }
 
-    /// 支持自定义超时与自动故障重试的请求执行器
+    /// 打字链路的一问一答，自定义总超时。
     pub async fn chat_with_timeout(
         &self,
         system: &str,
@@ -117,31 +123,48 @@ impl ChatClient {
         max_tokens: u32,
         timeout: Duration,
     ) -> Result<String, PredictError> {
+        let call = Call {
+            model: &self.typing_model,
+            max_tokens,
+            temperature: TEMPERATURE,
+            allow_thinking: false,
+            timeout,
+        };
+        self.chat_with(system, user, &call).await
+    }
+
+    /// 返回一个自带所有权的预热任务：发一个 1 token 的请求，把握手和连接池准备好。失败静默。
+    pub fn warm_up_task(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let http = self.http.clone();
+        let url = self.chat_url();
+        let authorization = self.authorization();
+        let body = self.warm_up_body();
+        async move {
+            let mut req = http.post(url).json(&body);
+            if let Some(value) = authorization {
+                req = req.header("Authorization", value);
+            }
+            let sent = tokio::time::timeout(WARM_UP_TIMEOUT, async {
+                let resp = req.send().await?;
+                resp.bytes().await.map(|bytes| bytes.len())
+            })
+            .await;
+            tracing::debug!(ok = matches!(sent, Ok(Ok(_))), "连接预热完成");
+        }
+    }
+
+    /// 支持自定义超时与自动故障重试的请求执行器
+    async fn chat_with(
+        &self,
+        system: &str,
+        user: &str,
+        call: &Call<'_>,
+    ) -> Result<String, PredictError> {
+        let timeout = call.timeout;
         let t_start = std::time::Instant::now();
         let deadline = tokio::time::Instant::now() + timeout;
-        let messages: Vec<ChatCompletionRequestMessage> = vec![
-            ChatCompletionRequestSystemMessage::from(system).into(),
-            ChatCompletionRequestUserMessage::from(user).into(),
-        ];
-        let effective_model = if self.model == "auto" {
-            "kilo-auto/free"
-        } else {
-            &self.model
-        };
-        let mut args = CreateChatCompletionRequestArgs::default();
-        args.model(effective_model)
-            .messages(messages)
-            .max_tokens(max_tokens)
-            .temperature(TEMPERATURE)
-            .response_format(ResponseFormat::JsonObject);
-        if let Some(effort) = self.reasoning_effort.clone() {
-            args.reasoning_effort(effort);
-        }
-        let mut body = serde_json::to_value(args.build()?)?;
-        if matches!(self.reasoning_effort, Some(ReasoningEffort::None)) {
-            self.thinking_switch.disable(&mut body);
-        }
-        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        let body = self.request_body(system, user, call)?;
+        let url = self.chat_url();
 
         // 所有尝试共享一个总 deadline，响应体读取也受限；不能每次重试都再等完整 timeout。
         let max_attempts = 3;
@@ -163,10 +186,8 @@ impl ChatClient {
 
             let t_http_start = std::time::Instant::now();
             let mut req = self.http.post(&url);
-            if !self.api_key.trim().is_empty() {
-                req = req.header("Authorization", format!("Bearer {}", self.api_key.trim()));
-            } else if self.base_url.contains("kilo.ai") {
-                req = req.header("Authorization", "Bearer ");
+            if let Some(value) = self.authorization() {
+                req = req.header("Authorization", value);
             }
             let req = req.json(&body);
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -258,7 +279,7 @@ impl ChatClient {
                         })
                 })
                 .ok_or_else(|| {
-                    tracing::warn!(model = %self.model, response = %truncated(&raw), "接口回复里没有正文");
+                    tracing::warn!(model = %call.model, response = %truncated(&raw), "接口回复里没有正文");
                     if cut_off {
                         PredictError::BudgetExhausted
                     } else {
@@ -285,7 +306,7 @@ impl ChatClient {
             tracing::info!(
                 provider = %provider,
                 endpoint = %self.base_url,
-                model = %self.model,
+                model = %call.model,
                 request_id = %request_id,
                 first_byte_ms = first_byte_ms,
                 http_ms = http_ms,
@@ -301,6 +322,115 @@ impl ChatClient {
 
         Err(last_err.unwrap_or(PredictError::EmptyReply))
     }
+
+    fn chat_url(&self) -> String {
+        format!("{}/chat/completions", self.base_url.trim_end_matches('/'))
+    }
+
+    fn authorization(&self) -> Option<String> {
+        if !self.api_key.trim().is_empty() {
+            Some(format!("Bearer {}", self.api_key.trim()))
+        } else if self.base_url.contains("kilo.ai") {
+            Some("Bearer ".to_owned())
+        } else {
+            None
+        }
+    }
+
+    /// 组请求体。打字类请求在有专用关思考参数的接口上一律关思考，不受配置影响；
+    /// 允许思考的请求（深度学习、对比）和不认识的接口仍按 `reasoning_effort` 配置走。
+    fn request_body(
+        &self,
+        system: &str,
+        user: &str,
+        call: &Call<'_>,
+    ) -> Result<serde_json::Value, PredictError> {
+        let messages: Vec<ChatCompletionRequestMessage> = vec![
+            ChatCompletionRequestSystemMessage::from(system).into(),
+            ChatCompletionRequestUserMessage::from(user).into(),
+        ];
+        let effective_model = if call.model == "auto" {
+            "kilo-auto/free"
+        } else {
+            call.model
+        };
+        let mut args = CreateChatCompletionRequestArgs::default();
+        args.model(effective_model)
+            .messages(messages)
+            .max_tokens(call.max_tokens)
+            .temperature(call.temperature)
+            .response_format(ResponseFormat::JsonObject);
+        if let Some(effort) = self.reasoning_effort.clone() {
+            args.reasoning_effort(effort);
+        }
+        let mut body = serde_json::to_value(args.build()?)?;
+        let forced_off = !call.allow_thinking && self.thinking_switch.has_dedicated_flag();
+        if forced_off || matches!(self.reasoning_effort, Some(ReasoningEffort::None)) {
+            self.thinking_switch.disable(&mut body);
+        }
+        Ok(body)
+    }
+
+    fn warm_up_body(&self) -> serde_json::Value {
+        let model = if self.typing_model == "auto" {
+            "kilo-auto/free"
+        } else {
+            &self.typing_model
+        };
+        let mut body = serde_json::json!({
+            "model": model,
+            "messages": [{ "role": "user", "content": "." }],
+            "max_tokens": 1,
+            "temperature": 0.0,
+        });
+        self.thinking_switch.disable(&mut body);
+        body
+    }
+}
+
+/// 一次请求的可变参数。
+struct Call<'a> {
+    /// 模型名。
+    model: &'a str,
+
+    /// 回复 token 上限。
+    max_tokens: u32,
+
+    /// 采样温度。
+    temperature: f32,
+
+    /// 允许模型思考；`false` 时在有专用开关的接口上强制关闭。
+    allow_thinking: bool,
+
+    /// 总超时（含重试）。
+    timeout: Duration,
+}
+
+/// 各类请求的固定参数。
+struct CallProfile {
+    max_tokens: u32,
+    temperature: f32,
+    allow_thinking: bool,
+
+    /// 走面板模型而不是打字模型。
+    panel: bool,
+}
+
+impl CallProfile {
+    /// 打字类温度 0（重排、纠错要稳）；翻译 0.3；面板类 0.5。只有深度学习与对比允许思考。
+    fn of(kind: qingjian_core::PredictionKind) -> Self {
+        use qingjian_core::PredictionKind as Kind;
+        let (max_tokens, temperature, allow_thinking, panel) = match kind {
+            Kind::Translate => (TRANSLATE_MAX_TOKENS, 0.3, false, false),
+            Kind::Compose => (COMPOSE_MAX_TOKENS, 0.3, false, false),
+            Kind::Intent => (96, 0.0, false, false),
+            Kind::Rerank => (RERANK_MAX_TOKENS, 0.0, false, false),
+            Kind::Question => (QUESTION_MAX_TOKENS, 0.3, false, false),
+            Kind::Compare => (COMPARE_MAX_TOKENS, 0.5, true, true),
+            Kind::DeepLearn => (DEEP_LEARN_MAX_TOKENS, 0.5, true, true),
+        };
+        Self { max_tokens, temperature, allow_thinking, panel }
+    }
 }
 
 /// 日志里的原始响应最多留这么多字符。
@@ -314,43 +444,7 @@ fn truncated(response: &serde_json::Value) -> String {
     }
 }
 
-/// 各家关思考的参数不一样，严格的接口遇到不认识的参数会报 400，所以按接口地址只发对的那个。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ThinkingSwitch {
-    /// OpenAI 一系：`reasoning_effort: "none"`，请求里已经带了。
-    ReasoningEffort,
-
-    /// 智谱（`bigmodel.cn` / `z.ai`）：`thinking: {"type": "disabled"}`，不认 `reasoning_effort`。
-    ThinkingType,
-}
-
-impl ThinkingSwitch {
-    fn for_url(base_url: &str) -> Self {
-        let host = host_of(base_url).unwrap_or_default();
-        let zhipu = ["bigmodel.cn", "z.ai"]
-            .iter()
-            .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")));
-        if zhipu {
-            Self::ThinkingType
-        } else {
-            Self::ReasoningEffort
-        }
-    }
-
-    /// 把请求体改成这家接口关思考的写法。
-    fn disable(self, body: &mut serde_json::Value) {
-        let (Self::ThinkingType, Some(fields)) = (self, body.as_object_mut()) else {
-            return;
-        };
-        fields.remove("reasoning_effort");
-        fields.insert(
-            "thinking".to_owned(),
-            serde_json::json!({ "type": "disabled" }),
-        );
-    }
-}
-
-fn host_of(base_url: &str) -> Option<String> {
+pub(crate) fn host_of(base_url: &str) -> Option<String> {
     reqwest::Url::parse(base_url)
         .ok()
         .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
@@ -360,7 +454,7 @@ fn host_of(base_url: &str) -> Option<String> {
 fn http_client(base_url: &str) -> reqwest::Client {
     let mut builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_millis(1500))
-        .pool_idle_timeout(Duration::from_secs(90))
+        .pool_idle_timeout(Duration::from_secs(300))
         .tcp_keepalive(Duration::from_secs(30));
     if is_domestic(base_url) {
         builder = builder.no_proxy();
@@ -455,25 +549,73 @@ mod tests {
         assert!(parse_reasoning_effort("maximum").is_none());
     }
 
-    #[test]
-    fn zhipu_hosts_disable_thinking_with_their_own_field() {
-        let mut body = serde_json::json!({ "model": "glm", "reasoning_effort": "none" });
-        ThinkingSwitch::for_url("https://open.bigmodel.cn/api/paas/v4").disable(&mut body);
-        assert_eq!(body["thinking"]["type"], "disabled");
-        assert!(body.get("reasoning_effort").is_none());
-        assert_eq!(
-            ThinkingSwitch::for_url("https://api.z.ai/api/paas/v4"),
-            ThinkingSwitch::ThinkingType
-        );
+    fn client_for(base_url: &str, effort: &str) -> ChatClient {
+        let config = PredictConfig {
+            base_url: base_url.to_owned(),
+            typing_model: "Qwen/Qwen3-8B".to_owned(),
+            reasoning_effort: effort.to_owned(),
+            ..PredictConfig::default()
+        };
+        ChatClient::new(&config, "k".to_owned())
+    }
 
-        let mut body = serde_json::json!({ "model": "x", "reasoning_effort": "none" });
-        ThinkingSwitch::for_url("https://api.deepseek.com").disable(&mut body);
-        assert_eq!(body["reasoning_effort"], "none");
+    fn body_for(client: &ChatClient, kind: qingjian_core::PredictionKind) -> serde_json::Value {
+        let profile = CallProfile::of(kind);
+        let model = if profile.panel { &client.panel_model } else { &client.typing_model };
+        let call = Call {
+            model,
+            max_tokens: profile.max_tokens,
+            temperature: profile.temperature,
+            allow_thinking: profile.allow_thinking,
+            timeout: Duration::from_secs(1),
+        };
+        client.request_body("s", "u", &call).unwrap()
+    }
+
+    #[test]
+    fn typing_requests_force_thinking_off_on_siliconflow_even_without_config() {
+        use qingjian_core::PredictionKind as Kind;
+        let client = client_for("https://api.siliconflow.cn/v1", "");
+        for kind in [Kind::Rerank, Kind::Intent, Kind::Translate, Kind::Compose, Kind::Question] {
+            let body = body_for(&client, kind);
+            assert_eq!(body["enable_thinking"], false, "{kind:?}");
+            assert_eq!(body["model"], "Qwen/Qwen3-8B", "{kind:?}");
+            assert!(body.get("reasoning_effort").is_none(), "{kind:?}");
+        }
+        assert_eq!(body_for(&client, Kind::Intent)["temperature"], 0.0);
+        assert!((body_for(&client, Kind::Translate)["temperature"].as_f64().unwrap() - 0.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn deep_requests_use_panel_model_and_keep_thinking_unless_configured_off() {
+        use qingjian_core::PredictionKind as Kind;
+        let body = body_for(&client_for("https://api.siliconflow.cn/v1", ""), Kind::DeepLearn);
+        assert!(body.get("enable_thinking").is_none());
+        assert_eq!(body["model"], "Qwen/Qwen3-14B");
+
+        let body = body_for(&client_for("https://api.siliconflow.cn/v1", "none"), Kind::Compare);
+        assert_eq!(body["enable_thinking"], false);
+        assert_eq!(body["model"], "Qwen/Qwen3-14B");
+    }
+
+    #[test]
+    fn unknown_hosts_follow_the_config_only() {
+        use qingjian_core::PredictionKind as Kind;
+        let body = body_for(&client_for("https://api.deepseek.com", ""), Kind::Rerank);
+        assert!(body.get("enable_thinking").is_none());
+        assert!(body.get("reasoning_effort").is_none());
         assert!(body.get("thinking").is_none());
-        assert_eq!(
-            ThinkingSwitch::for_url("https://example.com/bigmodel.cn"),
-            ThinkingSwitch::ReasoningEffort
-        );
+
+        let body = body_for(&client_for("https://api.deepseek.com", "none"), Kind::Rerank);
+        assert_eq!(body["reasoning_effort"], "none");
+    }
+
+    #[test]
+    fn warm_up_body_is_one_token_with_thinking_off() {
+        let body = client_for("https://api.siliconflow.cn/v1", "").warm_up_body();
+        assert_eq!(body["max_tokens"], 1);
+        assert_eq!(body["enable_thinking"], false);
+        assert_eq!(body["model"], "Qwen/Qwen3-8B");
     }
 
     #[test]
