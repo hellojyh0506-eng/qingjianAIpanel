@@ -7,6 +7,9 @@ use qingjian_render::chat::{ChatMessage, ChatView, Phase, Role, SessionItem};
 
 use crate::dispatch::AiPanelState;
 
+/// 建议问题里最多显示的主题字数。
+const TOPIC_CHARS: usize = 16;
+
 /// 把整面状态装进视图：侧栏、主题、消息、建议问题；在途状态、滚动位置重置，输入框草稿保留。
 pub(super) fn load_state(view: &mut ChatView, state: &AiPanelState) {
     view.sessions = sidebar_items(&state.sessions, &state.session.summary());
@@ -76,16 +79,28 @@ pub(super) fn suggestions_for(topic: Option<&str>, alternative: Option<&str>) ->
             "美国年轻人会怎么说?".to_string(),
         ];
     };
+    // 建议胶囊只有一行宽，长主题截短显示；完整主题模型另有系统消息知道。
+    let topic = shorten(topic);
     let versus = match alternative.map(str::trim).filter(|alt| !alt.is_empty()) {
         Some(alt) => format!("{topic} 和 {alt} 有什么区别?"),
         None => format!("{topic} 还有哪些更地道的说法?"),
     };
+    // 问题里带上主题：点一下就直接发出，不能指望模型猜「它」是什么。
     vec![
         format!("什么时候用 {topic}?"),
-        "请给我 IELTS 口语题".to_string(),
+        format!("请围绕「{topic}」给我 IELTS 口语题"),
         versus,
-        "美国年轻人会怎么说?".to_string(),
+        format!("美国年轻人会怎么说「{topic}」?"),
     ]
+}
+
+/// 主题过长时截到 `TOPIC_CHARS` 个字并加省略号。
+fn shorten(topic: &str) -> String {
+    if topic.chars().count() <= TOPIC_CHARS {
+        return topic.to_string();
+    }
+    let head: String = topic.chars().take(TOPIC_CHARS).collect();
+    format!("{head}…")
 }
 
 /// 联网来源的显示行：「N. 标题」，标题为空用网址。
@@ -295,10 +310,14 @@ mod tests {
         assert_eq!(general.len(), 3);
         let plain = suggestions_for(Some("Do your best"), None);
         assert_eq!(plain[0], "什么时候用 Do your best?");
+        assert_eq!(plain[1], "请围绕「Do your best」给我 IELTS 口语题");
         assert_eq!(plain[2], "Do your best 还有哪些更地道的说法?");
+        assert_eq!(plain[3], "美国年轻人会怎么说「Do your best」?");
         let versus = suggestions_for(Some("Do your best"), Some("Give it your all"));
         assert_eq!(versus[2], "Do your best 和 Give it your all 有什么区别?");
         assert_eq!(suggestions_for(Some("  "), None), general);
+        let long = suggestions_for(Some("a very long expression that goes on and on"), None);
+        assert!(long[0].contains("a very long expr…"), "{}", long[0]);
     }
 
     #[test]

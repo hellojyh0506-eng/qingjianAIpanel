@@ -124,9 +124,9 @@ fn base() -> ChatView {
             .collect(),
         suggestions: vec![
             "什么时候用 Do your best？".into(),
-            "请给我 IELTS 口语题".into(),
-            "和 Give it your all 有什么区别？".into(),
-            "美国年轻人会怎么说？".into(),
+            "请围绕「Do your best」给我 IELTS 口语题".into(),
+            "Do your best 和 Give it your all 有什么区别？".into(),
+            "美国年轻人会怎么说「Do your best」？".into(),
         ],
         ..ChatView::default()
     }

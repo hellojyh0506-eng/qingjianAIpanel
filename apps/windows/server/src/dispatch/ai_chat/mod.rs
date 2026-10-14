@@ -6,6 +6,7 @@ mod boost;
 mod panel_state;
 mod send;
 mod store;
+mod topic;
 mod turn;
 
 use std::path::Path;

@@ -9,6 +9,7 @@ use qingjian_predict::{
 };
 
 use super::boost;
+use super::topic;
 use super::turn::Turn;
 use crate::dispatch::Router;
 
@@ -69,6 +70,17 @@ impl Router {
             role: "system".to_string(),
             content: SYSTEM_PROMPT.to_string(),
         }];
+        if let Some(topic) = self.ai_store.topic() {
+            let english = self
+                .companion
+                .as_ref()
+                .filter(|session| session.zh().trim() == topic.trim())
+                .map(|session| session.en().to_owned());
+            messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: topic::context_note(&topic, english.as_deref()),
+            });
+        }
         if let Ok(msgs) = self.ai_messages.lock() {
             let start = msgs.len().saturating_sub(HISTORY_LIMIT);
             messages.extend(msgs[start..].iter().cloned());
