@@ -106,11 +106,11 @@ impl CompanionSession {
         })
     }
 
-    pub(super) fn zh(&self) -> &str {
+    pub(crate) fn zh(&self) -> &str {
         &self.zh
     }
 
-    pub(super) fn en(&self) -> &str {
+    pub(crate) fn en(&self) -> &str {
         &self.en
     }
 
@@ -121,20 +121,6 @@ impl CompanionSession {
     /// 当前对话场景序号。
     pub(super) fn scene(&self) -> usize {
         self.lock().scene
-    }
-
-    /// 语感解析里的例句，收藏与练习用；还没生成出来就是 `None`。
-    pub(super) fn example(&self) -> Option<(String, String, String)> {
-        let inner = self.lock();
-        let slot = (0, 0);
-        let blocks = inner
-            .done
-            .get(&slot)
-            .or_else(|| inner.streaming.get(&slot))?;
-        blocks.iter().find_map(|block| match block {
-            Block::Example { en, zh, hl } => Some((en.clone(), zh.clone(), hl.clone())),
-            _ => None,
-        })
     }
 
     /// 「更自然地说」里的第一个替换表达，AI 问答的建议问题用；还没生成出来就是 `None`。

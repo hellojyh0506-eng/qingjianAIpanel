@@ -18,12 +18,6 @@ pub enum CandidateAction {
     /// 学习助手面板重新生成某个标签（对话标签带场景序号）
     CompanionRetry { tab: usize, scene: usize },
 
-    /// 学习助手面板：收藏当前表达并加入间隔复习
-    CompanionSave,
-
-    /// 学习助手面板：练一句（挖空补全）
-    CompanionPractice,
-
     /// 切换展开/收起「更多译法」（兼容旧接口）
     ToggleExpand,
 

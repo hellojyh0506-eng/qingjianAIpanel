@@ -93,6 +93,9 @@ unsafe fn wndproc_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) ->
             if let Some(window) = window_of(hwnd) {
                 window.remember_position();
             }
+            if msg == WM_EXITSIZEMOVE {
+                crate::ui::wake_ui_thread();
+            }
             LRESULT(0)
         }
         WM_SIZE => {

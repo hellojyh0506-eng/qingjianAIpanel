@@ -25,7 +25,7 @@ pub(super) enum UiCommand {
     Configure(RenderSettings),
 
     /// 打开学习助手面板：(中文原意, 英文表达, 是否已收藏, 组句矩形)。
-    CompanionShow(Box<(String, String, bool, ScreenRect)>),
+    CompanionShow(Box<(String, String, ScreenRect)>),
 
     /// 学习助手面板某个标签（对话标签还带场景序号）收到一个区块。
     CompanionBlock { tab: usize, scene: usize, block: Block },
@@ -35,9 +35,6 @@ pub(super) enum UiCommand {
 
     /// 学习助手面板某个标签生成失败。
     CompanionError { tab: usize, scene: usize, message: String },
-
-    /// 学习助手面板底部短暂提示；`saved` 为真同时把收藏按钮置为已收藏。
-    CompanionNotice { text: String, saved: bool },
 
     /// 收起 English Assistant。
     CompanionHide,

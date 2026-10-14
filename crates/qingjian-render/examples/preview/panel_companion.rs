@@ -46,8 +46,7 @@ fn view_for(name: &str) -> Option<CompanionView> {
             view.scroll = 400.0;
         }
         "companion-notice" => {
-            view.notice = Some("已收藏，并加入复习".into());
-            view.saved = true;
+            view.notice = Some("已复制".into());
         }
         _ => return None,
     }

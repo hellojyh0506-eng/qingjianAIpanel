@@ -68,7 +68,7 @@ fn draw(
 
     hero::draw(&mut s, view);
     tab_bar::draw(&mut s, view);
-    footer::draw(&mut s, view);
+    footer::draw(&mut s);
     if max_scroll > 0.0 {
         scrollbar(&mut s, viewport, scroll, max_scroll);
     }
@@ -206,8 +206,6 @@ mod tests {
             CompanionHit::Close,
             CompanionHit::Pin,
             CompanionHit::Minimize,
-            CompanionHit::Save,
-            CompanionHit::Practice,
             CompanionHit::Tab(0),
             CompanionHit::Tab(2),
             CompanionHit::Speak("Do your best".into()),

@@ -23,9 +23,9 @@ pub trait CandidateSink: Send {
     /// 换画法：装上时与配置热加载后调，只在设置变了时调。
     fn configure(&self, settings: RenderSettings);
 
-    /// 打开学习助手面板：中文原意、英文表达、是否已收藏，`rect` 是组句矩形。
-    fn show_companion(&self, zh: String, en: String, saved: bool, rect: ScreenRect) {
-        let _ = (zh, en, saved, rect);
+    /// 打开学习助手面板：中文原意、英文表达，`rect` 是组句矩形。
+    fn show_companion(&self, zh: String, en: String, rect: ScreenRect) {
+        let _ = (zh, en, rect);
     }
 
     /// 学习助手某个标签（对话标签带场景序号）收到一个区块。
@@ -41,11 +41,6 @@ pub trait CandidateSink: Send {
     /// 学习助手某个标签生成失败。
     fn fail_companion(&self, tab: usize, scene: usize, message: String) {
         let _ = (tab, scene, message);
-    }
-
-    /// 学习助手面板底部短暂提示；`saved` 为真同时把收藏按钮置为已收藏。
-    fn companion_notice(&self, text: String, saved: bool) {
-        let _ = (text, saved);
     }
 
     /// 收起 English Assistant

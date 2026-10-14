@@ -474,8 +474,6 @@ impl Router {
             CandidateAction::CompanionSelectTab(tab) => self.companion_select_tab(tab),
             CandidateAction::CompanionSelectScene(scene) => self.companion_select_scene(scene),
             CandidateAction::CompanionRetry { tab, scene } => self.companion_retry(tab, scene),
-            CandidateAction::CompanionSave => self.companion_save(),
-            CandidateAction::CompanionPractice => self.companion_practice(),
             CandidateAction::StartDrillSession | CandidateAction::StartDrill => {
                 self.start_drill_session();
             }

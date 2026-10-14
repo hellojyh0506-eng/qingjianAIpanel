@@ -171,15 +171,19 @@ mod tests {
     }
 
     #[test]
-    fn messages_are_saved_and_listed_newest_first() {
+    fn messages_from_every_session_are_saved_and_listed() {
         let (store, _dir) = with_disk();
         let first = store.session_id();
         store.push(&first, user("第一个问题"));
         store.start_new(None);
         let second = store.session_id();
         store.push(&second, user("第二个问题"));
-        let ids: Vec<_> = store.sessions().into_iter().map(|s| s.id).collect();
-        assert_eq!(ids, vec![second, first]);
+        // 排序按秒级时间戳，同一秒内的先后不确定，次序由 chat_history 自己的测试保证。
+        let mut ids: Vec<_> = store.sessions().into_iter().map(|s| s.id).collect();
+        ids.sort();
+        let mut expected = vec![second, first];
+        expected.sort();
+        assert_eq!(ids, expected);
     }
 
     #[test]

@@ -1,6 +1,10 @@
 //! 面板窗口的落点（学习助手与 AI 问答共用）：优先停在组句矩形右侧，放不下换下方、上方、左侧，都不行贴工作区右下角；用户拖过就听用户的。
 
-use windows::Win32::Foundation::{POINT, RECT};
+use windows::Win32::Foundation::{HWND, POINT, RECT};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetWindowRect, HWND_NOTOPMOST, HWND_TOPMOST, IsIconic, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SetWindowPos,
+};
 
 use crate::ui::monitor;
 
@@ -64,4 +68,28 @@ pub(crate) fn near_anchor(anchor: RECT, content: (i32, i32), margin: i32) -> (i3
         (work.right - content.0 - margin - CORNER_RIGHT).max(work.left + margin),
         (work.bottom - content.1 - margin - CORNER_BOTTOM).max(work.top + margin),
     )
+}
+
+/// 窗口此刻真实的内容左上角（屏幕物理像素）。重绘时必须以它为准：用户正在拖动窗口时，
+/// 系统一直在挪窗口，拿记着的旧位置去贴图会把窗口一次次拽回去，看起来就是抖动。
+/// 最小化着或取不到就是 `None`。
+pub(crate) fn live_content_pos(hwnd: HWND, margin: i32) -> Option<(i32, i32)> {
+    if unsafe { IsIconic(hwnd) }.as_bool() {
+        return None;
+    }
+    let mut rect = RECT::default();
+    unsafe { GetWindowRect(hwnd, &mut rect) }.ok()?;
+    Some((rect.left + margin, rect.top + margin))
+}
+
+/// 把窗口抬到所有普通窗口之上，不抢焦点。先置顶再按需取消，非置顶窗口也能浮到最上层；
+/// 否则取消置顶的面板被呼出时会躲在宿主窗口后面，用户不知道它开没开。
+pub(crate) fn raise_without_activating(hwnd: HWND, pinned: bool) {
+    let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+    unsafe {
+        let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, flags);
+        if !pinned {
+            let _ = SetWindowPos(hwnd, Some(HWND_NOTOPMOST), 0, 0, 0, 0, flags);
+        }
+    }
 }

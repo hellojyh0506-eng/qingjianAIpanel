@@ -30,6 +30,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{PCWSTR, Result, w};
 
+use super::placement;
 use super::window_class::WindowClass;
 use crate::dispatch::{AiPanelState, CandidateAction};
 
@@ -239,7 +240,7 @@ impl AiAssistantWindow {
             } else {
                 let _ = ShowWindow(self.hwnd, SW_SHOW);
             }
-            self.apply_z_order(true);
+            placement::raise_without_activating(self.hwnd, self.is_pinned());
             let _ = BringWindowToTop(self.hwnd);
             let _ = SetForegroundWindow(self.hwnd);
             let _ = SetFocus(Some(self.hwnd));
@@ -274,7 +275,7 @@ impl AiAssistantWindow {
             let mut state = self.state.borrow_mut();
             state.view.pinned = !state.view.pinned;
         }
-        self.apply_z_order(false);
+        self.apply_z_order();
         self.redraw();
     }
 
@@ -434,14 +435,10 @@ impl AiAssistantWindow {
         self.redraw();
     }
 
-    /// 按置顶状态摆 z 序；`activate` 为假时不抢焦点。
-    fn apply_z_order(&self, activate: bool) {
+    /// 按置顶状态摆 z 序，不抢焦点。
+    fn apply_z_order(&self) {
         let pinned = self.is_pinned();
-        let flags = if activate {
-            SWP_NOMOVE | SWP_NOSIZE
-        } else {
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
-        };
+        let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
         unsafe {
             let _ = SetWindowPos(
                 self.hwnd,

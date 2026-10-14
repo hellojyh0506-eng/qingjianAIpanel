@@ -37,12 +37,6 @@ pub enum CompanionHit {
     /// 重新生成当前标签。
     Retry,
 
-    /// 收藏到生词本并加入复习。
-    Save,
-
-    /// 练一句。
-    Practice,
-
     /// 问 AI。
     AskAi,
 }

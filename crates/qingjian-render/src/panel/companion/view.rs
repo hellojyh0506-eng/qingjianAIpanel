@@ -49,10 +49,7 @@ pub struct CompanionView {
     /// 收起成只剩标题栏。
     pub minimized: bool,
 
-    /// 这条表达是否已收藏。
-    pub saved: bool,
-
-    /// 底部短暂提示（「已复制」「已收藏」）。
+    /// 底部短暂提示（「已复制」）。
     pub notice: Option<String>,
 
     /// 内容区向上滚过的距离（点）。

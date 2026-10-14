@@ -152,17 +152,21 @@ impl CompanionWindow {
     }
 
     /// 打开一条新表达：清空旧内容，摆到 `anchor` 附近并显示。
-    pub fn show(&self, zh: &str, en: &str, saved: bool, anchor: RECT) {
+    pub fn show(&self, zh: &str, en: &str, anchor: RECT) {
         {
             let mut state = self.state.borrow_mut();
             model::reset(&mut state.view, zh, en);
-            state.view.saved = saved;
             state.anchor = Some(anchor);
             state.content_pos = None;
         }
         self.redraw();
-        self.apply_z_order();
         let _ = unsafe { ShowWindow(self.hwnd, SW_SHOWNA) };
+        self.raise();
+    }
+
+    /// 抬到最上层（不抢焦点）；点击面板、呼出面板时用，取消置顶的面板也不会被宿主窗口盖住。
+    pub(super) fn raise(&self) {
+        placement::raise_without_activating(self.hwnd, self.is_pinned());
     }
 
     pub fn hide(&self) {
@@ -191,15 +195,9 @@ impl CompanionWindow {
         self.redraw();
     }
 
-    /// 底部短暂提示；`saved` 为真同时把收藏按钮置为已收藏。
-    pub fn set_notice(&self, text: String, saved: bool) {
-        {
-            let mut state = self.state.borrow_mut();
-            state.view.notice = Some(text);
-            if saved {
-                state.view.saved = true;
-            }
-        }
+    /// 底部短暂提示。
+    pub fn set_notice(&self, text: String) {
+        self.state.borrow_mut().view.notice = Some(text);
         unsafe {
             let _ = SetTimer(Some(self.hwnd), TIMER_NOTICE, NOTICE_MS, None);
         }
@@ -250,7 +248,10 @@ impl CompanionWindow {
             frame.frame.pixmap.width() as i32 - 2 * margin,
             frame.frame.pixmap.height() as i32 - 2 * margin,
         );
-        let pos = match state.content_pos {
+        let live = state
+            .content_pos
+            .and_then(|_| placement::live_content_pos(self.hwnd, margin));
+        let pos = match live.or(state.content_pos) {
             Some(pos) => pos,
             None => {
                 let pos = match state.user_pos {
@@ -261,6 +262,7 @@ impl CompanionWindow {
                 pos
             }
         };
+        state.content_pos = Some(pos);
         if let Err(error) = layered::present(
             self.hwnd,
             &frame.frame.pixmap,

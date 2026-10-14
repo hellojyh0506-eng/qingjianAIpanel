@@ -28,6 +28,8 @@ pub(super) unsafe extern "system" fn wndproc(
         WM_NCHITTEST => LRESULT(HTCLIENT as isize),
         WM_LBUTTONDOWN => {
             if let Some(window) = window_of(hwnd) {
+                // 不激活的窗口点一下也该浮到最上层，取消置顶后才能被找回来。
+                window.raise();
                 let x = (lparam.0 & 0xffff) as i16 as i32;
                 let y = ((lparam.0 >> 16) & 0xffff) as i16 as i32;
                 if let Some(hit) = window.hit_at(x, y) {
@@ -47,6 +49,7 @@ pub(super) unsafe extern "system" fn wndproc(
             if let Some(window) = window_of(hwnd) {
                 window.remember_dragged_position();
             }
+            crate::ui::wake_ui_thread();
             LRESULT(0)
         }
         WM_TIMER => {
@@ -103,7 +106,7 @@ impl CompanionWindow {
                 } else {
                     "复制失败，剪贴板被占用"
                 };
-                self.set_notice(notice.to_string(), false);
+                self.set_notice(notice.to_string());
             }
             CompanionHit::Tab(tab) => {
                 let fresh = model::select_tab(&mut self.state.borrow_mut().view, tab);
@@ -136,8 +139,6 @@ impl CompanionWindow {
                 self.redraw();
                 (self.action_cb)(CandidateAction::CompanionRetry { tab, scene });
             }
-            CompanionHit::Save => (self.action_cb)(CandidateAction::CompanionSave),
-            CompanionHit::Practice => (self.action_cb)(CandidateAction::CompanionPractice),
             CompanionHit::AskAi => (self.action_cb)(CandidateAction::OpenAiAssistant),
         }
     }
@@ -150,7 +151,7 @@ impl CompanionWindow {
     /// 朗读英文；系统没有美音就提示，不回退到别的口音。
     fn speak(&self, text: &str) {
         if let Err(error) = self.try_speak(text) {
-            self.set_notice(error.notice().to_string(), false);
+            self.set_notice(error.notice().to_string());
         }
     }
 

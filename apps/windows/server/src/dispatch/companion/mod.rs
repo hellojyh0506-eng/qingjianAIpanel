@@ -1,4 +1,4 @@
-//! 学习助手面板（English Assistant）的业务：开关、按标签 / 场景按需生成、收藏进间隔复习、挖空练习。
+//! 学习助手面板（English Assistant）的业务：开关、按标签 / 场景按需生成。
 //! 生成流程在 [`session`]；面板窗口在 `ui::companion`，两边只通过 [`CandidateSink`] 与 [`CandidateAction`] 说话。
 
 mod session;
@@ -8,7 +8,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use qingjian_platform::protocol::ScreenRect;
-use qingjian_predict::companion::{BlockCache, cloze};
+use qingjian_predict::companion::BlockCache;
 
 pub(crate) use self::session::CompanionSession;
 use self::session::{Endpoint, Origin};
@@ -39,9 +39,8 @@ impl Router {
             bottom: 230,
         });
         let (zh, en) = self.assistant_subject();
-        let saved = is_saved(&zh, &en);
         self.candidates
-            .show_companion(zh.clone(), en.clone(), saved, rect);
+            .show_companion(zh.clone(), en.clone(), rect);
 
         let session = CompanionSession::new(
             zh,
@@ -90,62 +89,6 @@ impl Router {
         if let Some(session) = self.companion.clone() {
             session.request(tab, scene, Origin::Retry);
         }
-    }
-
-    /// 收藏当前表达并加入间隔复习；例句存进备注，复习时能看到。
-    pub(crate) fn companion_save(&mut self) {
-        let Some(session) = self.companion.clone() else {
-            return;
-        };
-        let (zh, en) = (session.zh().to_owned(), session.en().to_owned());
-        if en.trim().is_empty() {
-            self.candidates
-                .companion_notice("还没有可收藏的英文表达".to_string(), false);
-            return;
-        }
-        let Some(user_dir) = qingjian_platform::dirs::user_dir() else {
-            self.candidates
-                .companion_notice("找不到用户目录，收藏失败".to_string(), false);
-            return;
-        };
-        let notes = session
-            .example()
-            .map(|(example_en, example_zh, _)| format!("{example_en}\n{example_zh}"));
-        let mut vault = qingjian_learning::LearningVault::open(&user_dir);
-        vault.save_expression(&zh, &en, Some("Natural"), notes.as_deref());
-        match vault.flush() {
-            Ok(()) => self
-                .candidates
-                .companion_notice("已收藏，并加入复习".to_string(), true),
-            Err(error) => {
-                tracing::warn!(%error, "收藏写盘失败");
-                self.candidates
-                    .companion_notice("收藏失败，请稍后重试".to_string(), false);
-            }
-        }
-    }
-
-    /// 练一句：把语感解析的例句里要学的短语挖掉让用户补；还没有例句就退回整句翻译练习。
-    pub(crate) fn companion_practice(&mut self) {
-        let Some(session) = self.companion.clone() else {
-            return;
-        };
-        let blank = session
-            .example()
-            .and_then(|(example_en, example_zh, phrase)| {
-                cloze(&example_en, &phrase).map(|sentence| (example_zh, phrase, sentence))
-            });
-        let Some((example_zh, phrase, sentence)) = blank else {
-            self.start_drill_session();
-            return;
-        };
-        let rect = self.effective_display_rect().unwrap_or(ScreenRect {
-            left: 200,
-            top: 200,
-            right: 400,
-            bottom: 230,
-        });
-        self.begin_drill(example_zh, phrase, Some(sentence), rect);
     }
 
     /// 面板要学的中文与英文：优先被动学习卡，其次翻译结果、当前高亮候选。
@@ -217,17 +160,4 @@ impl Router {
 
 fn cache_path() -> Option<PathBuf> {
     qingjian_platform::dirs::user_dir().map(|dir| dir.join(CACHE_FILE))
-}
-
-/// 这条表达（中文 + 英文）已经收藏过。
-fn is_saved(zh: &str, en: &str) -> bool {
-    let Some(user_dir) = qingjian_platform::dirs::user_dir() else {
-        return false;
-    };
-    qingjian_learning::LearningVault::open(&user_dir)
-        .saved_expressions()
-        .iter()
-        .any(|saved| {
-            saved.prompt == zh.trim() && (en.trim().is_empty() || saved.expression == en.trim())
-        })
 }

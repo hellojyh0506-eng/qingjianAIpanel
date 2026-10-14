@@ -179,8 +179,9 @@ fn paint(window: &AiAssistantWindow, state: &mut State) -> Result<(), String> {
     );
     let pos = if maximized {
         (work.left, work.top)
-    } else if let Some(pos) = state.content_pos {
-        pos
+    } else if let Some(known) = state.content_pos {
+        // 以窗口此刻的真实位置为准，否则拖动中重绘会把窗口拽回旧位置（抖动）。
+        placement::live_content_pos(window.hwnd, margin).unwrap_or(known)
     } else {
         let pos = match state.user_pos {
             Some(user) => placement::clamp_to_work_area(user, content, margin),
@@ -189,9 +190,7 @@ fn paint(window: &AiAssistantWindow, state: &mut State) -> Result<(), String> {
         state.content_pos = Some(pos);
         pos
     };
-    if maximized {
-        state.content_pos = Some(pos);
-    }
+    state.content_pos = Some(pos);
     layered::present(
         window.hwnd,
         &frame.frame.pixmap,

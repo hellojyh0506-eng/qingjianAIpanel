@@ -56,6 +56,13 @@ pub type CandidateEvents = Box<dyn Fn(CandidateAction) + Send>;
 /// 唤醒 UI 线程去排空命令队列的线程消息。
 const WM_WAKE: u32 = WM_APP;
 
+/// 叫醒本线程去排空命令队列。窗口自己的模态循环（拖动标题栏）会吞掉线程消息，
+/// 拖完后补发一次，免得拖动期间到的内容一直晾着。
+pub(crate) fn wake_ui_thread() {
+    let thread_id = unsafe { GetCurrentThreadId() };
+    let _ = unsafe { PostThreadMessageW(thread_id, WM_WAKE, WPARAM(0), LPARAM(0)) };
+}
+
 /// UI 线程句柄：发命令 = 投进通道 + 一条 `WM_WAKE`。线程 detached，随进程存活。
 #[derive(Clone)]
 pub struct UiHandle {
@@ -106,8 +113,8 @@ impl CandidateSink for UiHandle {
         self.post(UiCommand::Configure(settings));
     }
 
-    fn show_companion(&self, zh: String, en: String, saved: bool, rect: ScreenRect) {
-        self.post(UiCommand::CompanionShow(Box::new((zh, en, saved, rect))));
+    fn show_companion(&self, zh: String, en: String, rect: ScreenRect) {
+        self.post(UiCommand::CompanionShow(Box::new((zh, en, rect))));
     }
 
     fn companion_block(&self, tab: usize, scene: usize, block: Block) {
@@ -120,10 +127,6 @@ impl CandidateSink for UiHandle {
 
     fn fail_companion(&self, tab: usize, scene: usize, message: String) {
         self.post(UiCommand::CompanionError { tab, scene, message });
-    }
-
-    fn companion_notice(&self, text: String, saved: bool) {
-        self.post(UiCommand::CompanionNotice { text, saved });
     }
 
     fn hide_companion(&self) {
@@ -335,14 +338,7 @@ fn apply(
             window.set_content(&frame);
             window.show(to_win_rect(rect));
         }
-        UiCommand::Hide => {
-            window.hide();
-            if let Some(comp) = companion {
-                if !comp.is_pinned() {
-                    comp.hide();
-                }
-            }
-        }
+        UiCommand::Hide => window.hide(),
         UiCommand::StatusShow(view) => {
             if let Some(status) = status {
                 status.update(*view);
@@ -355,9 +351,9 @@ fn apply(
         }
         UiCommand::Configure(settings) => Painter::configure(painter, &settings),
         UiCommand::CompanionShow(payload) => {
-            let (zh, en, saved, rect) = *payload;
+            let (zh, en, rect) = *payload;
             if let Some(comp) = companion {
-                comp.show(&zh, &en, saved, to_win_rect(rect));
+                comp.show(&zh, &en, to_win_rect(rect));
             }
         }
         UiCommand::CompanionBlock { tab, scene, block } => {
@@ -373,11 +369,6 @@ fn apply(
         UiCommand::CompanionError { tab, scene, message } => {
             if let Some(comp) = companion {
                 comp.fail(tab, scene, message);
-            }
-        }
-        UiCommand::CompanionNotice { text, saved } => {
-            if let Some(comp) = companion {
-                comp.set_notice(text, saved);
             }
         }
         UiCommand::CompanionHide => {
