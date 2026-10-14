@@ -384,6 +384,8 @@ Tab2（每个场景一次请求）:
 7. 部署前备份 `E:\Qingjian\qingjian-server.exe`，核对 Release 与线上 SHA-256；非 P5 不换 TSF DLL
 8. 同步 `docs/notes/crate-notes.md`、`CHANGELOG.md`、`docs/plan/ai-current-input-optimization.md` 的状态
 
+- **状态（2026-10-14，P10 沙箱侧回归完成，部署待真机）**：Linux 目标 `cargo test -p qingjian-core -p qingjian-learning -p qingjian-platform -p qingjian-predict -p qingjian-render -p qingjian-cli -p qingjian-translate` 654 项全过；Windows 目标 `cargo clippy --tests --examples`（server / render / tsf / settings）无 error，P7–P9 新增与改动的文件无新增警告。**偏离 / 未做**：① `cargo fmt --all -- --check` 在 stable 下有大量既有文件的差异（core / learning / predict / windows 等，非本计划引入），本计划新增文件均已按 `rustfmt --edition 2024` 格式化，没有顺手全仓重排；② `git diff --check` 仅 `apps/cli/fixtures/typing_samples.tsv` 的制表符行尾空列（样本格式要求，非误加）；③ `--replay` 需要真实 `input-log.jsonl`、`--ai-bench` 需要云端密钥，沙箱都没有，未跑；④ Windows 上的 `cargo test -p qingjian-windows-server` / `cargo check`、部署（备份 `E:\Qingjian\qingjian-server.exe`、核对 SHA-256、非 P5 不换 TSF DLL）都要在真机做；⑤ `CHANGELOG.md` 尚无本计划的用户向条目——需要先定版本号与渠道（现有最新是 0.1.4 stable）。
+
 ---
 
 ## Sonnet 执行规范（必须遵守）
